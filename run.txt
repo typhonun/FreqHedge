@@ -1,0 +1,14 @@
+venv\Scripts\activate
+
+cd freqtrade
+freqtrade trade --config user_data/config.json --strategy DcaTp
+freqtrade trade --config user_data/config_long.json --strategy DcaTpLong
+freqtrade trade --config user_data/config_short.json --strategy DcaTpShort
+
+后端：
+cd backend
+uvicorn app.main:app --reload --port 9000
+
+前端：
+cd frontend
+npm run dev

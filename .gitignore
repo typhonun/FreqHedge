@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# venv
+venv/
+.env
+
+# Freqtrade
+user_data/backtest_results/
+user_data/hyperopt_results/
+user_data/data/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+config*.json
