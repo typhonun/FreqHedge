@@ -10,6 +10,11 @@ def open_positions():
     return PositionService.get_open_positions()
 
 
+@router.get("/closed")
+def closed_positions():
+    return PositionService.get_closed_positions()
+
+
 @router.get("/count")
 def count():
     return PositionService.get_position_count()
@@ -24,7 +29,7 @@ def summary():
 def profit():
     return PositionService.get_profit_summary()
 
+
 @router.get("/floating")
 def floating():
-
     return PositionService.get_floating_profit()

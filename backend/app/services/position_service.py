@@ -119,3 +119,46 @@ class PositionService:
                     2
                 )
         }
+
+    @staticmethod
+    def get_closed_positions():
+
+        long_resp = FreqtradeService.get_trades(
+            LONG_URL
+        )
+
+        short_resp = FreqtradeService.get_trades(
+            SHORT_URL
+        )
+
+        long_trades = (
+            long_resp["trades"]
+            if isinstance(long_resp, dict)
+            else long_resp
+        )
+
+        short_trades = (
+            short_resp["trades"]
+            if isinstance(short_resp, dict)
+            else short_resp
+        )
+
+        return {
+            "long": [
+                {
+                    **t,
+                    "side": "LONG"
+                }
+                for t in long_trades
+                if not t.get("is_open", True)
+            ],
+
+            "short": [
+                {
+                    **t,
+                    "side": "SHORT"
+                }
+                for t in short_trades
+                if not t.get("is_open", True)
+            ]
+        }

@@ -5,6 +5,7 @@ from app.api.trade import router as trade_router
 from app.api.system import router as system_router
 from app.api.position import router as position_router
 from app.api.config import router as config_router
+from app.api.chart import router as chart_router
 
 app = FastAPI()
 
@@ -20,9 +21,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def root():
     return "ok"
+
 
 app.include_router(
     trade_router,
@@ -46,4 +49,10 @@ app.include_router(
     config_router,
     prefix="/config",
     tags=["config"]
+)
+
+app.include_router(
+    chart_router,
+    prefix="/chart",
+    tags=["chart"]
 )

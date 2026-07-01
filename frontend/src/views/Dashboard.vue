@@ -1,48 +1,37 @@
 <template>
 
-  <div style="padding:20px">
-
-    <AccountCard
-            :summary="store.summary"
-            :floating="store.floating"
-        />
-
     <el-row :gutter="20">
 
-      <el-col :span="24">
+        <el-col :span="12">
 
-        <ProfitCard
-          :profit="store.profit"
-        />
+            <AccountCard
+                :summary="store.summary"
+                :floating="store.floating"
+            />
 
-      </el-col>
+        </el-col>
+
+        <el-col :span="12">
+
+            <ProfitCard
+                :profit="store.profit"
+            />
+
+        </el-col>
 
     </el-row>
 
-    <br>
+    <br />
 
-    <el-row :gutter="20">
+    <PositionTable
+        :positions="store.positions"
+    />
 
-      <el-col :span="24">
+    <br />
 
-        <PositionTable
-         :positions="store.positions"
-      />
-
-      </el-col>
-
-    </el-row>
-
-    <br>
-
-    <el-button
-      type="success"
-      @click="refresh"
-    >
-      刷新
-    </el-button>
-
-  </div>
+    <ClosedTradeTable
+        :positions="store.closedPositions"
+    />
 
 </template>
 
@@ -50,20 +39,19 @@
 
 import { onMounted } from "vue"
 
+import AccountCard from "../components/AccountCard.vue"
 import ProfitCard from "../components/ProfitCard.vue"
 import PositionTable from "../components/PositionTable.vue"
-import AccountCard from "../components/AccountCard.vue"
+import ClosedTradeTable from "../components/ClosedTradeTable.vue"
+
 import { useTradeStore } from "../stores/tradeStore"
 
-const store =
-    useTradeStore()
+const store = useTradeStore()
 
-const refresh = () => {
-    store.refresh()
-}
+onMounted(async () => {
 
-onMounted(() => {
-    refresh()
+    await store.refresh()
+
 })
 
 </script>

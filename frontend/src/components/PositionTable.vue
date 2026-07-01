@@ -56,11 +56,12 @@
         <el-table-column
             prop="profit_abs"
             label="浮盈USDT"
+            :formatter="formatNumber"
         />
 
         <el-table-column
-            prop="hold_hours"
-            label="持倉時間"
+            prop="open_date"
+            label="開倉時間"
         />
 
     </el-table>
@@ -83,15 +84,6 @@ const props = defineProps({
     }
 })
 
-const calcHours = (dateStr) => {
-
-    const diff =
-        Date.now() -
-        new Date(dateStr).getTime()
-
-    return (diff / 3600000).toFixed(1)
-}
-
 const tableData = computed(() => {
 
     const longs =
@@ -103,14 +95,12 @@ const tableData = computed(() => {
     return [
         ...longs.map(item => ({
             ...item,
-            side: "LONG",
-            hold_hours: calcHours(item.open_date)
+            side: "LONG"
         })),
 
         ...shorts.map(item => ({
             ...item,
-            side: "SHORT",
-            hold_hours: calcHours(item.open_date)
+            side: "SHORT"
         }))
     ]
 })
@@ -120,7 +110,7 @@ const formatNumber = (row, column, value) => {
     if (value === null || value === undefined)
         return "-"
 
-    return Number(value).toFixed(4)
+    return Number(value).toFixed(2)
 }
 
 const formatPercent = (row, column, value) => {

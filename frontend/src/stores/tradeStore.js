@@ -14,6 +14,10 @@ export const useTradeStore = defineStore(
             positions: {
                 long: [],
                 short: []
+            },
+            closedPositions: {
+                long: [],
+                short: []
             }
         }),
 
@@ -120,6 +124,24 @@ export const useTradeStore = defineStore(
                 } catch(e) {
                     console.error(
                         "floating error",
+                        e.response?.data || e
+                    )
+                }
+
+                try {
+
+                    const closed =
+                        await axios.get(
+                            `${API}/position/closed`
+                        )
+
+                    this.closedPositions =
+                        closed.data
+
+                } catch (e) {
+
+                    console.error(
+                        "closed error",
                         e.response?.data || e
                     )
                 }
