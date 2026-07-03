@@ -9,7 +9,7 @@ import Dashboard from "@/views/Dashboard.vue"
 import Positions from "@/views/Positions.vue"
 import History from "@/views/History.vue"
 import Charts from "@/views/Charts.vue"
-import Bot from "@/views/Bot.vue"
+import Control from "@/views/Control.vue"
 import Logs from "@/views/Logs.vue"
 
 const routes = [
@@ -23,6 +23,10 @@ const routes = [
                 component: Dashboard
             },
             {
+                path: "/control",
+                component: Control
+            },
+            {
                 path: "positions",
                 component: Positions
             },
@@ -33,10 +37,6 @@ const routes = [
             {
                 path: "charts",
                 component: Charts
-            },
-            {
-                path: "bot",
-                component: Bot
             },
             {
                 path: "logs",

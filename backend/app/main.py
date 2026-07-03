@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.trade import router as trade_router
+from app.api.control import router as control_router
 from app.api.system import router as system_router
 from app.api.position import router as position_router
 from app.api.config import router as config_router
@@ -55,4 +56,10 @@ app.include_router(
     chart_router,
     prefix="/chart",
     tags=["chart"]
+)
+
+app.include_router(
+    control_router,
+    prefix="/control",
+    tags=["control"]
 )

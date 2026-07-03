@@ -15,7 +15,11 @@
         >
 
             <el-menu-item index="/">
-                Dashboard
+                仪表盘
+            </el-menu-item>
+
+            <el-menu-item index="/control">
+                控制中心
             </el-menu-item>
 
             <el-menu-item index="/positions">
@@ -28,10 +32,6 @@
 
             <el-menu-item index="/charts">
                 K线分析
-            </el-menu-item>
-
-            <el-menu-item index="/bot">
-                Bot控制
             </el-menu-item>
 
             <el-menu-item index="/logs">

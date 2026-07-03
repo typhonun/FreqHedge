@@ -116,37 +116,6 @@ let candleSeries = null
 
 let refreshTimer = null
 
-const formatTime = (timestamp) => {
-
-    const d =
-        new Date(timestamp * 1000)
-
-    const yyyy =
-        d.getFullYear()
-
-    const MM =
-        String(
-            d.getMonth() + 1
-        ).padStart(2, "0")
-
-    const dd =
-        String(
-            d.getDate()
-        ).padStart(2, "0")
-
-    const hh =
-        String(
-            d.getHours()
-        ).padStart(2, "0")
-
-    const mm =
-        String(
-            d.getMinutes()
-        ).padStart(2, "0")
-
-    return `${yyyy}-${MM}-${dd} ${hh}:${mm}`
-}
-
 const loadStrategies = async () => {
 
     const res =
@@ -210,32 +179,16 @@ const loadChart = async () => {
 
     const data =
         res.data.map(c => ({
-            time: Math.floor(c.time/1000),
-            open:c.open,
-            high:c.high,
-            low:c.low,
-            close:c.close
+
+            time: Math.floor(c.time / 1000),
+            open: c.open,
+            high: c.high,
+            low: c.low,
+            close: c.close
+
         }))
 
     candleSeries.setData(data)
-
-    const last =
-        data[data.length - 1]
-
-    hoverTime.value =
-        formatTime(last.time)
-
-    hoverOpen.value =
-        last.open
-
-    hoverHigh.value =
-        last.high
-
-    hoverLow.value =
-        last.low
-
-    hoverClose.value =
-        last.close
 
     const visibleBars = 200
 
@@ -279,15 +232,15 @@ const updateLastCandle = async () => {
             )
 
         candleSeries.update({
-            time:
-                Math.floor(
-                    res.data.time / 1000
-                ),
 
+            time: Math.floor(
+                res.data.time / 1000
+            ),
             open: res.data.open,
             high: res.data.high,
             low: res.data.low,
             close: res.data.close
+
         })
 
     } catch (e) {
@@ -329,31 +282,23 @@ onMounted(async () => {
 
                 secondsVisible: false,
 
-                tickMarkFormatter: (
-                    time
-                ) => {
+                tickMarkFormatter: (time) => {
 
                     const d =
-                        new Date(
-                            time * 1000
-                        )
+                        new Date(time * 1000)
 
-                    return (
-                        d.getMonth() + 1
-                    ) +
-                    "/" +
-                    d.getDate() +
-                    " " +
-                    String(
-                        d.getHours()
-                    ).padStart(2, "0") +
-                    ":" +
-                    String(
-                        d.getMinutes()
-                    ).padStart(2, "0")
+                    return d.toLocaleString(
+                        "zh-CN",
+                        {
+                            month: "2-digit",
+                            day: "2-digit",
+                            hour: "2-digit",
+                            minute: "2-digit"
+                        }
+                    )
                 },
 
-                rightOffset: 50,
+                rightOffset: 0,
 
                 shiftVisibleRangeOnNewBar: false,
 
@@ -369,43 +314,6 @@ onMounted(async () => {
             CandlestickSeries
         )
 
-    chart.subscribeCrosshairMove(
-        (param) => {
-
-            if (
-                !param.time ||
-                !param.seriesData.size
-            ) {
-                return
-            }
-
-            const candle =
-                param.seriesData.get(
-                    candleSeries
-                )
-
-            if (!candle) {
-                return
-            }
-
-            hoverTime.value =
-                formatTime(
-                    param.time
-                )
-
-            hoverOpen.value =
-                candle.open
-
-            hoverHigh.value =
-                candle.high
-
-            hoverLow.value =
-                candle.low
-
-            hoverClose.value =
-                candle.close
-        }
-    )
     await loadStrategies()
 })
 
@@ -414,37 +322,11 @@ onUnmounted(() => {
     if (refreshTimer) {
         clearInterval(refreshTimer)
     }
-
-    window.removeEventListener(
-        "resize",
-        resizeChart
-    )
 })
 
 </script>
 
 <style scoped>
-
-.ohlc-bar {
-
-    display: flex;
-
-    gap: 25px;
-
-    padding: 10px 15px;
-
-    font-size: 14px;
-
-    font-weight: 500;
-
-    background: #fafafa;
-
-    border-left: 1px solid #ddd;
-
-    border-right: 1px solid #ddd;
-
-    border-bottom: 1px solid #ddd;
-}
 
 .chart {
 
