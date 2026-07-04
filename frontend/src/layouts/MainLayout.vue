@@ -23,7 +23,7 @@
             </el-menu-item>
 
             <el-menu-item index="/positions">
-                持仓管理
+                策略配置
             </el-menu-item>
 
             <el-menu-item index="/history">
