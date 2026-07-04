@@ -28,3 +28,15 @@ SHORT_CONFIG = (
     "user_data" /
     "config_short.json"
 )
+
+STRATEGY_LONG = (
+    BASE_DIR /
+    "config" /
+    "strategy_long.json"
+)
+
+STRATEGY_SHORT = (
+    BASE_DIR /
+    "config" /
+    "strategy_short.json"
+)

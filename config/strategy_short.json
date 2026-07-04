@@ -1,0 +1,85 @@
+{
+    "side": "short",
+    "entry": {
+
+        "rsi": {
+            "enable": true,
+            "period": 14,
+            "value": 70
+        },
+
+        "macd": {
+            "enable": true,
+            "fast": 12,
+            "slow": 26,
+            "signal": 9
+        },
+
+        "bb": {
+            "enable": false,
+            "period": 20,
+            "std": 2
+        },
+
+        "volume": {
+            "enable": true
+        }
+    },
+
+    "tp": {
+
+        "enable": true,
+
+        "levels": [
+            {
+                "profit": 1.5,
+                "sell": 25
+            },
+            {
+                "profit": 3,
+                "sell": 25
+            },
+            {
+                "profit": 5,
+                "sell": 50
+            }
+        ]
+    },
+
+    "sl": {
+
+        "enable": true,
+        "stoploss": -15
+    },
+
+    "dca": {
+
+        "enable": true,
+
+        "max_count": 8,
+
+        "levels": [
+            {
+                "drawdown": -3,
+                "amount": 1
+            },
+            {
+                "drawdown": -6,
+                "amount": 1.5
+            },
+            {
+                "drawdown": -10,
+                "amount": 2
+            }
+        ]
+    },
+
+    "grid": {
+
+        "enable": false,
+
+        "count": 10,
+
+        "distance": 1.5
+    }
+}

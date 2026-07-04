@@ -22,7 +22,7 @@
                 控制中心
             </el-menu-item>
 
-            <el-menu-item index="/positions">
+            <el-menu-item index="/strategyConfig">
                 策略配置
             </el-menu-item>
 

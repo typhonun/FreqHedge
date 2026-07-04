@@ -6,7 +6,7 @@ import {
 import MainLayout from "@/layouts/MainLayout.vue"
 
 import Dashboard from "@/views/Dashboard.vue"
-import Positions from "@/views/Positions.vue"
+import StrategyConfig from "@/views/StrategyConfig.vue"
 import History from "@/views/History.vue"
 import Charts from "@/views/Charts.vue"
 import Control from "@/views/Control.vue"
@@ -27,8 +27,8 @@ const routes = [
                 component: Control
             },
             {
-                path: "positions",
-                component: Positions
+                path: "strategyConfig",
+                component: StrategyConfig
             },
             {
                 path: "history",
