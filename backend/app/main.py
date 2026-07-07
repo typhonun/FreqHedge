@@ -7,6 +7,7 @@ from app.api.system import router as system_router
 from app.api.position import router as position_router
 from app.api.config import router as config_router
 from app.api.chart import router as chart_router
+from app.api import logs
 from app.api import strategy
 
 app = FastAPI()
@@ -69,4 +70,9 @@ app.include_router(
     strategy.router,
     prefix="/strategy",
     tags=["strategy"]
+)
+
+app.include_router(
+    logs.router,
+    prefix="/logs"
 )
