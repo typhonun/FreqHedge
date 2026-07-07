@@ -4,7 +4,7 @@
         "rsi": {
             "enable": true,
             "period": 14,
-            "value": 30
+            "value": 22
         },
         "macd": {
             "enable": true,
@@ -13,7 +13,7 @@
             "signal": 9
         },
         "bb": {
-            "enable": false,
+            "enable": true,
             "period": 20,
             "std": 2
         },
@@ -25,16 +25,68 @@
         "enable": true,
         "roi_levels": [
             {
-                "minutes": 0,
-                "roi": 4
+                "minutes": 1440,
+                "roi": 0
             },
             {
-                "minutes": 60,
+                "minutes": 720,
                 "roi": 2
             },
             {
+                "minutes": 480,
+                "roi": 4
+            },
+            {
+                "minutes": 360,
+                "roi": 6
+            },
+            {
+                "minutes": 300,
+                "roi": 8
+            },
+            {
                 "minutes": 240,
-                "roi": 1
+                "roi": 10
+            },
+            {
+                "minutes": 210,
+                "roi": 12
+            },
+            {
+                "minutes": 180,
+                "roi": 14
+            },
+            {
+                "minutes": 150,
+                "roi": 16
+            },
+            {
+                "minutes": 120,
+                "roi": 18
+            },
+            {
+                "minutes": 100,
+                "roi": 20
+            },
+            {
+                "minutes": 80,
+                "roi": 22
+            },
+            {
+                "minutes": 60,
+                "roi": 24
+            },
+            {
+                "minutes": 40,
+                "roi": 26
+            },
+            {
+                "minutes": 20,
+                "roi": 28
+            },
+            {
+                "minutes": 5,
+                "roi": 30
             }
         ],
         "reduce_percent": 30,
@@ -43,26 +95,7 @@
     },
     "sl": {
         "enable": true,
-        "stoploss": -15
-    },
-    "dca": {
-        "enable": true,
-        "max_count": 8,
-        "condition": "or",
-        "dca_pct": 1.0,
-        "cooldown_minutes": 60,
-        "levels": [
-            {
-                "drawdown": -5,
-                "rsi_limit": 21,
-                "j_limit": 0,
-                "amount": 1
-            }
-        ]
-    },
-    "loss_tp": {
-        "enable": true,
-        "target_wallet_percent": 5
+        "stoploss": -9
     },
     "trend_add": {
         "enable": true,
@@ -72,13 +105,44 @@
                 "profit": 2,
                 "rsi": 60,
                 "amount": 0.5
+            },
+            {
+                "profit": 4,
+                "rsi": 65,
+                "amount": 0.8
             }
         ]
     },
+    "dca": {
+        "enable": true,
+        "max_count": 7,
+        "condition": "or",
+        "cooldown_minutes": 60,
+        "levels": [
+            {
+                "drawdown": -3,
+                "rsi_limit": 25,
+                "j_limit": 10,
+                "amount": 1
+            },
+            {
+                "drawdown": -6,
+                "rsi_limit": 20,
+                "j_limit": 0,
+                "amount": 1.5
+            }
+        ]
+    },
+    "loss_tp": {
+        "enable": true,
+        "trigger_loss": -10,
+        "trigger_rebound": 2,
+        "target_wallet_percent": 5
+    },
     "grid": {
         "enable": true,
-        "grid_lower":-2,
-        "grid_upper":2,
+        "grid_lower": -2,
+        "grid_upper": 2,
         "buy_percent": 2,
         "sell_percent": 2,
         "cooldown_minutes": 30

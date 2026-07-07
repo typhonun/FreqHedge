@@ -13,6 +13,7 @@
         <StrategyPanel
             v-if="longConfig.entry"
             :config="longConfig"
+            :trade-info="longTradeInfo"
             @save="saveLong"
         />
 
@@ -29,6 +30,7 @@
         <StrategyPanel
             v-if="shortConfig.entry"
             :config="shortConfig"
+            :trade-info="shortTradeInfo"
             @save="saveShort"
         />
 
@@ -52,6 +54,8 @@ import {
 const {
     longConfig,
     shortConfig,
+    longTradeInfo,
+    shortTradeInfo,
     loadConfig,
     saveConfig
 } = useStrategyConfig()

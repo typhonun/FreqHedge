@@ -1,12 +1,21 @@
 import json
-
+from db import get_conn
 from config.settings import (
     STRATEGY_LONG,
     STRATEGY_SHORT
 )
+from app.core.config_manager import ConfigManager
 
 
 class StrategyService:
+
+    @staticmethod
+    def _strategy_path(side):
+        if side == "long":
+            return STRATEGY_LONG
+        if side == "short":
+            return STRATEGY_SHORT
+        raise ValueError(f"Unsupported strategy side: {side}")
 
     @staticmethod
     def read_json(path):
@@ -35,33 +44,83 @@ class StrategyService:
                 ensure_ascii=False
             )
 
-    @classmethod
-    def get_config(cls):
+    @staticmethod
+    def get_config():
+        conn = get_conn()
 
-        return {
-            "long": cls.read_json(
-                STRATEGY_LONG
-            ),
-            "short": cls.read_json(
-                STRATEGY_SHORT
-            )
+        rows = conn.execute("""
+            SELECT side, config_json
+            FROM strategy_config
+        """).fetchall()
+
+        conn.close()
+
+        result = {
+            "long": {},
+            "short": {}
         }
 
-    @classmethod
-    def save_config(cls, data):
+        for row in rows:
+            result[row["side"]] = json.loads(
+                row["config_json"]
+            )
 
+        for side, path in (
+            ("long", STRATEGY_LONG),
+            ("short", STRATEGY_SHORT)
+        ):
+            if result[side]:
+                continue
+
+            if path.exists():
+                result[side] = StrategyService.read_json(path)
+
+        return result
+
+    @staticmethod
+    def save_config(data):
+
+        print(
+            "保存RSI:",
+            config["entry"]["rsi"]["value"]
+        )
         side = data["side"]
 
-        path = (
-            STRATEGY_LONG
-            if side == "long"
-            else STRATEGY_SHORT
+        config = data["config"]
+        path = StrategyService._strategy_path(side)
+
+        conn = get_conn()
+
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO strategy_config
+            (
+                side,
+                config_json,
+                update_time
+            )
+            VALUES
+            (
+                ?,
+                ?,
+                CURRENT_TIMESTAMP
+            )
+            """,
+            (
+                side,
+                json.dumps(config)
+            )
         )
 
-        cls.write_json(
+        conn.commit()
+        conn.close()
+
+        StrategyService.write_json(
             path,
-            data["config"]
+            config
         )
+
+        ConfigManager.force_reload(side)
 
         return {
             "success": True
