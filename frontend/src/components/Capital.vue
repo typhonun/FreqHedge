@@ -6,57 +6,112 @@
         <el-card>
 
             <template #header>
-                多头配置
-            </template>
+
+                <div class="card-title">
+
+                📈 多头配置
+
+                </div>
+
+                </template>
 
             <el-form label-width="120px">
 
-                <el-form-item label="初始资金">
-                    <el-input-number
-                        v-model="longConfig.dry_run_wallet"
-                    />
-                </el-form-item>
+                <el-row :gutter="20">
 
-                <el-form-item label="下单金额">
-                    <el-input-number
-                        v-model="longConfig.stake_amount"
-                    />
-                </el-form-item>
+                    <el-col :span="12">
 
-                <el-form-item label="最大持仓">
-                    <el-input-number
-                        v-model="longConfig.max_open_trades"
-                    />
-                </el-form-item>
+                        <el-form-item label="初始资金">
 
-                <el-form-item label="资金利用率">
-                    <el-input-number
-                        v-model="longConfig.max_usage"
-                    />
-                </el-form-item>
+                            <el-input-number
+                                v-model="longConfig.dry_run_wallet"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                    <el-col :span="12">
+
+                        <el-form-item label="下单金额">
+
+                            <el-input-number
+                                v-model="longConfig.stake_amount"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                </el-row>
+
+                <el-row :gutter="20">
+
+                    <el-col :span="12">
+
+                        <el-form-item label="最大持仓">
+
+                            <el-input-number
+                                v-model="longConfig.max_open_trades"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                    <el-col :span="12">
+
+                        <el-form-item label="资金利用率">
+
+                            <el-input-number
+                                v-model="longConfig.max_usage"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                </el-row>
 
                 <el-form-item label="白名单">
+
                     <el-input
                         v-model="longWhitelist"
                         type="textarea"
-                        :rows="8"
+                        :rows="6"
+                        resize="none"
                     />
+
                 </el-form-item>
 
                 <el-form-item label="黑名单">
+
                     <el-input
                         v-model="longBlacklist"
                         type="textarea"
-                        :rows="4"
+                        :rows="3"
+                        resize="none"
                     />
+
                 </el-form-item>
 
-                <el-button
-                    type="primary"
-                    @click="saveLong"
-                >
-                    保存多头配置
-                </el-button>
+                <div class="save-area">
+
+                    <el-button
+                        type="primary"
+                        size="large"
+                        @click="saveLong"
+                    >
+
+                        保存多头配置
+
+                    </el-button>
+
+                </div>
 
             </el-form>
 
@@ -69,57 +124,112 @@
         <el-card>
 
             <template #header>
-                空头配置
+
+                <div class="card-title">
+
+                📉 空头配置
+
+                </div>
+
             </template>
 
             <el-form label-width="120px">
 
-                <el-form-item label="初始资金">
-                    <el-input-number
-                        v-model="shortConfig.dry_run_wallet"
-                    />
-                </el-form-item>
+                <el-row :gutter="20">
 
-                <el-form-item label="下单金额">
-                    <el-input-number
-                        v-model="shortConfig.stake_amount"
-                    />
-                </el-form-item>
+                    <el-col :span="12">
 
-                <el-form-item label="最大持仓">
-                    <el-input-number
-                        v-model="shortConfig.max_open_trades"
-                    />
-                </el-form-item>
+                        <el-form-item label="初始资金">
 
-                <el-form-item label="资金利用率">
-                    <el-input-number
-                        v-model="shortConfig.max_usage"
-                    />
-                </el-form-item>
+                            <el-input-number
+                                v-model="shortConfig.dry_run_wallet"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                    <el-col :span="12">
+
+                        <el-form-item label="下单金额">
+
+                            <el-input-number
+                                v-model="shortConfig.stake_amount"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                </el-row>
+
+                <el-row :gutter="20">
+
+                    <el-col :span="12">
+
+                        <el-form-item label="最大持仓">
+
+                            <el-input-number
+                                v-model="shortConfig.max_open_trades"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                    <el-col :span="12">
+
+                        <el-form-item label="资金利用率">
+
+                            <el-input-number
+                                v-model="shortConfig.max_usage"
+                                style="width:100%"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                </el-row>
 
                 <el-form-item label="白名单">
+
                     <el-input
                         v-model="shortWhitelist"
                         type="textarea"
-                        :rows="8"
+                        :rows="6"
+                        resize="none"
                     />
+
                 </el-form-item>
 
                 <el-form-item label="黑名单">
+
                     <el-input
                         v-model="shortBlacklist"
                         type="textarea"
-                        :rows="4"
+                        :rows="3"
+                        resize="none"
                     />
+
                 </el-form-item>
 
-                <el-button
-                    type="success"
-                    @click="saveShort"
-                >
-                    保存空头配置
-                </el-button>
+                <div class="save-area">
+
+                    <el-button
+                        type="primary"
+                        size="large"
+                        @click="saveShort"
+                    >
+
+                        保存空头配置
+
+                    </el-button>
+
+                </div>
 
             </el-form>
 
@@ -196,3 +306,22 @@ onMounted(() => {
 })
 
 </script>
+
+<style scoped>
+
+.card-title{
+
+    font-size:16px;
+
+    font-weight:700;
+}
+
+.save-area{
+
+    display:flex;
+
+    justify-content:center;
+
+    margin-top:20px;
+}
+</style>

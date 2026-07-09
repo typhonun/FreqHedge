@@ -1,25 +1,25 @@
 <template>
-  <div>
 
-    <el-row :gutter="20">
+<div>
 
-      <el-col :span="12">
-        <RunControl />
-      </el-col>
+  <StatusPanel />
 
-      <el-col :span="12">
-        <StatusPanel />
-      </el-col>
+  <br>
 
-    </el-row>
+  <RunControl />
 
-    <Capital />
+  <br>
 
-  </div>
+  <Capital />
+
+</div>
+
 </template>
 
 <script setup>
-import RunControl from "../components/RunControl.vue"
+
 import StatusPanel from "../components/StatusPanel.vue"
+import RunControl from "../components/RunControl.vue"
 import Capital from "../components/Capital.vue"
+
 </script>

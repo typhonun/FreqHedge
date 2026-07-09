@@ -2,7 +2,7 @@
 
 <el-card>
 
-    <h2>目前持倉</h2>
+    <h2>目前持仓</h2>
 
         <el-table
             :data="tableData"

@@ -26,10 +26,6 @@
                 策略配置
             </el-menu-item>
 
-            <el-menu-item index="/history">
-                交易历史
-            </el-menu-item>
-
             <el-menu-item index="/charts">
                 K线分析
             </el-menu-item>

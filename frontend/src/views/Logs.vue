@@ -231,7 +231,7 @@ onUnmounted(() => {
 
 .log-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 10px;
   padding: 5px 0;
   border-bottom: 1px solid #222;
