@@ -1,10 +1,60 @@
 from fastapi import APIRouter
 import ccxt
 import json
+import time
+import threading
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 router = APIRouter()
+kline_cache = {}
+
+exchange = ccxt.binance({
+    "enableRateLimit": True,
+    "options": {
+        "defaultType": "future"
+    }
+})
+
+
+def load_whitelist_pairs():
+
+    pairs = set()
+
+    config_files = [
+
+        BASE_DIR / "freqtrade/user_data/config_long.json",
+
+        BASE_DIR / "freqtrade/user_data/config_short.json"
+
+    ]
+
+    for cfg in config_files:
+
+        if not cfg.exists():
+            continue
+
+        try:
+
+            with open(
+                cfg,
+                "r",
+                encoding="utf8"
+            ) as f:
+
+                data = json.load(f)
+
+            pairs.update(
+                data["exchange"]["pair_whitelist"]
+            )
+
+        except Exception as e:
+
+            print(
+                f"读取配置失败: {e}"
+            )
+
+    return list(pairs)
 
 
 @router.get("/strategies")
@@ -34,11 +84,16 @@ def get_candles(
         pair: str,
         timeframe: str = "5m"
 ):
-    exchange = ccxt.binance({
-        "options": {
-            "defaultType": "future"
-        }
-    })
+    key = f"{pair}_{timeframe}"
+
+    now = time.time()
+
+    if key in kline_cache:
+
+        cache_time, data = kline_cache[key]
+
+        if now - cache_time < 300:
+            return data
 
     ohlcv = exchange.fetch_ohlcv(
         pair,
@@ -46,7 +101,7 @@ def get_candles(
         limit=2000
     )
 
-    return [
+    data = [
         {
             "time": c[0],
             "open": c[1],
@@ -58,18 +113,25 @@ def get_candles(
         for c in ohlcv
     ]
 
+    kline_cache[key] = (
+        now,
+        data
+    )
+
+    return data
+
 
 @router.get("/latest")
 def latest_candle(
         pair: str,
-        timeframe: str = "5m"
+        timeframe: str = "30m"
 ):
+    key = f"{pair}_{timeframe}"
 
-    exchange = ccxt.binance({
-        "options": {
-            "defaultType": "future"
-        }
-    })
+    if key in kline_cache:
+        data = kline_cache[key][1]
+
+        return data[-1]
 
     candle = exchange.fetch_ohlcv(
         pair,
@@ -85,3 +147,81 @@ def latest_candle(
         "close": candle[4],
         "volume": candle[5]
     }
+
+
+def cache_refresh_loop():
+    warmup_cache()
+
+    while True:
+
+        try:
+
+            warmup_cache()
+
+        except Exception as e:
+
+            print(
+                f"缓存刷新失败: {e}"
+            )
+
+        time.sleep(60)
+
+
+def warmup_cache():
+
+    print(
+        "\n===== 开始预热K线缓存 ====="
+    )
+
+    pairs = load_whitelist_pairs()
+
+    timeframes = [
+        "30m"
+    ]
+
+    for pair in pairs:
+
+        for tf in timeframes:
+
+            try:
+
+                key = f"{pair}_{tf}"
+
+                print(
+                    f"预热: {key}"
+                )
+
+                ohlcv = exchange.fetch_ohlcv(
+                    pair,
+                    timeframe=tf,
+                    limit=1000
+                )
+
+                data = [
+
+                    {
+                        "time": c[0],
+                        "open": c[1],
+                        "high": c[2],
+                        "low": c[3],
+                        "close": c[4],
+                        "volume": c[5]
+                    }
+
+                    for c in ohlcv
+                ]
+
+                kline_cache[key] = (
+                    time.time(),
+                    data
+                )
+
+            except Exception as e:
+
+                print(
+                    f"{pair} 预热失败: {e}"
+                )
+
+    print(
+        "===== K线缓存预热完成 =====\n"
+    )

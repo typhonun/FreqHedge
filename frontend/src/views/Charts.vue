@@ -98,6 +98,8 @@ const pair = ref("")
 
 const timeframe = ref("30m")
 
+const chartCache = new Map()
+
 const timeframes = [
     "1m",
     "5m",
@@ -166,6 +168,20 @@ const startAutoRefresh = () => {
 
 const loadChart = async () => {
 
+    const key =
+        `${pair.value}_${timeframe.value}`
+
+    if(chartCache.has(key)){
+
+        candleSeries.setData(
+            chartCache.get(key)
+        )
+
+        startAutoRefresh()
+
+        return
+    }
+
     const res =
         await axios.get(
             `${API}/chart/candles`,
@@ -211,6 +227,13 @@ const loadChart = async () => {
         handleScale: true
     })
 
+    chartCache.set(
+        key,
+        data
+    )
+
+    candleSeries.setData(data)
+    
     startAutoRefresh()
 }
 

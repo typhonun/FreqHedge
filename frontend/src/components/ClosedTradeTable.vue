@@ -2,7 +2,7 @@
 
 <el-card>
 
-    <h2>已平倉交易</h2>
+    <h2>已平仓交易</h2>
 
     <el-table
         :data="tableData"

@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from threading import Thread
+from app.api.chart import cache_refresh_loop
 
 from app.api.trade import router as trade_router
 from app.api.control import router as control_router
@@ -76,3 +78,15 @@ app.include_router(
     logs.router,
     prefix="/logs"
 )
+
+@app.on_event("startup")
+def startup_event():
+
+    Thread(
+        target=cache_refresh_loop,
+        daemon=True
+    ).start()
+
+    print("K线缓存预热线程已启动")
+
+    
