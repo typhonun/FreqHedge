@@ -69,6 +69,23 @@
     class="chart"
 ></div>
 
+<el-card
+    v-if="strategyPositions.length"
+    class="position-card"
+>
+
+    <template #header>
+
+        当前持仓
+
+    </template>
+
+    <PositionTableCommon
+        :positions="strategyPositions"
+    />
+
+</el-card>
+
 </template>
 
 <script setup>
@@ -84,6 +101,9 @@ from "vue"
 
 import { createChart, CandlestickSeries } from "lightweight-charts"
 
+import PositionTableCommon
+from "@/components/PositionTableCommon.vue"
+
 const API = "http://localhost:9000"
 
 const chartRef = ref(null)
@@ -91,6 +111,8 @@ const chartRef = ref(null)
 const strategies = ref([])
 
 const pairs = ref([])
+
+const strategyPositions = ref([])
 
 const strategy = ref("")
 
@@ -137,6 +159,8 @@ const loadStrategies = async () => {
 }
 
 const loadPairs = async () => {
+
+    await loadCurrentPositions()
 
     const res =
         await axios.get(
@@ -233,7 +257,7 @@ const loadChart = async () => {
     )
 
     candleSeries.setData(data)
-    
+
     startAutoRefresh()
 }
 
@@ -273,6 +297,16 @@ const updateLastCandle = async () => {
             e
         )
     }
+}
+
+const loadCurrentPositions = async () => {
+
+    const res =
+        await axios.get(
+            `${API}/chart/strategy-positions/${strategy.value}`
+        )
+
+    strategyPositions.value = res.data
 }
 
 onMounted(async () => {
@@ -360,6 +394,37 @@ onUnmounted(() => {
     height: 700px;
 
     border: 1px solid #ddd;
+}
+
+.position-card{
+
+    margin-top:20px;
+}
+
+.position-list{
+
+    display:flex;
+
+    flex-wrap:wrap;
+
+    gap:12px;
+}
+
+.position-card{
+
+    margin-top:20px;
+}
+
+.profit{
+
+    color:#67c23a;
+    font-weight:700;
+}
+
+.loss{
+
+    color:#f56c6c;
+    font-weight:700;
 }
 
 </style>

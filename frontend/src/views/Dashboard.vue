@@ -23,9 +23,15 @@
 
     <br />
 
-    <PositionTable
-        :positions="store.positions"
-    />
+    <el-card>
+
+        <h2>目前持仓</h2>
+
+        <PositionTableCommon
+            :positions="store.positions"
+        />
+
+    </el-card>
 
     <br />
 
@@ -41,7 +47,7 @@ import { onMounted } from "vue"
 
 import AccountCard from "../components/AccountCard.vue"
 import ProfitCard from "../components/ProfitCard.vue"
-import PositionTable from "../components/PositionTable.vue"
+import PositionTableCommon from "@/components/PositionTableCommon.vue"
 import ClosedTradeTable from "../components/ClosedTradeTable.vue"
 
 import { useTradeStore } from "../stores/tradeStore"

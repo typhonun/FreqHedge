@@ -2,7 +2,7 @@ from fastapi import APIRouter
 import ccxt
 import json
 import time
-import threading
+from app.services.position_service import PositionService
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -18,7 +18,6 @@ exchange = ccxt.binance({
 
 
 def load_whitelist_pairs():
-
     pairs = set()
 
     config_files = [
@@ -37,9 +36,9 @@ def load_whitelist_pairs():
         try:
 
             with open(
-                cfg,
-                "r",
-                encoding="utf8"
+                    cfg,
+                    "r",
+                    encoding="utf8"
             ) as f:
 
                 data = json.load(f)
@@ -149,6 +148,33 @@ def latest_candle(
     }
 
 
+@router.get("/strategy-positions/{strategy}")
+def get_strategy_positions(strategy: str):
+    positions = PositionService.get_open_positions()
+
+    if strategy == "DcaTpLong":
+
+        return [
+            {
+                **p,
+                "side": "LONG"
+            }
+            for p in positions["long"]
+        ]
+
+    elif strategy == "DcaTpShort":
+
+        return [
+            {
+                **p,
+                "side": "SHORT"
+            }
+            for p in positions["short"]
+        ]
+
+    return []
+
+
 def cache_refresh_loop():
     warmup_cache()
 
@@ -168,7 +194,6 @@ def cache_refresh_loop():
 
 
 def warmup_cache():
-
     print(
         "\n===== 开始预热K线缓存 ====="
     )

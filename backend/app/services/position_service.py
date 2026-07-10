@@ -1,9 +1,15 @@
 from .freqtrade_service import FreqtradeService
+import time
 
 from config.settings import (
     LONG_URL,
     SHORT_URL
 )
+
+position_cache = {
+    "time": 0,
+    "data": None
+}
 
 
 class PositionService:
@@ -11,10 +17,30 @@ class PositionService:
     @staticmethod
     def get_open_positions():
 
-        return {
-            "long": FreqtradeService.get_status(LONG_URL),
-            "short": FreqtradeService.get_status(SHORT_URL)
+        now = time.time()
+
+        if (
+                position_cache["data"]
+                and now - position_cache["time"] < 5
+        ):
+            return position_cache["data"]
+
+        data = {
+            "long":
+                FreqtradeService.get_status(
+                    LONG_URL
+                ),
+
+            "short":
+                FreqtradeService.get_status(
+                    SHORT_URL
+                )
         }
+
+        position_cache["time"] = now
+        position_cache["data"] = data
+
+        return data
 
     @staticmethod
     def get_position_count():
