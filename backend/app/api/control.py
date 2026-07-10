@@ -2,8 +2,18 @@ from fastapi import APIRouter
 
 from app.services.freqtrade_service import FreqtradeService
 from app.services.config_service import ConfigService
+from pydantic import BaseModel
+from app.services.position_service import PositionService
 
 router = APIRouter()
+
+
+class ForceEnterRequest(BaseModel):
+    side: str
+
+    pair: str
+
+    stakeamount: float
 
 
 @router.post("/start")
@@ -35,6 +45,7 @@ def stopentry(data: dict):
 def delete_trade():
     return FreqtradeService.delete_trade()
 
+
 @router.get("/config")
 def get_config():
     return ConfigService.get_config()
@@ -43,3 +54,24 @@ def get_config():
 @router.post("/config")
 def save_config(data: dict):
     return ConfigService.save_config(data)
+
+
+@router.get("/available_pairs/{side}")
+def available_pairs(side: str):
+    return PositionService.get_available_pairs(
+        side
+    )
+
+
+@router.post("/force_enter")
+def force_enter(
+        data: ForceEnterRequest
+):
+    return PositionService.force_enter(
+
+        side=data.side,
+
+        pair=data.pair,
+
+        stakeamount=data.stakeamount
+    )

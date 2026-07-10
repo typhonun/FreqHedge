@@ -17,6 +17,25 @@ class FreqtradeService:
     auth = (AUTH_USER, AUTH_PASSWORD)
 
     @classmethod
+    def post(
+            cls,
+            url,
+            endpoint,
+            payload=None
+    ):
+
+        r = requests.post(
+            f"{url}{endpoint}",
+            json=payload or {},
+            auth=cls.auth,
+            timeout=20
+        )
+
+        r.raise_for_status()
+
+        return r.json()
+
+    @classmethod
     def get_status(cls, url):
         r = requests.get(
             f"{url}/api/v1/status",
@@ -244,3 +263,41 @@ class FreqtradeService:
                 "SHORT PID:",
                 runtime.SHORT_PROCESS.pid
             )
+
+    @classmethod
+    def get_whitelist(cls, url):
+
+        r = requests.get(
+            f"{url}/api/v1/whitelist",
+            auth=cls.auth,
+            timeout=10
+        )
+
+        return r.json()
+
+    @classmethod
+    def force_enter(
+            cls,
+            side: str,
+            pair: str,
+            stakeamount: float
+    ):
+
+        base_url = (
+            LONG_URL
+            if side == "long"
+            else SHORT_URL
+        )
+
+        payload = {
+            "pair": pair,
+            "side": side,
+            "stakeamount": stakeamount,
+            "ordertype": "market"
+        }
+
+        return cls.post(
+            base_url,
+            "/api/v1/forceenter",
+            payload
+        )

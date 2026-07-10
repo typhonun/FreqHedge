@@ -188,3 +188,171 @@ class PositionService:
                 if not t.get("is_open", True)
             ]
         }
+
+    @staticmethod
+    def trade_action(
+            trade_id: int,
+            side: str,
+            action: str,
+            amount: float = None,
+            price: float = None
+    ):
+
+        base_url = (
+            LONG_URL
+            if side == "LONG"
+            else SHORT_URL
+        )
+
+        # ===================
+        # 市价退出
+        # ===================
+
+        if action == "market_exit":
+
+            payload = {
+                "tradeid": trade_id
+            }
+
+            if amount:
+                payload["amount"] = amount
+
+            return FreqtradeService.post(
+                base_url,
+                "/api/v1/forceexit",
+                payload
+            )
+
+        # ===================
+        # 限价退出
+        # ===================
+
+        elif action == "limit_exit":
+
+            payload = {
+                "tradeid": trade_id,
+                "ordertype": "limit",
+                "rate": price
+            }
+
+            if amount:
+                payload["amount"] = amount
+
+            return FreqtradeService.post(
+                base_url,
+                "/api/v1/forceexit",
+                payload
+            )
+
+        # ===================
+        # 加仓
+        # ===================
+
+        elif action == "increase":
+
+            endpoint = "/api/v1/forceenter"
+
+            positions = PositionService.get_open_positions()
+
+            trades = (
+
+                positions["long"]
+
+                if side == "LONG"
+
+                else positions["short"]
+
+            )
+
+            trade = next(
+
+                (
+
+                    t
+
+                    for t in trades
+
+                    if t["trade_id"] == trade_id
+
+                ),
+
+                None
+
+            )
+
+            if not trade:
+                raise Exception("Trade not found")
+
+            payload = {
+
+                "pair": trade["pair"],
+
+                "side": "long" if side == "LONG" else "short",
+
+                "stakeamount": amount,
+
+                "ordertype": "market"
+
+            }
+
+            return FreqtradeService.post(
+
+                base_url,
+
+                endpoint,
+
+                payload
+
+            )
+
+    @staticmethod
+    def get_available_pairs(side: str):
+
+        base_url = (
+            LONG_URL
+            if side == "long"
+            else SHORT_URL
+        )
+
+        whitelist_resp = FreqtradeService.get_whitelist(
+            base_url
+        )
+
+        whitelist = whitelist_resp.get(
+            "whitelist",
+            []
+        )
+
+        positions = PositionService.get_open_positions()
+
+        opened_pairs = {
+
+            trade["pair"]
+
+            for trade in (
+                positions["long"]
+                + positions["short"]
+            )
+        }
+
+        return [
+
+            pair
+
+            for pair in whitelist
+
+            if pair not in opened_pairs
+        ]
+
+    @staticmethod
+    def force_enter(
+            side: str,
+            pair: str,
+            stakeamount: float
+    ):
+
+        return FreqtradeService.force_enter(
+            side,
+            pair,
+            stakeamount
+        )

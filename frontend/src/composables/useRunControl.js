@@ -10,6 +10,21 @@ export function useRunControl() {
     const enableShort = ref(true)
     const dryRun = ref(false)
 
+    const forceEnterVisible = ref(false)
+
+    const pairList = ref([])
+
+    const selectedPair = ref("")
+
+    const stakeAmount = ref(20)
+
+    const forceSide = ref("long")
+
+    const configCache = ref({
+        longStake: 20,
+        shortStake: 20
+    })
+
     const reload = () =>
         post("/control/reload")
 
@@ -92,7 +107,64 @@ export function useRunControl() {
         }catch{}
     }
 
+    const openForceEnter = async (side) => {
+
+        forceSide.value = side
+
+        // 读取配置
+        const configRes = await axios.get(
+            `${API}/control/config`
+        )
+
+        if (side === "long") {
+
+            stakeAmount.value =
+                configRes.data.long.stake_amount
+
+        } else {
+
+            stakeAmount.value =
+                configRes.data.short.stake_amount
+        }
+
+        const { data } = await axios.get(
+            `${API}/control/available_pairs/${side}`
+        )
+
+        pairList.value = data
+
+        selectedPair.value = ""
+
+        forceEnterVisible.value = true
+    }
+
+    const submitForceEnter = async () => {
+
+        if (!selectedPair.value) {
+
+            ElMessage.warning(
+                "请选择交易对"
+            )
+
+            return
+        }
+
+        await axios.post(
+            `${API}/control/force_enter`,
+            {
+                side: forceSide.value,
+                pair: selectedPair.value,
+                stakeamount: stakeAmount.value
+            }
+        )
+
+        ElMessage.success("开仓成功")
+
+        forceEnterVisible.value = false
+    }
+
     return {
+
         enableLong,
         enableShort,
         dryRun,
@@ -105,6 +177,14 @@ export function useRunControl() {
         confirmReload,
         confirmDeleteTrade,
 
-        updateStopEntry
+        updateStopEntry,
+
+        forceEnterVisible,
+        pairList,
+        selectedPair,
+        stakeAmount,
+
+        openForceEnter,
+        submitForceEnter
     }
 }

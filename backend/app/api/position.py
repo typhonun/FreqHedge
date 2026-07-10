@@ -1,8 +1,21 @@
 from fastapi import APIRouter
 
 from app.services.position_service import PositionService
+from pydantic import BaseModel
 
 router = APIRouter()
+
+
+class PositionAction(BaseModel):
+    trade_id: int
+
+    side: str
+
+    action: str
+
+    amount: float | None = None
+
+    price: float | None = None
 
 
 @router.get("/open")
@@ -33,3 +46,22 @@ def profit():
 @router.get("/floating")
 def floating():
     return PositionService.get_floating_profit()
+
+
+@router.post("/action")
+def position_action(
+        data: PositionAction
+):
+
+    return PositionService.trade_action(
+
+        trade_id=data.trade_id,
+
+        side=data.side,
+
+        action=data.action,
+
+        amount=data.amount,
+
+        price=data.price
+    )

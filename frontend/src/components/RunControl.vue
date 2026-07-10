@@ -114,9 +114,96 @@
 
 </div>
 
+<div class="switch-item">
+
+  <span>🚀 手动开仓</span>
+
+  <div>
+
+    <el-button
+      size="small"
+      type="success"
+      @click="openForceEnter('long')"
+    >
+      立即开多
+    </el-button>
+
+    <el-button
+      size="small"
+      type="danger"
+      @click="openForceEnter('short')"
+    >
+      立即开空
+    </el-button>
+
+  </div>
+
+</div>
+
   </div>
 
 </el-card>
+
+<el-dialog
+    v-model="forceEnterVisible"
+    title="立即开仓"
+    width="25%"
+    class="force-enter-dialog"
+>
+
+    <el-form
+        label-position="top"
+        class="force-form"
+    >
+
+        <el-form-item label="交易对">
+
+            <el-select
+                v-model="selectedPair"
+                filterable
+            >
+
+                <el-option
+                    v-for="pair in pairList"
+                    :key="pair"
+                    :label="pair"
+                    :value="pair"
+                />
+
+            </el-select>
+
+        </el-form-item>
+
+        <el-form-item label="金额">
+
+            <el-input-number
+                v-model="stakeAmount"
+                :min="1"
+                style="width:100%"
+            />
+
+        </el-form-item>
+
+    </el-form>
+
+    <template #footer>
+
+        <el-button
+            @click="forceEnterVisible=false"
+        >
+            取消
+        </el-button>
+
+        <el-button
+            type="primary"
+            @click="submitForceEnter"
+        >
+            开仓
+        </el-button>
+
+    </template>
+
+</el-dialog>
 
 </template>
 
@@ -139,7 +226,15 @@ const {
     confirmReload,
     confirmDeleteTrade,
 
-    updateStopEntry
+    updateStopEntry,
+
+    forceEnterVisible,
+    pairList,
+    selectedPair,
+    stakeAmount,
+
+    openForceEnter,
+    submitForceEnter
 
 } = useRunControl()
 
@@ -210,4 +305,32 @@ const {
 .switch-item:hover{
     background:#f4f4f5;
 }
+
+:deep(.force-enter-dialog .el-dialog__body){
+
+    min-height: 300px;
+
+    display:flex;
+
+    align-items:center;
+
+    justify-content:center;
+}
+
+.force-form{
+
+    width:100%;
+
+    display:flex;
+
+    flex-direction:column;
+
+    align-items:center;
+}
+
+.force-form .el-form-item{
+
+    width:80%;
+}
+
 </style>
