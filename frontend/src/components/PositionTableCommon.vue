@@ -293,8 +293,8 @@ const normalizedPositions = computed(() => {
 
     return result.sort(
         (a, b) =>
-            Number(b.profit_abs || 0) -
-            Number(a.profit_abs || 0)
+            Number(b.total_profit_abs  || 0) -
+            Number(a.total_profit_abs  || 0)
     )
 })
 

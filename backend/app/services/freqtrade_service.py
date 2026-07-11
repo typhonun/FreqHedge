@@ -134,31 +134,88 @@ class FreqtradeService:
             return {"success": False, "error": str(e)}
 
     @classmethod
+    def get_bot_state(cls, url):
+
+        r = requests.get(
+            f"{url}/api/v1/status",
+            auth=cls.auth,
+            timeout=10
+        )
+
+        data = r.json()
+
+        if isinstance(data, dict):
+            return str(
+                data.get("state", "")
+            ).upper()
+
+        return ""
+
+    @classmethod
     def stop_entry(cls, data: dict):
+
+        # LONG
+
         if data["long"]:
+
             requests.post(
                 f"{LONG_URL}/api/v1/stopentry",
                 auth=cls.auth
             )
+
         else:
+
             requests.post(
                 f"{LONG_URL}/api/v1/startentry",
                 auth=cls.auth
             )
 
+            state = cls.get_bot_state(
+                LONG_URL
+            )
+
+            if state == "PAUSED":
+                requests.post(
+                    f"{LONG_URL}/api/v1/start",
+                    auth=cls.auth
+                )
+
+        # SHORT
+
         if data["short"]:
+
             requests.post(
                 f"{SHORT_URL}/api/v1/stopentry",
                 auth=cls.auth
             )
+
         else:
+
             requests.post(
                 f"{SHORT_URL}/api/v1/startentry",
                 auth=cls.auth
             )
 
+            state = cls.get_bot_state(
+                SHORT_URL
+            )
+
+            if state == "PAUSED":
+                requests.post(
+                    f"{SHORT_URL}/api/v1/start",
+                    auth=cls.auth
+                )
+
         return {
             "success": True
+        }
+
+    @classmethod
+    def get_stop_entry_status(cls):
+
+        return {
+            "long": runtime.STOP_ENTRY["long"],
+            "short": runtime.STOP_ENTRY["short"]
         }
 
     @classmethod

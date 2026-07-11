@@ -41,6 +41,11 @@ def stopentry(data: dict):
     return FreqtradeService.stop_entry(data)
 
 
+@router.get("/stopentry")
+def get_stopentry():
+    return FreqtradeService.get_stop_entry_status()
+
+
 @router.post("/delete_trade")
 def delete_trade():
     return FreqtradeService.delete_trade()

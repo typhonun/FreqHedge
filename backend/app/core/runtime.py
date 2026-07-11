@@ -5,3 +5,8 @@ RUNNING = {
     "long": False,
     "short": False
 }
+
+STOP_ENTRY = {
+    "long": False,
+    "short": False
+}

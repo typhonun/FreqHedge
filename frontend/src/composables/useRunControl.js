@@ -65,10 +65,31 @@ export function useRunControl() {
     }
 
     const updateStopEntry = async () => {
-        await post("/control/stopentry", {
-            long: stopLongEntry.value,
-            short: stopShortEntry.value
-        })
+
+        try {
+
+            await post(
+                "/control/stopentry",
+                {
+                    long: stopLongEntry.value,
+                    short: stopShortEntry.value
+                }
+            )
+
+            await loadStopEntryStatus()
+
+            ElMessage.success(
+                "状态已更新"
+            )
+
+        } catch (e) {
+
+            await loadStopEntryStatus()
+
+            ElMessage.error(
+                "更新失败"
+            )
+        }
     }
 
     const confirmReload = async () => {
@@ -163,6 +184,28 @@ export function useRunControl() {
         forceEnterVisible.value = false
     }
 
+
+    const loadStopEntryStatus = async () => {
+
+        try {
+
+            const { data } =
+                await axios.get(
+                    `${API}/control/stopentry`
+                )
+
+            stopLongEntry.value =
+                data.long
+
+            stopShortEntry.value =
+                data.short
+
+        } catch (e) {
+
+            console.error(e)
+        }
+    }
+
     return {
 
         enableLong,
@@ -185,6 +228,8 @@ export function useRunControl() {
         stakeAmount,
 
         openForceEnter,
-        submitForceEnter
+        submitForceEnter,
+        loadStopEntryStatus
     }
+
 }

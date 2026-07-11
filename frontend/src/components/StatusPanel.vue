@@ -5,7 +5,7 @@
     <template #header>
 
         <div class="panel-header">
-            🤖 Bot 状态中心
+            🤖 Bot 监控中心
         </div>
 
     </template>

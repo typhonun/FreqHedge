@@ -212,6 +212,7 @@
 import { useRunControl }
 from "../composables/useRunControl"
 
+import { onMounted } from "vue"
 const {
 
     enableLong,
@@ -234,9 +235,14 @@ const {
     stakeAmount,
 
     openForceEnter,
-    submitForceEnter
+    submitForceEnter,
+    loadStopEntryStatus
 
 } = useRunControl()
+
+onMounted(() => {
+    loadStopEntryStatus()
+})
 
 </script>
 

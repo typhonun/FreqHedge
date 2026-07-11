@@ -79,14 +79,12 @@ app.include_router(
     prefix="/logs"
 )
 
+
 @app.on_event("startup")
 def startup_event():
-
     Thread(
         target=cache_refresh_loop,
         daemon=True
     ).start()
 
     print("K线缓存预热线程已启动")
-
-    
