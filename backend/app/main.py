@@ -2,7 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from threading import Thread
 from app.api.chart import cache_refresh_loop
-
+import threading
+from app.services.risk_service import RiskService
+from app.services.risk_config_service import RiskConfigService
 from app.api.trade import router as trade_router
 from app.api.control import router as control_router
 from app.api.system import router as system_router
@@ -30,6 +32,26 @@ app.add_middleware(
 @app.get("/")
 def root():
     return "ok"
+
+
+@app.on_event("startup")
+async def startup():
+
+    RiskConfigService.load()
+
+    threading.Thread(
+        target=RiskService.monitor,
+        daemon=True
+    ).start()
+
+    Thread(
+        target=cache_refresh_loop,
+        daemon=True
+    ).start()
+
+    print(
+        "K线缓存预热线程已启动"
+    )
 
 
 app.include_router(
@@ -78,13 +100,3 @@ app.include_router(
     logs.router,
     prefix="/logs"
 )
-
-
-@app.on_event("startup")
-def startup_event():
-    Thread(
-        target=cache_refresh_loop,
-        daemon=True
-    ).start()
-
-    print("K线缓存预热线程已启动")

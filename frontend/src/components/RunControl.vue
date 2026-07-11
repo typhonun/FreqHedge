@@ -54,6 +54,62 @@
 
   <el-divider />
 
+<div class="section-title">
+  全局止盈止损
+</div>
+
+<div class="switch-grid">
+
+  <div class="switch-item">
+
+    <span>🎯 启用全局止盈</span>
+
+    <el-switch
+      v-model="globalTpEnabled"
+      @change="saveRiskConfig"
+    />
+
+  </div>
+
+  <div class="switch-item">
+
+    <span>🛑 启用全局止损</span>
+
+    <el-switch
+      v-model="globalSlEnabled"
+      @change="saveRiskConfig"
+    />
+
+  </div>
+
+  <div class="switch-item">
+
+    <span>止盈%</span>
+
+    <el-input-number
+      v-model="globalTpPercent"
+      :step="0.5"
+      @change="saveRiskConfig"
+    />
+
+  </div>
+
+  <div class="switch-item">
+
+    <span>止损%</span>
+
+    <el-input-number
+      v-model="globalSlPercent"
+      :step="0.5"
+      @change="saveRiskConfig"
+    />
+
+  </div>
+
+</div>
+
+  <el-divider />
+
   <!-- 运行模式 -->
 
   <div class="section-title">
@@ -236,12 +292,25 @@ const {
 
     openForceEnter,
     submitForceEnter,
-    loadStopEntryStatus
+    loadStopEntryStatus,
+
+    globalTpEnabled,
+    globalSlEnabled,
+
+    globalTpPercent,
+    globalSlPercent,
+
+    loadRiskConfig,
+    saveRiskConfig
 
 } = useRunControl()
 
-onMounted(() => {
-    loadStopEntryStatus()
+onMounted(async () => {
+
+    await loadStopEntryStatus()
+
+    await loadRiskConfig()
+
 })
 
 </script>

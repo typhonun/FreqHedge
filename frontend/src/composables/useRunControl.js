@@ -20,6 +20,12 @@ export function useRunControl() {
 
     const forceSide = ref("long")
 
+    const globalTpEnabled = ref(false)
+    const globalSlEnabled = ref(false)
+
+    const globalTpPercent = ref(5)
+    const globalSlPercent = ref(-20)
+
     const configCache = ref({
         longStake: 20,
         shortStake: 20
@@ -206,6 +212,51 @@ export function useRunControl() {
         }
     }
 
+    const loadRiskConfig = async () => {
+
+        const { data } =
+            await axios.get(
+                `${API}/control/risk-config`
+            )
+
+        globalTpEnabled.value =
+            data.global_tp_enabled
+
+        globalSlEnabled.value =
+            data.global_sl_enabled
+
+        globalTpPercent.value =
+            data.global_tp_percent
+
+        globalSlPercent.value =
+            data.global_sl_percent
+    }
+
+    const saveRiskConfig = async () => {
+
+        await axios.post(
+            `${API}/control/risk-config`,
+            {
+
+                global_tp_enabled:
+                    globalTpEnabled.value,
+
+                global_sl_enabled:
+                    globalSlEnabled.value,
+
+                global_tp_percent:
+                    globalTpPercent.value,
+
+                global_sl_percent:
+                    globalSlPercent.value
+            }
+        )
+
+        ElMessage.success(
+            "已保存"
+        )
+    }
+
     return {
 
         enableLong,
@@ -229,7 +280,16 @@ export function useRunControl() {
 
         openForceEnter,
         submitForceEnter,
-        loadStopEntryStatus
+        loadStopEntryStatus,
+        
+        globalTpEnabled,
+        globalSlEnabled,
+
+        globalTpPercent,
+        globalSlPercent,
+
+        loadRiskConfig,
+        saveRiskConfig
     }
 
 }

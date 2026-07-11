@@ -1,10 +1,11 @@
 from fastapi import APIRouter
 
+from app.core import runtime
 from app.services.freqtrade_service import FreqtradeService
 from app.services.config_service import ConfigService
 from pydantic import BaseModel
 from app.services.position_service import PositionService
-
+from app.services.risk_config_service import RiskConfigService
 router = APIRouter()
 
 
@@ -80,3 +81,28 @@ def force_enter(
 
         stakeamount=data.stakeamount
     )
+
+
+@router.get("/round-info")
+def get_round_info():
+
+    return runtime.ROUND_INFO
+
+
+@router.get("/risk-config")
+def get_risk_config():
+    return runtime.GLOBAL_RISK
+
+
+@router.post("/risk-config")
+def save_risk_config(data: dict):
+
+    runtime.GLOBAL_RISK.update(data)
+
+    RiskConfigService.save(
+        runtime.GLOBAL_RISK
+    )
+
+    return {
+        "success": True
+    }

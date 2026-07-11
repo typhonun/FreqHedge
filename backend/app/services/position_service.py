@@ -356,3 +356,58 @@ class PositionService:
             pair,
             stakeamount
         )
+
+    @staticmethod
+    def get_closed_profit():
+
+        closed = PositionService.get_closed_positions()
+        if closed["long"]:
+            print(closed["long"][0])
+            
+        total = 0
+
+        for trade in closed["long"]:
+            total += trade.get(
+                "close_profit_abs",
+                0
+            )
+
+        for trade in closed["short"]:
+            total += trade.get(
+                "close_profit_abs",
+                0
+            )
+
+        return round(total, 2)
+
+    @staticmethod
+    def get_all_positions():
+
+        positions = \
+            PositionService.get_open_positions()
+
+        result = []
+
+        for trade in positions["long"]:
+            trade["side"] = "LONG"
+
+            result.append(trade)
+
+        for trade in positions["short"]:
+            trade["side"] = "SHORT"
+
+            result.append(trade)
+
+        return result
+
+    @staticmethod
+    def force_exit(
+            trade_id,
+            side
+    ):
+
+        return PositionService.trade_action(
+            trade_id=trade_id,
+            side=side,
+            action="market_exit"
+        )

@@ -1,0 +1,6 @@
+{
+    "global_tp_enabled": true,
+    "global_sl_enabled": true,
+    "global_tp_percent": 2,
+    "global_sl_percent": -10
+}
