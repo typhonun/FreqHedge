@@ -10,7 +10,19 @@
     <el-table-column
         prop="pair"
         label="交易對"
-    />
+    >
+        <template #default="scope">
+
+            <el-link
+                type="primary"
+                :underline="false"
+                @click="goToChart(scope.row)"
+            >
+                {{ scope.row.pair }}
+            </el-link>
+
+        </template>
+    </el-table-column>
 
     <el-table-column
         prop="side"
@@ -30,12 +42,14 @@
 
     <el-table-column
         prop="open_rate"
-        label="開倉價"
+        label="开仓价"
+        :formatter="formatPrice"
     />
 
     <el-table-column
         prop="current_rate"
         label="当前价"
+        :formatter="formatPrice"
     />
 
     <el-table-column
@@ -58,7 +72,8 @@
 
     <el-table-column
         prop="open_date"
-        label="開倉時間"
+        label="开仓時間"
+        :formatter="formatDate"
     />
 
     <el-table-column
@@ -86,55 +101,90 @@
 <el-dialog
     v-model="dialogVisible"
     title="持仓操作"
-    width="500px"
+    width="520px"
+    align-center
 >
 
     <el-form>
 
         <el-form-item label="操作">
 
-            <el-select
-                v-model="actionForm.action"
-            >
+            <div class="form-center">
 
-                <el-option
-                    label="市价退出"
-                    value="market_exit"
-                />
+                <el-select
+                    v-model="actionForm.action"
+                    style="width:220px"
+                >
 
-                <el-option
-                    label="限价退出"
-                    value="limit_exit"
-                />
+                    <el-option
+                        label="市价退出"
+                        value="market_exit"
+                    />
 
-                <el-option
-                    label="立即加仓"
-                    value="increase"
-                />
+                    <el-option
+                        label="限价退出"
+                        value="limit_exit"
+                    />
 
-            </el-select>
+                    <el-option
+                        label="立即加仓"
+                        value="increase"
+                    />
+
+                </el-select>
+
+            </div>
 
         </el-form-item>
 
         <el-form-item
             v-if="actionForm.action==='limit_exit'"
             label="限价"
+            :formatter="formatPrice"
         >
 
-            <el-input-number
-                v-model="actionForm.price"
-            />
+            <div class="form-center">
+
+                <el-input-number
+                    v-model="actionForm.price"
+                    style="width:220px"
+                />
+
+            </div>
 
         </el-form-item>
 
-        <el-form-item
-            label="数量(可部分)"
-        >
+        <el-form-item label="数量">
 
-            <el-input-number
-                v-model="actionForm.amount"
-                :min="0"
-            />
+            <div class="amount-box">
+
+                <el-input-number
+
+                    v-model="actionForm.amount"
+
+                    :min="0"
+
+                    :step="amountStep"
+
+                    controls-position=""
+
+                    @change="updatePercentByAmount"
+
+                />
+
+                <el-slider
+
+                    v-model="actionForm.percent"
+
+                    :min="0"
+
+                    :max="100"
+
+                    @input="updateAmountByPercent"
+
+                />
+
+            </div>
 
         </el-form-item>
 
@@ -172,26 +222,35 @@ import { ref } from "vue"
 
 import { ElMessage } from "element-plus"
 
+import { watch } from "vue"
+
+import { useRouter } from "vue-router"
+
 const API =
     "http://localhost:9000"
 
 const dialogVisible =
     ref(false)
 
+const router = useRouter()
+
 const currentTrade =
     ref(null)
 
 const submitting = ref(false)
 
+const fullAmount = ref(0)
+
 const actionForm = ref({
 
     action: "market_exit",
 
-    amount: null,
+    amount: 0,
+
+    percent: 100,
 
     price: null
 })
-
 const props = defineProps({
 
     positions: {
@@ -204,43 +263,39 @@ const props = defineProps({
 
 const normalizedPositions = computed(() => {
 
-    /*
-        Charts.vue:
-        [
-            {...},
-            {...}
-        ]
-
-        Dashboard:
-        {
-            long:[...],
-            short:[...]
-        }
-    */
+    let result = []
 
     if (Array.isArray(props.positions)) {
 
-        return props.positions
+        result = [...props.positions]
+
+    } else {
+
+        const longs =
+            props.positions?.long || []
+
+        const shorts =
+            props.positions?.short || []
+
+        result = [
+
+            ...longs.map(item => ({
+                ...item,
+                side: "LONG"
+            })),
+
+            ...shorts.map(item => ({
+                ...item,
+                side: "SHORT"
+            }))
+        ]
     }
 
-    const longs =
-        props.positions?.long || []
-
-    const shorts =
-        props.positions?.short || []
-
-    return [
-
-        ...longs.map(item => ({
-            ...item,
-            side: "LONG"
-        })),
-
-        ...shorts.map(item => ({
-            ...item,
-            side: "SHORT"
-        }))
-    ]
+    return result.sort(
+        (a, b) =>
+            Number(b.profit_abs || 0) -
+            Number(a.profit_abs || 0)
+    )
 })
 
 const formatNumber = (
@@ -258,6 +313,24 @@ const formatNumber = (
 
     return Number(value)
         .toFixed(2)
+}
+
+const formatPrice = (
+    row,
+    column,
+    value
+) => {
+
+    if (
+        value === null ||
+        value === undefined
+    ) {
+        return "-"
+    }
+
+    return Number(
+        Number(value).toFixed(4)
+    )
 }
 
 const formatPercent = (
@@ -280,11 +353,19 @@ const openActionDialog = row => {
 
     currentTrade.value = row
 
+    fullAmount.value = Number(
+        row.amount ||
+        row.base_amount ||
+        0
+    )
+
     actionForm.value = {
 
         action: "market_exit",
 
-        amount: null,
+        percent: 100,
+
+        amount: fullAmount.value,
 
         price: null
     }
@@ -342,4 +423,183 @@ const submitAction = async () => {
     }
 }
 
+const updateAmountByPercent = () => {
+
+    actionForm.value.amount = Number(
+
+        (
+            fullAmount.value *
+            actionForm.value.percent /
+            100
+        ).toFixed(6)
+
+    )
+}
+
+const updatePercentByAmount = () => {
+
+    if (!fullAmount.value)
+        return
+
+    actionForm.value.percent = Number(
+
+        (
+            actionForm.value.amount /
+            fullAmount.value *
+            100
+        ).toFixed(2)
+
+    )
+}
+
+const amountStep = computed(() => {
+
+    if (!fullAmount.value)
+        return 1
+
+    return Number(
+
+        (
+            fullAmount.value / 100
+        ).toFixed(6)
+
+    )
+})
+
+const goToChart = (row) => {
+
+    const strategy =
+        row.side === "SHORT"
+            ? "DcaTpShort"
+            : "DcaTpLong"
+
+    router.push({
+
+        path: "/charts",
+
+        query: {
+
+            pair: row.pair,
+
+            strategy
+        }
+    })
+}
+
+watch(
+
+    () => actionForm.value.action,
+
+    (newAction) => {
+
+        if (
+            newAction === "limit_exit" &&
+            !actionForm.value.price
+        ) {
+
+            actionForm.value.price =
+                +currentTrade.value.current_rate.toFixed(4)
+        }
+    }
+
+)
+
 </script>
+
+<style scoped>
+
+.amount-box{
+
+    width:100%;
+
+    display:flex;
+
+    flex-direction:column;
+
+    align-items:center;
+
+    gap:12px;
+}
+
+.amount-box{
+
+    width:100%;
+
+    display:flex;
+
+    flex-direction:column;
+
+    align-items:center;
+
+    gap:10px;
+}
+
+.amount-box{
+
+    width:100%;
+
+    display:flex;
+
+    flex-direction:column;
+
+    align-items:center;
+
+    gap:14px;
+}
+
+.amount-box .el-input-number{
+
+    width:220px;
+
+    margin:0 auto;
+}
+
+.amount-box :deep(.el-slider){
+
+    width:85%;
+
+    margin:0 auto;
+}
+
+.slider-label{
+
+    width:100%;
+
+    display:flex;
+
+    justify-content:space-between;
+
+    font-size:13px;
+
+    color:#909399;
+}
+
+.form-center{
+
+    width:100%;
+
+    display:flex;
+
+    justify-content:center;
+}
+
+:deep(.el-dialog){
+
+    border-radius:12px;
+}
+
+:deep(.el-dialog__header){
+
+    text-align:center;
+
+    font-size:18px;
+
+    font-weight:600;
+}
+
+:deep(.el-dialog__footer){
+
+    text-align:center;
+}
+
+</style>

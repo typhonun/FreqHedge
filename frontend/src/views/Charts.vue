@@ -106,6 +106,10 @@ from "@/components/PositionTableCommon.vue"
 
 const API = "http://localhost:9000"
 
+import { useRoute } from "vue-router"
+
+const route = useRoute()
+
 const chartRef = ref(null)
 
 const strategies = ref([])
@@ -151,8 +155,22 @@ const loadStrategies = async () => {
 
     if (res.data.length) {
 
-        strategy.value =
-            res.data[0]
+        const queryStrategy =
+            route.query.strategy
+
+        if (
+            queryStrategy &&
+            res.data.includes(queryStrategy)
+        ) {
+
+            strategy.value =
+                queryStrategy
+
+        } else {
+
+            strategy.value =
+                res.data[0]
+        }
 
         await loadPairs()
     }
@@ -171,8 +189,22 @@ const loadPairs = async () => {
 
     if (res.data.length) {
 
-        pair.value =
-            res.data[0]
+        const queryPair =
+            route.query.pair
+
+        if (
+            queryPair &&
+            res.data.includes(queryPair)
+        ) {
+
+            pair.value =
+                queryPair
+
+        } else {
+
+            pair.value =
+                res.data[0]
+        }
 
         await loadChart()
     }
