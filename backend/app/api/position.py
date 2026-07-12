@@ -43,6 +43,16 @@ def profit():
     return PositionService.get_profit_summary()
 
 
+@router.get("/profit_all")
+def profit_all():
+    return PositionService.get_closed_profit_summary()
+
+
+@router.get("/closed_profit")
+def closed_profit():
+    return PositionService.get_closed_profit_summary()
+
+
 @router.get("/floating")
 def floating():
     return PositionService.get_floating_profit()
@@ -52,7 +62,6 @@ def floating():
 def position_action(
         data: PositionAction
 ):
-
     return PositionService.trade_action(
 
         trade_id=data.trade_id,

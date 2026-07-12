@@ -11,6 +11,11 @@ position_cache = {
     "data": None
 }
 
+closed_profit_cache = {
+    "time": 0,
+    "data": None
+}
+
 
 class PositionService:
 
@@ -330,8 +335,8 @@ class PositionService:
             trade["pair"]
 
             for trade in (
-                positions["long"]
-                + positions["short"]
+                    positions["long"]
+                    + positions["short"]
             )
         }
 
@@ -358,29 +363,6 @@ class PositionService:
         )
 
     @staticmethod
-    def get_closed_profit():
-
-        closed = PositionService.get_closed_positions()
-        if closed["long"]:
-            print(closed["long"][0])
-            
-        total = 0
-
-        for trade in closed["long"]:
-            total += trade.get(
-                "close_profit_abs",
-                0
-            )
-
-        for trade in closed["short"]:
-            total += trade.get(
-                "close_profit_abs",
-                0
-            )
-
-        return round(total, 2)
-
-    @staticmethod
     def get_all_positions():
 
         positions = \
@@ -399,6 +381,110 @@ class PositionService:
             result.append(trade)
 
         return result
+
+    @staticmethod
+    def get_closed_profit_summary():
+
+        global closed_profit_cache
+
+        now = time.time()
+
+        # ==========================
+        # 历史收益缓存 10秒
+        # ==========================
+
+        if (
+                closed_profit_cache["data"]
+                and
+                now - closed_profit_cache["time"] < 10
+        ):
+            return closed_profit_cache["data"]
+
+        # ==========================
+        # 查询freqtrade历史交易
+        # ==========================
+
+        long_resp = FreqtradeService.get_trades(
+            LONG_URL
+        )
+
+        short_resp = FreqtradeService.get_trades(
+            SHORT_URL
+        )
+
+        long_trades = (
+            long_resp["trades"]
+            if isinstance(long_resp, dict)
+            else long_resp
+        )
+
+        short_trades = (
+            short_resp["trades"]
+            if isinstance(short_resp, dict)
+            else short_resp
+        )
+
+        long_profit = 0
+
+        short_profit = 0
+
+        for trade in long_trades:
+
+            if not trade.get(
+                    "is_open",
+                    True
+            ):
+                long_profit += float(
+                    trade.get(
+                        "close_profit_abs",
+                        0
+                    )
+                    or 0
+                )
+
+        for trade in short_trades:
+
+            if not trade.get(
+                    "is_open",
+                    True
+            ):
+                short_profit += float(
+                    trade.get(
+                        "close_profit_abs",
+                        0
+                    )
+                    or 0
+                )
+
+        result = {
+
+            "long_closed_profit": round(long_profit, 2),
+
+            "short_closed_profit": round(short_profit, 2),
+
+            "total_closed_profit":
+                round(long_profit + short_profit, 2),
+
+            "update_time": now
+
+        }
+
+        # ==========================
+        # 写入缓存
+        # ==========================
+
+        closed_profit_cache["time"] = now
+
+        closed_profit_cache["data"] = result
+
+        return result
+
+    @staticmethod
+    def get_closed_profit():
+
+        result = PositionService.get_closed_profit_summary()
+
+        return result["total_closed_profit"]
 
     @staticmethod
     def force_exit(

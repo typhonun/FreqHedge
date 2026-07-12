@@ -1,7 +1,7 @@
 <template>
   <el-card>
 
-    <h2>收益统计</h2>
+    <h2>本轮收益</h2>
 
     <el-row :gutter="20">
 

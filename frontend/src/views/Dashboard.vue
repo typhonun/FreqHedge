@@ -23,6 +23,10 @@
 
     <br />
 
+    <ClosedProfitCard
+        :profit="store.closedProfit"
+    />
+
     <el-card>
 
         <h2>目前持仓</h2>
@@ -49,6 +53,7 @@ import AccountCard from "../components/AccountCard.vue"
 import ProfitCard from "../components/ProfitCard.vue"
 import PositionTableCommon from "@/components/PositionTableCommon.vue"
 import ClosedTradeTable from "../components/ClosedTradeTable.vue"
+import ClosedProfitCard from "../components/ClosedProfitCard.vue"
 
 import { useTradeStore } from "../stores/tradeStore"
 

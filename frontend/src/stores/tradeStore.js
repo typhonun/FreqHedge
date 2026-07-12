@@ -8,6 +8,7 @@ export const useTradeStore = defineStore(
     {
         state: () => ({
             profit: {},
+            closedProfit: {},
             count: {},
             summary: {},
             floating: {},
@@ -142,6 +143,26 @@ export const useTradeStore = defineStore(
 
                     console.error(
                         "closed error",
+                        e.response?.data || e
+                    )
+                }
+
+                try {
+
+                    const closedProfit =
+                        await axios.get(
+                            `${API}/position/closed_profit`
+                        )
+
+
+                    this.closedProfit =
+                        closedProfit.data
+
+
+                } catch (e) {
+
+                    console.error(
+                        "closed profit error",
                         e.response?.data || e
                     )
                 }
