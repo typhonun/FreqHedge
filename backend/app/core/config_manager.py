@@ -4,25 +4,18 @@ import time
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parents[3]
+
 DB_FILE = BASE_DIR / "backend" / "strategy.db"
-CONFIG_DIR = BASE_DIR / "config"
 
 
 class ConfigManager:
-
     _cache = {}
-
     _last_load = {}
 
     CACHE_SECONDS = 3
 
     @classmethod
     def get(cls, side):
-
-        print(
-            "读取RSI:",
-            config["entry"]["rsi"]["value"]
-        )
 
         now = time.time()
 
@@ -41,25 +34,19 @@ class ConfigManager:
             """
             SELECT config_json
             FROM strategy_config
-            WHERE side = ?
+            WHERE side=?
             """,
             (side,)
         ).fetchone()
 
         conn.close()
 
-        if row is None:
-            file_path = CONFIG_DIR / f"strategy_{side}.json"
-            if not file_path.exists():
-                return {}
+        if not row:
+            return {}
 
-            with open(file_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-        else:
-            config = json.loads(row[0])
+        config = json.loads(row[0])
 
         cls._cache[side] = config
-
         cls._last_load[side] = now
 
         return config
@@ -68,11 +55,18 @@ class ConfigManager:
     def force_reload(cls, side=None):
 
         if side:
-            cls._cache.pop(side, None)
-            cls._last_load.pop(side, None)
+
+            cls._cache.pop(
+                side,
+                None
+            )
+
+            cls._last_load.pop(
+                side,
+                None
+            )
+
         else:
+
             cls._cache.clear()
             cls._last_load.clear()
-
-
-    

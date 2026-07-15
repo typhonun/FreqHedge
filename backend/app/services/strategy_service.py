@@ -1,56 +1,20 @@
 import json
 from db import get_conn
-from config.settings import (
-    STRATEGY_LONG,
-    STRATEGY_SHORT
-)
+from app.core.config_manager import ConfigManager
 
 
 class StrategyService:
 
     @staticmethod
-    def _strategy_path(side):
-        if side == "long":
-            return STRATEGY_LONG
-        if side == "short":
-            return STRATEGY_SHORT
-        raise ValueError(f"Unsupported strategy side: {side}")
-
-    @staticmethod
-    def read_json(path):
-
-        with open(
-            path,
-            "r",
-            encoding="utf-8"
-        ) as f:
-
-            return json.load(f)
-
-    @staticmethod
-    def write_json(path, data):
-
-        with open(
-            path,
-            "w",
-            encoding="utf-8"
-        ) as f:
-
-            json.dump(
-                data,
-                f,
-                indent=4,
-                ensure_ascii=False
-            )
-
-    @staticmethod
     def get_config():
         conn = get_conn()
 
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT side, config_json
             FROM strategy_config
-        """).fetchall()
+            """
+        ).fetchall()
 
         conn.close()
 
@@ -64,32 +28,29 @@ class StrategyService:
                 row["config_json"]
             )
 
-        for side, path in (
-            ("long", STRATEGY_LONG),
-            ("short", STRATEGY_SHORT)
-        ):
-            if result[side]:
-                continue
-
-            if path.exists():
-                result[side] = StrategyService.read_json(path)
-
         return result
 
     @staticmethod
     def save_config(data):
-
         side = data.get("side")
 
-        config = data.get("config", {})
+        config = data.get(
+            "config",
+            {}
+        )
 
-        print("====================")
-        print("SAVE SIDE:", side)
+        print(
+            "SAVE SIDE:",
+            side
+        )
+
         print(
             "SAVE RSI:",
-            config["entry"]["rsi"]["value"]
+            config
+            .get("entry", {})
+            .get("rsi", {})
+            .get("value")
         )
-        print("====================")
 
         conn = get_conn()
 
@@ -119,6 +80,8 @@ class StrategyService:
 
         conn.commit()
         conn.close()
+
+        ConfigManager.force_reload(side)
 
         return {
             "success": True,
