@@ -15,12 +15,12 @@ def get_strategy():
 
 
 @router.post("/")
-def save_strategy(data: dict):
+def save_strategy(data:dict):
 
-    print("\n========== 收到前端请求 ==========")
-    print(data)
-    print("=================================\n")
+    result = StrategyService.save_config(data)
 
-    return StrategyService.save_config(
-        data
-    )
+    return {
+        "success":True,
+        "message":"strategy saved",
+        "data":result
+    }

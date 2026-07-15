@@ -385,24 +385,14 @@ class PositionService:
     @staticmethod
     def get_closed_profit_summary():
 
-        global closed_profit_cache
-
         now = time.time()
-
-        # ==========================
-        # 历史收益缓存 10秒
-        # ==========================
 
         if (
                 closed_profit_cache["data"]
                 and
-                now - closed_profit_cache["time"] < 10
+                now - closed_profit_cache["time"] < 30
         ):
             return closed_profit_cache["data"]
-
-        # ==========================
-        # 查询freqtrade历史交易
-        # ==========================
 
         long_resp = FreqtradeService.get_trades(
             LONG_URL
@@ -425,7 +415,6 @@ class PositionService:
         )
 
         long_profit = 0
-
         short_profit = 0
 
         for trade in long_trades:
@@ -438,8 +427,7 @@ class PositionService:
                     trade.get(
                         "close_profit_abs",
                         0
-                    )
-                    or 0
+                    ) or 0
                 )
 
         for trade in short_trades:
@@ -452,26 +440,23 @@ class PositionService:
                     trade.get(
                         "close_profit_abs",
                         0
-                    )
-                    or 0
+                    ) or 0
                 )
 
         result = {
 
-            "long_closed_profit": round(long_profit, 2),
+            "long_closed_profit":
+                round(long_profit, 2),
 
-            "short_closed_profit": round(short_profit, 2),
+            "short_closed_profit":
+                round(short_profit, 2),
 
             "total_closed_profit":
-                round(long_profit + short_profit, 2),
-
-            "update_time": now
-
+                round(
+                    long_profit + short_profit,
+                    2
+                )
         }
-
-        # ==========================
-        # 写入缓存
-        # ==========================
 
         closed_profit_cache["time"] = now
 

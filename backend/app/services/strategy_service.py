@@ -4,7 +4,6 @@ from config.settings import (
     STRATEGY_LONG,
     STRATEGY_SHORT
 )
-from app.core.config_manager import ConfigManager
 
 
 class StrategyService:
@@ -80,14 +79,17 @@ class StrategyService:
     @staticmethod
     def save_config(data):
 
+        side = data.get("side")
+
+        config = data.get("config", {})
+
+        print("====================")
+        print("SAVE SIDE:", side)
         print(
-            "保存RSI:",
+            "SAVE RSI:",
             config["entry"]["rsi"]["value"]
         )
-        side = data["side"]
-
-        config = data["config"]
-        path = StrategyService._strategy_path(side)
+        print("====================")
 
         conn = get_conn()
 
@@ -108,20 +110,17 @@ class StrategyService:
             """,
             (
                 side,
-                json.dumps(config)
+                json.dumps(
+                    config,
+                    ensure_ascii=False
+                )
             )
         )
 
         conn.commit()
         conn.close()
 
-        StrategyService.write_json(
-            path,
-            config
-        )
-
-        ConfigManager.force_reload(side)
-
         return {
-            "success": True
+            "success": True,
+            "side": side
         }

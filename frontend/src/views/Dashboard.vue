@@ -47,8 +47,6 @@
 
 <script setup>
 
-import { onMounted } from "vue"
-
 import AccountCard from "../components/AccountCard.vue"
 import ProfitCard from "../components/ProfitCard.vue"
 import PositionTableCommon from "@/components/PositionTableCommon.vue"
@@ -56,12 +54,73 @@ import ClosedTradeTable from "../components/ClosedTradeTable.vue"
 import ClosedProfitCard from "../components/ClosedProfitCard.vue"
 
 import { useTradeStore } from "../stores/tradeStore"
+import {
+    onMounted,
+    onUnmounted
+} from "vue"
 
 const store = useTradeStore()
 
-onMounted(async () => {
+let timer = null
+
+let historyTimer = null
+
+
+
+onMounted(async()=>{
+
+
+    // 初始化数据
 
     await store.refresh()
+
+    await store.refreshHistory()
+
+
+
+    // 高频数据
+
+    timer = setInterval(()=>{
+
+
+        store.refresh()
+
+
+    },5000)
+
+
+
+    // 历史数据
+
+    historyTimer = setInterval(()=>{
+
+
+        store.refreshHistory()
+
+
+    },30000)
+
+
+
+})
+
+
+onUnmounted(()=>{
+
+
+    if(timer){
+
+        clearInterval(timer)
+
+    }
+
+
+    if(historyTimer){
+
+        clearInterval(historyTimer)
+
+    }
+
 
 })
 

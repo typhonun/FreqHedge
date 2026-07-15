@@ -1,24 +1,42 @@
 {
     "side": "long",
+    "stoploss": -0.99,
+    "strategy": {
+        "leverage": 10
+    },
+    "indicator":{
+         "kdj":{
+           "fastk":5,
+           "slowk":3,
+           "slowd":3
+         },
+        "ema":{
+            "enable":true,
+            "fast":9,
+            "mid":21,
+            "slow":99
+        }
+    },
     "entry": {
         "rsi": {
             "enable": true,
             "period": 14,
-            "value": 22
+            "value": 50
         },
         "macd": {
-            "enable": true,
+            "enable": false,
             "fast": 12,
             "slow": 26,
             "signal": 9
         },
         "bb": {
-            "enable": true,
+            "enable": false,
             "period": 20,
             "std": 2
         },
         "volume": {
-            "enable": true
+            "enable": false,
+            "period": 20
         }
     },
     "tp": {
@@ -30,72 +48,40 @@
             },
             {
                 "minutes": 720,
-                "roi": 2
+                "roi": 1
             },
             {
                 "minutes": 480,
-                "roi": 4
+                "roi": 2
             },
             {
                 "minutes": 360,
-                "roi": 6
-            },
-            {
-                "minutes": 300,
-                "roi": 8
+                "roi": 3
             },
             {
                 "minutes": 240,
-                "roi": 10
-            },
-            {
-                "minutes": 210,
-                "roi": 12
-            },
-            {
-                "minutes": 180,
-                "roi": 14
-            },
-            {
-                "minutes": 150,
-                "roi": 16
+                "roi": 5
             },
             {
                 "minutes": 120,
-                "roi": 18
-            },
-            {
-                "minutes": 100,
-                "roi": 20
-            },
-            {
-                "minutes": 80,
-                "roi": 22
+                "roi": 8
             },
             {
                 "minutes": 60,
-                "roi": 24
-            },
-            {
-                "minutes": 40,
-                "roi": 26
+                "roi": 12
             },
             {
                 "minutes": 20,
-                "roi": 28
+                "roi": 15
             },
             {
                 "minutes": 5,
-                "roi": 30
+                "roi": 20
             }
         ],
         "reduce_percent": 30,
         "rebuy_enable": true,
-        "target_wallet_percent": 5
-    },
-    "sl": {
-        "enable": true,
-        "stoploss": -9
+        "target_wallet_percent": 7
     },
     "trend_add": {
         "enable": true,
@@ -141,10 +127,9 @@
     },
     "grid": {
         "enable": true,
-        "grid_lower": -2,
-        "grid_upper": 2,
-        "buy_percent": 2,
-        "sell_percent": 2,
+        "max_count":5,
+        "init_lower": 2,
+        "init_upper": 2,
         "cooldown_minutes": 30
     }
 }

@@ -15,7 +15,7 @@
                             type="info"
                             size="small"
                         >
-                            源码逻辑 + SQLite 热更新配置
+                            源码逻辑 + SQLite / JSON 配置
                         </el-text>
                     </span>
                 </div>

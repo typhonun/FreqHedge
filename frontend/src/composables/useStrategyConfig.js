@@ -43,16 +43,16 @@ const buildTradeInfo = (side) => {
             ? "MACD > Signal 且 K > D，ADX > 25，EMA9 > EMA21 > EMA99"
             : "MACD < Signal 且 K < D，ADX > 25，EMA9 < EMA21 < EMA99",
         dcaSignal: isLong
-            ? "J < 0 / RSI < 20 / J < 20 且 RSI < 35，最多 7 次，冷却 60 分钟"
-            : "J > 100 / RSI > 80 / J > 80 且 RSI > 65，最多 7 次，冷却 60 分钟",
+            ? "按 DCA 表格逐层触发（低位回撤 + RSI/J 条件，最多 7 次，冷却 60 分钟）"
+            : "按 DCA 表格逐层触发（高位回撤 + RSI/J 条件，最多 7 次，冷却 60 分钟）",
         tpSignal: "达到阶梯 ROI 后分批止盈，随后回补至 5% 目标仓位",
         gridSignal: isLong
             ? "跌破网格下沿补仓，突破网格上沿减仓"
             : "突破网格上沿补仓，跌破网格下沿减仓",
         notes: [
-            "主开仓仅使用 BB + RSI；MACD / KDJ / ADX / EMA 主要用于趋势加仓。",
-            "趋势加仓、ROI、止损、TP 回补、DCA 和网格阈值会从 SQLite 热更新。",
-            "KDJ / ADX / EMA 的判定逻辑仍固定在策略源码中。"
+            "主开仓仅使用 BB + RSI + Volume；MACD / KDJ / ADX / EMA 主要用于趋势加仓。",
+            "趋势加仓、ROI、止损、TP 回补、DCA 和网格阈值都会同步到后端 JSON 配置。",
+            "Loss TP 会在触发亏损后等待反弹再减仓。"
         ],
         roiLevels: roiLevels.map((level) => ({
             minutes: level.minutes,
@@ -71,7 +71,7 @@ const defaultLongConfig = () => ({
         rsi: {
             enable: true,
             period: 14,
-            value: 30
+            value: 22
         },
 
         macd: {
@@ -171,7 +171,7 @@ const defaultShortConfig = () => ({
         rsi: {
             enable: true,
             period: 14,
-            value: 80
+            value: 70
         },
 
         macd: {
@@ -230,7 +230,6 @@ const defaultShortConfig = () => ({
         enable: true,
         max_count: 7,
         condition: "or",
-        dca_pct: 1.0,
         cooldown_minutes: 60,
         levels: [
             {
