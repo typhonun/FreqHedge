@@ -108,22 +108,45 @@ const defaultLongConfig = () => ({
         stoploss: -9
     },
 
-    trend_add: {
-        enable: true,
-        max_count: 3,
+    trend_add:{
+        enable:false,
 
-        levels: [
-            {
-                profit: 2,
-                rsi: 60,
-                amount: 0.5
-            },
-            {
-                profit: 4,
-                rsi: 65,
-                amount: 0.8
-            }
-        ]
+        max_count:3,
+
+        amount_percent:0.5,
+
+        condition:"and",
+
+
+        macd:{
+            enable:true,
+            fast:12,
+            slow:26,
+            signal:9
+        },
+
+
+        kdj:{
+            enable:true,
+            fastk:5,
+            slowk:3,
+            slowd:3
+        },
+
+
+        ema:{
+            enable:true,
+            fast:9,
+            mid:21,
+            slow:99
+        },
+
+
+        kdj_reduce:{
+            enable:false,
+            reduce_percent:50
+        }
+
     },
 
     dca: {
@@ -208,22 +231,45 @@ const defaultShortConfig = () => ({
         stoploss: -9
     },
 
-    trend_add: {
-        enable: true,
-        max_count: 3,
+    trend_add:{
+        enable:false,
 
-        levels: [
-            {
-                profit: 2,
-                rsi: 40,
-                amount: 0.5
-            },
-            {
-                profit: 4,
-                rsi: 35,
-                amount: 0.8
-            }
-        ]
+        max_count:3,
+
+        amount_percent:0.5,
+
+        condition:"and",
+
+
+        macd:{
+            enable:true,
+            fast:12,
+            slow:26,
+            signal:9
+        },
+
+
+        kdj:{
+            enable:true,
+            fastk:5,
+            slowk:3,
+            slowd:3
+        },
+
+
+        ema:{
+            enable:true,
+            fast:9,
+            mid:21,
+            slow:99
+        },
+
+
+        kdj_reduce:{
+            enable:false,
+            reduce_percent:50
+        }
+
     },
 
     dca: {

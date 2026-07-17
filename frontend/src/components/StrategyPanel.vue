@@ -68,7 +68,7 @@
                     {{ tradeInfo.gridSignal }}
                 </el-descriptions-item>
 
-                <el-descriptions-item label="ROI阶梯" :span="2">
+                <el-descriptions-item label="ROI阶梯":span="2">
                     <div class="roi-chip-wrap">
                         <el-tag
                             v-for="tier in tradeInfo.roiLevels"
@@ -585,6 +585,7 @@
                             class="table-input-number"
                             controls-position="right"
                             :step="0.1"
+                            :min="0"
                             size="small"
                         />
                     </template>
@@ -616,23 +617,17 @@
                 <el-card class="section-card">
                     <template #header>
                         <div class="card-head">
-                            <span class="card-head__title">趋势加仓</span>
+                            <span class="card-head__title">
+                                趋势加仓
+                            </span>
+
                             <span class="card-head__meta">
                                 <el-text
                                     type="info"
                                     size="small"
                                 >
-                                    盈利状态下顺势做大仓位
+                                    盈利趋势中扩大仓位
                                 </el-text>
-
-                                <el-button
-                                    size="small"
-                                    type="success"
-                                    plain
-                                    @click="addTrendAdd"
-                                >
-                                    新增规则
-                                </el-button>
                             </span>
                         </div>
                     </template>
@@ -643,24 +638,20 @@
                         :closable="false"
                         show-icon
                     >
-                        {{
-                            config.side === "long"
-                                ? "盈利状态下顺势做多加仓"
-                                : "盈利状态下顺势做空加仓"
-                        }}
+                        {{config.side==="long"
+                            ?"MACD+KDJ+EMA多头趋势加仓"
+                            :"MACD+KDJ+EMA空头趋势加仓"}}
                     </el-alert>
 
                     <el-form
                         class="compact-form"
-                        label-width="110px"
+                        label-width="120px"
                         size="small"
                     >
                         <el-row :gutter="12">
                             <el-col :span="12">
                                 <el-form-item label="启用趋势加仓">
-                                    <el-switch
-                                        v-model="config.trend_add.enable"
-                                    />
+                                    <el-switch v-model="config.trend_add.enable" />
                                 </el-form-item>
                             </el-col>
 
@@ -668,73 +659,353 @@
                                 <el-form-item label="最大次数">
                                     <el-input-number
                                         v-model="config.trend_add.max_count"
-                                        class="compact-input-number"
-                                        controls-position="right"
                                         :min="1"
                                     />
+                                </el-form-item>
+                            </el-col>
+
+                            <el-col :span="12">
+                                <el-form-item label="加仓比例%">
+                                    <el-input-number
+                                        v-model="config.trend_add.amount_percent"
+                                        :min="0"
+                                        :max="100"
+                                    />
+                                </el-form-item>
+                            </el-col>
+
+                            <el-col :span="12">
+                                <el-form-item label="条件模式">
+                                    <el-select
+                                        v-model="config.trend_add.condition"
+                                    >
+                                        <el-option
+                                            label="全部满足 AND"
+                                            value="and"
+                                        />
+
+                                        <el-option
+                                            label="任意满足 OR"
+                                            value="or"
+                                        />
+                                    </el-select>
                                 </el-form-item>
                             </el-col>
                         </el-row>
                     </el-form>
 
-                    <el-table
-                        :data="config.trend_add.levels"
-                        border
-                        size="small"
-                        style="width:100%"
-                    >
-                        <el-table-column label="盈利%">
-                            <template #default="{ row }">
-                                <el-input-number
-                                    v-model="row.profit"
-                                    class="table-input-number"
-                                    controls-position="right"
-                                    size="small"
-                                />
-                            </template>
-                        </el-table-column>
+                    <el-divider>
+                        趋势指标
+                    </el-divider>
 
-                        <el-table-column
-                            :label="config.side === 'long' ? 'RSI >' : 'RSI <'"
+                    <el-row :gutter="12">
+
+                        <el-col :span="8">
+
+                            <el-form-item label="MACD">
+
+                                <el-switch
+                                    v-model="config.trend_add.macd.enable"
+                                />
+
+                            </el-form-item>
+
+
+                        </el-col>
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="KDJ">
+
+                                <el-switch
+                                    v-model="config.trend_add.kdj.enable"
+                                />
+
+                            </el-form-item>
+
+
+                        </el-col>
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="EMA">
+
+                                <el-switch
+                                    v-model="config.trend_add.ema.enable"
+                                />
+
+                            </el-form-item>
+
+
+                        </el-col>
+
+
+                    </el-row>
+
+                    <el-divider>
+                        MACD参数
+                    </el-divider>
+
+
+                    <el-row :gutter="12">
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="DIF周期">
+
+                                <el-input-number
+
+                                    v-model="
+                                    config.trend_add.macd.fast
+                                    "
+
+                                    :min="1"
+
+                                    :max="100"
+
+                                    controls-position="right"
+
+                                />
+
+
+                            </el-form-item>
+
+
+                        </el-col>
+
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="DEA周期">
+
+
+                                <el-input-number
+
+                                    v-model="
+                                    config.trend_add.macd.slow
+                                    "
+
+                                    :min="1"
+
+                                    :max="200"
+
+                                    controls-position="right"
+
+                                />
+
+
+                            </el-form-item>
+
+
+                        </el-col>
+
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="Signal">
+
+
+                                <el-input-number
+
+                                    v-model="
+                                    config.trend_add.macd.signal
+                                    "
+
+                                    :min="1"
+
+                                    :max="50"
+
+                                    controls-position="right"
+
+                                />
+
+
+                            </el-form-item>
+
+
+                        </el-col>
+
+
+                    </el-row>
+
+                    <el-divider>
+                        KDJ参数
+                    </el-divider>
+
+
+                    <el-row :gutter="12">
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="FastK">
+
+                                <el-input-number
+
+                                    v-model="
+                                    config.trend_add.kdj.fastk
+                                    "
+
+                                    :min="1"
+
+                                    :max="50"
+
+                                    controls-position="right"
+
+                                />
+
+                            </el-form-item>
+
+                        </el-col>
+
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="SlowK">
+
+                                <el-input-number
+
+                                    v-model="
+                                    config.trend_add.kdj.slowk
+                                    "
+
+                                    :min="1"
+
+                                    :max="50"
+
+                                    controls-position="right"
+
+                                />
+
+                            </el-form-item>
+
+                        </el-col>
+
+
+
+                        <el-col :span="8">
+
+                            <el-form-item label="SlowD">
+
+                                <el-input-number
+
+                                    v-model="
+                                    config.trend_add.kdj.slowd
+                                    "
+
+                                    :min="1"
+
+                                    :max="50"
+
+                                    controls-position="right"
+
+                                />
+
+                            </el-form-item>
+
+                        </el-col>
+
+
+                    </el-row>
+
+                    <el-divider>
+                        EMA参数
+                    </el-divider>
+                    <el-row :gutter="12">
+                        <el-col :span="8">
+                            <el-form-item label="EMA快">
+                                <el-input-number
+                                    v-model="config.trend_add.ema.fast"
+                                    :min="1"
+                                    :max="200"
+                                    controls-position="right"
+                                />
+                            </el-form-item>
+                        </el-col>
+
+                        <el-col :span="8">
+                            <el-form-item label="EMA中">
+                                <el-input-number
+                                    v-model="config.trend_add.ema.mid"
+                                    :min="1"
+                                    :max="300"
+                                    controls-position="right"
+                                />
+                            </el-form-item>
+                        </el-col>
+
+                        <el-col :span="8">
+                            <el-form-item label="EMA慢">
+                                <el-input-number
+                                    v-model="config.trend_add.ema.slow"
+                                    :min="1"
+                                    :max="500"
+                                    controls-position="right"
+                                />
+                            </el-form-item>
+                        </el-col>
+                    </el-row>
+
+                    <el-card class="section-card">
+                        <template #header>
+                            <div class="card-head">
+                                <span class="card-head__title">
+                                    KDJ减仓
+                                </span>
+                            </div>
+                        </template>
+
+                        <el-alert
+                            class="section-alert"
+                            type="warning"
+                            :closable="false"
                         >
-                            <template #default="{ row }">
-                                <el-input-number
-                                    v-model="row.rsi"
-                                    class="table-input-number"
-                                    controls-position="right"
-                                    size="small"
-                                />
-                            </template>
-                        </el-table-column>
+                            趋势加仓后，KDJ转弱退出趋势仓位
+                        </el-alert>
 
-                        <el-table-column label="加仓倍率">
-                            <template #default="{ row }">
-                                <el-input-number
-                                    v-model="row.amount"
-                                    class="table-input-number"
-                                    controls-position="right"
-                                    :step="0.1"
-                                    size="small"
-                                />
-                            </template>
-                        </el-table-column>
-
-                        <el-table-column
-                            width="90"
-                            label="操作"
+                        <el-form
+                            label-width="120px"
+                            size="small"
                         >
-                            <template #default="{ $index }">
-                                <el-button
-                                    type="danger"
-                                    size="small"
-                                    plain
-                                    @click="removeTrendAdd($index)"
-                                >
-                                    删除
-                                </el-button>
-                            </template>
-                        </el-table-column>
-                    </el-table>
+                            <el-form-item label="启用KDJ减仓">
+
+                            <el-switch
+                                v-model="config.trend_add.kdj_reduce.enable"
+                                :disabled="!config.trend_add.enable"
+                            />
+
+                            </el-form-item>
+
+
+                            <el-form-item label="减仓比例%">
+
+                            <el-input-number
+
+                                v-model="
+                                config.trend_add.kdj_reduce.reduce_percent
+                                "
+
+                                :disabled="
+                                !config.trend_add.enable ||
+                                !config.trend_add.kdj_reduce.enable
+                                "
+
+                                :min="0"
+
+                                :max="100"
+
+                                controls-position="right"
+                            />
+
+                            </el-form-item>
+                        </el-form>
+                    </el-card>
                 </el-card>
             </el-col>
 
@@ -759,8 +1030,7 @@
                         type="warning"
                         :closable="false"
                     >
-                        启用后将在当前仓位下方自动挂网格单
-                    </el-alert>
+                        启用后将在当前仓位下方自动挂网格单</el-alert>
 
                     <el-form
                         class="compact-form"
@@ -963,11 +1233,17 @@ const addTrendAdd = () => {
     })
 }
 
-const removeTrendAdd = (index) => {
+const removeTrendAdd = (index) =>{
     props.config.trend_add.levels.splice(
         index,
         1
     )
+}
+
+const syncKdjReduce = () => {
+    if(!config.trend_add.enable) {
+        config.trend_add.kdj_reduce.enable = false
+    }
 }
 </script>
 
