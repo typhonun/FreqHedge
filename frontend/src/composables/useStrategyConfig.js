@@ -67,29 +67,25 @@ export function useStrategyConfig() {
 const defaultLongConfig = () => ({
     side: "long",
 
-    entry: {
-        rsi: {
-            enable: true,
-            period: 14,
-            value: 22
+    entry:{
+
+        rsi:{
+            enable:true,
+
+            // RSI入场阈值
+            value:35
         },
 
-        macd: {
-            enable: true,
-            fast: 12,
-            slow: 26,
-            signal: 9
+
+        macd:{
+            enable:true
         },
 
-        bb: {
-            enable: true,
-            period: 20,
-            std: 2
-        },
 
-        volume: {
-            enable: true
+        bb:{
+            enable:true
         }
+
     },
 
     tp: {
@@ -108,7 +104,44 @@ const defaultLongConfig = () => ({
         stoploss: -9
     },
 
+    indicator:{
+
+
+        rsi:{
+            period:14
+        },
+
+
+        bb:{
+            period:20,
+            std:2
+        },
+
+
+        macd:{
+            fast:12,
+            slow:26,
+            signal:9
+        },
+
+
+        kdj:{
+            fastk:5,
+            slowk:3,
+            slowd:3
+        },
+
+
+        ema:{
+            fast:9,
+            mid:21,
+            slow:99
+        }
+
+    },
+
     trend_add:{
+
         enable:false,
 
         max_count:3,
@@ -118,28 +151,11 @@ const defaultLongConfig = () => ({
         condition:"and",
 
 
-        macd:{
-            enable:true,
-            fast:12,
-            slow:26,
-            signal:9
-        },
+        macd_enable:true,
 
+        kdj_enable:true,
 
-        kdj:{
-            enable:true,
-            fastk:5,
-            slowk:3,
-            slowd:3
-        },
-
-
-        ema:{
-            enable:true,
-            fast:9,
-            mid:21,
-            slow:99
-        },
+        ema_enable:true,
 
 
         kdj_reduce:{
@@ -150,23 +166,33 @@ const defaultLongConfig = () => ({
     },
 
     dca: {
-        enable: true,
-        max_count: 7,
-        condition: "or",
-        cooldown_minutes: 60,
 
-        levels: [
+        enable:true,
+
+        max_count:7,
+
+        condition:"or",
+
+        cooldown_minutes:60,
+
+
+        // 第一次DCA价格距离均价
+        price_offset:1.0,
+
+
+        // 每层价格偏差倍率
+        price_multiplier:1.5,
+
+
+        // 每层订单金额倍率
+        amount_multiplier:1.5,
+
+
+        levels:[
             {
-                drawdown: -3,
-                rsi_limit: 25,
-                j_limit: 10,
-                amount: 1
-            },
-            {
-                drawdown: -6,
-                rsi_limit: 20,
-                j_limit: 0,
-                amount: 1.5
+                amount:100,
+                rsi_limit:25,
+                j_limit:10
             }
         ]
     },
@@ -190,29 +216,25 @@ const defaultLongConfig = () => ({
 const defaultShortConfig = () => ({
     side: "short",
 
-    entry: {
-        rsi: {
-            enable: true,
-            period: 14,
-            value: 70
+    entry:{
+
+        rsi:{
+            enable:true,
+
+            // RSI入场阈值
+            value:65
         },
 
-        macd: {
-            enable: true,
-            fast: 12,
-            slow: 26,
-            signal: 9
+
+        macd:{
+            enable:true
         },
 
-        bb: {
-            enable: true,
-            period: 20,
-            std: 2
-        },
 
-        volume: {
-            enable: true
+        bb:{
+            enable:true
         }
+
     },
 
     tp: {
@@ -231,7 +253,45 @@ const defaultShortConfig = () => ({
         stoploss: -9
     },
 
+    indicator:{
+
+
+        rsi:{
+            period:14
+        },
+
+
+        bb:{
+            period:20,
+            std:2
+        },
+
+
+        macd:{
+            fast:12,
+            slow:26,
+            signal:9
+        },
+
+
+        kdj:{
+            fastk:5,
+            slowk:3,
+            slowd:3
+        },
+
+
+        ema:{
+            fast:9,
+            mid:21,
+            slow:99
+        }
+
+    },
+
+
     trend_add:{
+
         enable:false,
 
         max_count:3,
@@ -241,28 +301,11 @@ const defaultShortConfig = () => ({
         condition:"and",
 
 
-        macd:{
-            enable:true,
-            fast:12,
-            slow:26,
-            signal:9
-        },
+        macd_enable:true,
 
+        kdj_enable:true,
 
-        kdj:{
-            enable:true,
-            fastk:5,
-            slowk:3,
-            slowd:3
-        },
-
-
-        ema:{
-            enable:true,
-            fast:9,
-            mid:21,
-            slow:99
-        },
+        ema_enable:true,
 
 
         kdj_reduce:{
@@ -273,22 +316,33 @@ const defaultShortConfig = () => ({
     },
 
     dca: {
-        enable: true,
-        max_count: 7,
-        condition: "or",
-        cooldown_minutes: 60,
-        levels: [
+
+        enable:true,
+
+        max_count:7,
+
+        condition:"or",
+
+        cooldown_minutes:60,
+
+
+        // 第一次DCA价格距离均价
+        price_offset:1.0,
+
+
+        // 每层价格偏差倍率
+        price_multiplier:1.5,
+
+
+        // 每层订单金额倍率
+        amount_multiplier:1.5,
+
+
+        levels:[
             {
-                drawdown: -3,
-                rsi_limit: 75,
-                j_limit: 90,
-                amount: 1
-            },
-            {
-                drawdown: -6,
-                rsi_limit: 80,
-                j_limit: 100,
-                amount: 1.5
+                amount:100,
+                rsi_limit:25,
+                j_limit:10
             }
         ]
     },

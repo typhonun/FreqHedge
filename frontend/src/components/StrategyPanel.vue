@@ -123,46 +123,59 @@
             </template>
 
             <div class="entry-grid">
+
                 <section class="signal-card">
-                    <div class="signal-head">
-                        <div>
-                            <div class="signal-name">RSI</div>
-                            <div class="signal-subtitle">
-                                {{
-                                    config.side === "long"
-                                        ? "低位确认后入场"
-                                        : "高位确认后入场"
-                                }}
-                            </div>
-                        </div>
 
-                        <el-switch v-model="config.entry.rsi.enable" />
-                    </div>
+                <div class="signal-head">
 
-                    <el-form
-                        class="compact-form"
-                        label-width="54px"
-                        size="small"
-                    >
-                        <el-form-item label="周期">
-                            <el-input-number
-                                v-model="config.entry.rsi.period"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="1"
-                            />
-                        </el-form-item>
+                <div>
 
-                        <el-form-item label="阈值">
-                            <el-input-number
-                                v-model="config.entry.rsi.value"
-                                class="compact-input-number"
-                                controls-position="right"
-                            />
-                        </el-form-item>
-                    </el-form>
+                <div class="signal-name">
+                RSI
+                </div>
+
+                <div class="signal-subtitle">
+                RSI低位允许入场
+                </div>
+
+                </div>
+
+
+                <el-switch
+                v-model="config.entry.rsi.enable"
+                />
+
+
+                </div>
+
+
+                <el-form
+                class="compact-form"
+                label-width="54px"
+                size="small"
+                >
+
+
+                <el-form-item label="阈值">
+
+                <el-input-number
+
+                v-model="config.entry.rsi.value"
+
+                :min="1"
+
+                :max="100"
+
+                />
+
+
+                </el-form-item>
+
+
+                </el-form>
+
+
                 </section>
-
                 <section class="signal-card">
                     <div class="signal-head">
                         <div>
@@ -174,100 +187,27 @@
 
                         <el-switch v-model="config.entry.macd.enable" />
                     </div>
-
-                    <el-form
-                        class="compact-form"
-                        label-width="54px"
-                        size="small"
-                    >
-                        <el-form-item label="快线">
-                            <el-input-number
-                                v-model="config.entry.macd.fast"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="1"
-                            />
-                        </el-form-item>
-
-                        <el-form-item label="慢线">
-                            <el-input-number
-                                v-model="config.entry.macd.slow"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="1"
-                            />
-                        </el-form-item>
-
-                        <el-form-item label="信号">
-                            <el-input-number
-                                v-model="config.entry.macd.signal"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="1"
-                            />
-                        </el-form-item>
-                    </el-form>
                 </section>
 
                 <section class="signal-card">
                     <div class="signal-head">
+
                         <div>
-                            <div class="signal-name">Bollinger</div>
+                            <div class="signal-name">
+                                Bollinger
+                            </div>
+
                             <div class="signal-subtitle">
                                 价格触及下轨时允许入场
                             </div>
                         </div>
 
-                        <el-switch v-model="config.entry.bb.enable" />
+
+                        <el-switch
+                            v-model="config.entry.bb.enable"
+                        />
+
                     </div>
-
-                    <el-form
-                        class="compact-form"
-                        label-width="54px"
-                        size="small"
-                    >
-                        <el-form-item label="周期">
-                            <el-input-number
-                                v-model="config.entry.bb.period"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="1"
-                            />
-                        </el-form-item>
-
-                        <el-form-item label="STD">
-                            <el-input-number
-                                v-model="config.entry.bb.std"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0.1"
-                                :step="0.1"
-                            />
-                        </el-form-item>
-                    </el-form>
-                </section>
-
-                <section class="signal-card">
-                    <div class="signal-head">
-                        <div>
-                            <div class="signal-name">Volume</div>
-                            <div class="signal-subtitle">
-                                量能放大时增强突破有效性
-                            </div>
-                        </div>
-
-                        <el-switch v-model="config.entry.volume.enable" />
-                    </div>
-
-                    <el-form
-                        class="compact-form"
-                        label-width="54px"
-                        size="small"
-                    >
-                        <el-form-item label="状态">
-                            <el-text type="info">作为辅助过滤条件</el-text>
-                        </el-form-item>
-                    </el-form>
                 </section>
             </div>
         </el-card>
@@ -515,6 +455,58 @@
                     </el-col>
 
                     <el-col :span="12">
+
+                        <el-form-item label="订单规模倍率">
+
+                            <el-input-number
+
+                                v-model="config.dca.amount_multiplier"
+
+                                :min="0.10"
+
+                                :max="10"
+
+                                :step="0.10"
+
+                            />
+
+                        </el-form-item>
+
+                        <el-form-item label="价格下跌步骤%">
+
+                            <el-input-number
+
+                                v-model="config.dca.price_offset"
+
+                                :min="0.1"
+
+                                :max="20"
+
+                                :step="0.1"
+
+                            />
+
+                        </el-form-item>
+
+                        <el-form-item label="价格偏差">
+
+                            <el-input-number
+
+                                v-model="config.dca.price_multiplier"
+
+                                :min="0.1"
+
+                                :max="10"
+
+                                :step="0.1"
+
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+                    <el-col :span="12">
                         <el-form-item label="条件模式">
                             <el-select
                                 v-model="config.dca.condition"
@@ -534,62 +526,62 @@
                     </el-col>
                 </el-row>
             </el-form>
-
             <el-table
                 :data="config.dca.levels"
                 border
                 size="small"
-                style="width:100%"
             >
-                <el-table-column label="回撤%">
-                    <template #default="{ row }">
-                        <el-input-number
-                            v-model="row.drawdown"
-                            class="table-input-number"
-                            controls-position="right"
-                            size="small"
-                        />
-                    </template>
-                </el-table-column>
 
-                <el-table-column
-                    :label="config.side === 'long' ? 'RSI <' : 'RSI >'"
-                >
-                    <template #default="{ row }">
-                        <el-input-number
-                            v-model="row.rsi_limit"
-                            class="table-input-number"
-                            controls-position="right"
-                            size="small"
-                        />
-                    </template>
-                </el-table-column>
+            <el-table-column label="加仓金额USDT">
 
-                <el-table-column
-                    :label="config.side === 'long' ? 'J值 <' : 'J值 >'"
-                >
-                    <template #default="{ row }">
-                        <el-input-number
-                            v-model="row.j_limit"
-                            class="table-input-number"
-                            controls-position="right"
-                            size="small"
-                        />
-                    </template>
-                </el-table-column>
+                <template #default="{row}">
 
-                <el-table-column label="倍率">
-                    <template #default="{ row }">
-                        <el-input-number
-                            v-model="row.amount"
-                            class="table-input-number"
-                            controls-position="right"
-                            :step="0.1"
-                            :min="0"
-                            size="small"
-                        />
-                    </template>
-                </el-table-column>
+                    <el-input-number
+
+                        v-model="row.amount"
+
+                        :min="1"
+
+                        :step="10"
+
+                    />
+
+                </template>
+
+            </el-table-column>
+
+
+            <el-table-column
+                :label="config.side==='long'?'RSI <':'RSI >'"
+            >
+
+                <template #default="{row}">
+
+                    <el-input-number
+
+                        v-model="row.rsi_limit"
+
+                    />
+
+                </template>
+
+            </el-table-column>
+
+
+
+            <el-table-column label="J值">
+
+                <template #default="{row}">
+
+                    <el-input-number
+
+                        v-model="row.j_limit"
+
+                    />
+
+                </template>
+
+            </el-table-column>
 
                 <el-table-column
                     width="90"
@@ -607,6 +599,250 @@
                     </template>
                 </el-table-column>
             </el-table>
+        </el-card>
+
+        <el-card class="section-card">
+
+
+        <template #header>
+
+        <div class="card-head">
+
+        <span class="card-head__title">
+        指标配置
+        </span>
+
+        </div>
+
+        </template>
+
+
+
+        <el-divider>
+        MACD
+        </el-divider>
+
+
+        <el-row :gutter="12">
+
+
+        <el-col :span="8">
+
+        <el-form-item label="Fast">
+
+        <el-input-number
+
+        v-model="config.indicator.macd.fast"
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+
+        <el-col :span="8">
+
+        <el-form-item label="Slow">
+
+        <el-input-number
+
+        v-model="config.indicator.macd.slow"
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+
+        <el-col :span="8">
+
+        <el-form-item label="Signal">
+
+        <el-input-number
+
+        v-model="config.indicator.macd.signal"
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+        </el-row>
+
+        <el-divider>
+        KDJ
+        </el-divider>
+
+
+        <el-row :gutter="12">
+
+
+        <el-col :span="8">
+
+        <el-form-item label="FastK">
+
+        <el-input-number
+
+        v-model="
+        config.indicator.kdj.fastk
+        "
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+        <el-col :span="8">
+
+        <el-form-item label="SlowK">
+
+        <el-input-number
+
+        v-model="
+        config.indicator.kdj.slowk
+        "
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+        <el-col :span="8">
+
+        <el-form-item label="SlowD">
+
+        <el-input-number
+
+        v-model="
+        config.indicator.kdj.slowd
+        "
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+        </el-row>
+
+        <el-divider>
+        EMA
+        </el-divider>
+
+
+        <el-row :gutter="12">
+
+
+        <el-col :span="8">
+
+        <el-form-item label="EMA快">
+
+        <el-input-number
+
+        v-model="
+        config.indicator.ema.fast
+        "
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+        <el-col :span="8">
+
+        <el-form-item label="EMA中">
+
+        <el-input-number
+
+        v-model="
+        config.indicator.ema.mid
+        "
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+        <el-divider>
+        RSI
+        </el-divider>
+
+
+        <el-form-item label="周期">
+
+        <el-input-number
+
+        v-model="config.indicator.rsi.period"
+
+        />
+
+        </el-form-item>
+
+        <el-divider>
+        Bollinger
+        </el-divider>
+
+
+        <el-form-item label="周期">
+
+        <el-input-number
+
+        v-model="config.indicator.bb.period"
+
+        />
+
+        </el-form-item>
+
+
+        <el-form-item label="STD">
+
+        <el-input-number
+
+        v-model="config.indicator.bb.std"
+
+        :min="0.5"
+
+        :max="5"
+
+        :step="0.1"
+
+        />
+
+        </el-form-item>
+
+
+        <el-col :span="8">
+
+        <el-form-item label="EMA慢">
+
+        <el-input-number
+
+        v-model="
+        config.indicator.ema.slow
+        "
+
+        />
+
+        </el-form-item>
+
+        </el-col>
+
+
+        </el-row>
         </el-card>
 
         <el-row
@@ -699,254 +935,26 @@
                     </el-divider>
 
                     <el-row :gutter="12">
-
                         <el-col :span="8">
-
                             <el-form-item label="MACD">
-
                                 <el-switch
-                                    v-model="config.trend_add.macd.enable"
+                                    v-model="config.trend_add.macd_enable"
                                 />
-
                             </el-form-item>
-
-
                         </el-col>
 
-
                         <el-col :span="8">
-
                             <el-form-item label="KDJ">
-
                                 <el-switch
-                                    v-model="config.trend_add.kdj.enable"
+                                    v-model="config.trend_add.kdj_enable"
                                 />
-
                             </el-form-item>
-
-
                         </el-col>
 
-
                         <el-col :span="8">
-
                             <el-form-item label="EMA">
-
                                 <el-switch
-                                    v-model="config.trend_add.ema.enable"
-                                />
-
-                            </el-form-item>
-
-
-                        </el-col>
-
-
-                    </el-row>
-
-                    <el-divider>
-                        MACD参数
-                    </el-divider>
-
-
-                    <el-row :gutter="12">
-
-
-                        <el-col :span="8">
-
-                            <el-form-item label="DIF周期">
-
-                                <el-input-number
-
-                                    v-model="
-                                    config.trend_add.macd.fast
-                                    "
-
-                                    :min="1"
-
-                                    :max="100"
-
-                                    controls-position="right"
-
-                                />
-
-
-                            </el-form-item>
-
-
-                        </el-col>
-
-
-
-                        <el-col :span="8">
-
-                            <el-form-item label="DEA周期">
-
-
-                                <el-input-number
-
-                                    v-model="
-                                    config.trend_add.macd.slow
-                                    "
-
-                                    :min="1"
-
-                                    :max="200"
-
-                                    controls-position="right"
-
-                                />
-
-
-                            </el-form-item>
-
-
-                        </el-col>
-
-
-
-                        <el-col :span="8">
-
-                            <el-form-item label="Signal">
-
-
-                                <el-input-number
-
-                                    v-model="
-                                    config.trend_add.macd.signal
-                                    "
-
-                                    :min="1"
-
-                                    :max="50"
-
-                                    controls-position="right"
-
-                                />
-
-
-                            </el-form-item>
-
-
-                        </el-col>
-
-
-                    </el-row>
-
-                    <el-divider>
-                        KDJ参数
-                    </el-divider>
-
-
-                    <el-row :gutter="12">
-
-
-                        <el-col :span="8">
-
-                            <el-form-item label="FastK">
-
-                                <el-input-number
-
-                                    v-model="
-                                    config.trend_add.kdj.fastk
-                                    "
-
-                                    :min="1"
-
-                                    :max="50"
-
-                                    controls-position="right"
-
-                                />
-
-                            </el-form-item>
-
-                        </el-col>
-
-
-
-                        <el-col :span="8">
-
-                            <el-form-item label="SlowK">
-
-                                <el-input-number
-
-                                    v-model="
-                                    config.trend_add.kdj.slowk
-                                    "
-
-                                    :min="1"
-
-                                    :max="50"
-
-                                    controls-position="right"
-
-                                />
-
-                            </el-form-item>
-
-                        </el-col>
-
-
-
-                        <el-col :span="8">
-
-                            <el-form-item label="SlowD">
-
-                                <el-input-number
-
-                                    v-model="
-                                    config.trend_add.kdj.slowd
-                                    "
-
-                                    :min="1"
-
-                                    :max="50"
-
-                                    controls-position="right"
-
-                                />
-
-                            </el-form-item>
-
-                        </el-col>
-
-
-                    </el-row>
-
-                    <el-divider>
-                        EMA参数
-                    </el-divider>
-                    <el-row :gutter="12">
-                        <el-col :span="8">
-                            <el-form-item label="EMA快">
-                                <el-input-number
-                                    v-model="config.trend_add.ema.fast"
-                                    :min="1"
-                                    :max="200"
-                                    controls-position="right"
-                                />
-                            </el-form-item>
-                        </el-col>
-
-                        <el-col :span="8">
-                            <el-form-item label="EMA中">
-                                <el-input-number
-                                    v-model="config.trend_add.ema.mid"
-                                    :min="1"
-                                    :max="300"
-                                    controls-position="right"
-                                />
-                            </el-form-item>
-                        </el-col>
-
-                        <el-col :span="8">
-                            <el-form-item label="EMA慢">
-                                <el-input-number
-                                    v-model="config.trend_add.ema.slow"
-                                    :min="1"
-                                    :max="500"
-                                    controls-position="right"
+                                    v-model="config.trend_add.ema_enable"
                                 />
                             </el-form-item>
                         </el-col>
@@ -974,35 +982,26 @@
                             size="small"
                         >
                             <el-form-item label="启用KDJ减仓">
-
-                            <el-switch
-                                v-model="config.trend_add.kdj_reduce.enable"
-                                :disabled="!config.trend_add.enable"
-                            />
+                                <el-switch
+                                    v-model="config.trend_add.kdj_reduce.enable"
+                                    :disabled="!config.trend_add.enable"
+                                />
 
                             </el-form-item>
 
-
-                            <el-form-item label="减仓比例%">
-
+                        <el-form-item label="减仓比例%">
                             <el-input-number
-
                                 v-model="
                                 config.trend_add.kdj_reduce.reduce_percent
                                 "
-
                                 :disabled="
                                 !config.trend_add.enable ||
                                 !config.trend_add.kdj_reduce.enable
                                 "
-
                                 :min="0"
-
                                 :max="100"
-
                                 controls-position="right"
                             />
-
                             </el-form-item>
                         </el-form>
                     </el-card>
