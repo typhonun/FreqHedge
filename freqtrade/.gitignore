@@ -10,6 +10,7 @@ user_data/*
 !user_data/models
 !user_data/freqaimodels
 !user_data/strategies
+!user_data/core/
 !user_data/core/config_manager.py
 user_data/freqaimodels/*
 user_data/models/*
