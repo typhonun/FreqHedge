@@ -7,12 +7,12 @@
             class="section-card">
             <template #header>
                 <div class="card-head">
-                    <span class="card-head__title">交易信息</span>
+                    <span class="card-head__title">策略概览</span>
                     <span class="card-head__meta">
                         <el-text
                             type="info"
                             size="small">
-                            源码逻辑 + SQLite / JSON 配置
+                            当前策略运行参数与逻辑摘要
                         </el-text>
                     </span>
                 </div>
@@ -20,12 +20,14 @@
 
             <el-descriptions
                 class="trade-descriptions"
-                :column="2"
+                :column="3"
                 border
                 size="small">
                 <el-descriptions-item label="方向">
                     <el-tag
-                        :type="config.side === 'long' ? 'success' : 'danger'"
+                        :type="tradeInfo.side === 'long'
+                        ? 'success'
+                        : 'danger'"
                         size="small">
                         {{ tradeInfo.direction }}
                     </el-tag>
@@ -36,53 +38,111 @@
                 </el-descriptions-item>
 
                 <el-descriptions-item label="杠杆">
-                    {{ tradeInfo.leverage }}
+                    {{tradeInfo.leverage}}
                 </el-descriptions-item>
+
 
                 <el-descriptions-item label="止损">
-                    {{ tradeInfo.stoploss }}
+                    {{tradeInfo.stoploss}}
                 </el-descriptions-item>
 
-                <el-descriptions-item label="开仓信号" :span="2">
+
+                <el-descriptions-item
+                    v-if="tradeInfo.entrySignal"
+                    label="开仓信号"
+                    :span="2">
+
                     {{ tradeInfo.entrySignal }}
+
                 </el-descriptions-item>
 
-                <el-descriptions-item label="趋势加仓" :span="2">
-                    {{ tradeInfo.trendSignal }}
+                <el-descriptions-item
+                    label="TP减仓"
+                    :span="2">
+
+                    <span v-if="tradeInfo.tpSignal">
+                        {{tradeInfo.tpSignal}}
+                    </span>
+
+                    <span v-else class="empty-placeholder">
+                    </span>
+
                 </el-descriptions-item>
 
-                <el-descriptions-item label="DCA规则" :span="2">
-                    {{ tradeInfo.dcaSignal }}
+                <el-descriptions-item
+                    label="浮亏止盈"
+                    :span="2">
+
+                    <span v-if="tradeInfo.lossTpSignal">
+                        {{tradeInfo.lossTpSignal}}
+                    </span>
+
+                    <span v-else class="empty-placeholder">
+                    </span>
+                
                 </el-descriptions-item>
 
-                <el-descriptions-item label="止盈/回补" :span="2">
-                    {{ tradeInfo.tpSignal }}
+                <el-descriptions-item
+                    label="趋势加仓"
+                    :span="2">
+
+                    <span v-if="tradeInfo.trendSignal">
+                        {{tradeInfo.trendSignal}}
+                    </span>
+
+                    <span v-else class="empty-placeholder">
+                    </span>
+
                 </el-descriptions-item>
 
-                <el-descriptions-item label="网格规则" :span="2">
-                    {{ tradeInfo.gridSignal }}
+                <el-descriptions-item
+                    label="DCA规则"
+                    :span="2">
+
+                    <span v-if="tradeInfo.dcaSignal">
+                        {{tradeInfo.dcaSignal}}
+                    </span>
+
+                    <span v-else class="empty-placeholder">
+                    </span>
+
                 </el-descriptions-item>
 
-                <el-descriptions-item label="ROI阶梯" :span="2">
-                    <div class="roi-chip-wrap">
-                        <el-tag
-                            v-for="tier in tradeInfo.roiLevels"
-                            :key="tier.label"
-                            size="small"
-                            type="info"
-                            effect="plain">
-                            {{ tier.label }}
-                        </el-tag>
-                    </div>
+                <el-descriptions-item
+                    label="网格规则"
+                    :span="2">
+
+                    <span v-if="tradeInfo.gridSignal">
+                        {{tradeInfo.gridSignal}}
+                    </span>
+
+                    <span v-else class="empty-placeholder">
+                    </span>
+
+                </el-descriptions-item>
+
+                <el-descriptions-item
+                    v-if="tradeInfo.roiLevels.length"
+                    label="ROI阶梯"
+                    :span="2">
+                    <el-scrollbar max-height="100px">
+                        <div class="roi-chip-wrap">
+                            <el-tag
+                                v-for="tier in tradeInfo.roiLevels"
+                                :key="tier.label"
+                                size="small"
+                                effect="plain">
+                            {{tier.label}}
+                            </el-tag>
+                        </div>
+
+                    </el-scrollbar>
                 </el-descriptions-item>
 
                 <el-descriptions-item label="交易开关">
                     {{ tradeInfo.positionAdjustment }} / {{ tradeInfo.trailingStop }}
                 </el-descriptions-item>
 
-                <el-descriptions-item label="退出信号">
-                    {{ tradeInfo.exitSignal }}
-                </el-descriptions-item>
             </el-descriptions>
 
             <el-alert
@@ -102,7 +162,7 @@
         <el-card class="section-card">
             <template #header>
                 <div class="card-head">
-                    <span class="card-head__title">入场配置</span>
+                    <span class="card-head__title">开仓信号</span>
                     <span class="card-head__meta">
                         <el-text
                             type="info"
@@ -125,19 +185,21 @@
                             </div>
                         </div>
                         <el-switch
-                            v-model="config.entry.rsi.enable" />
+                            :model-value="config.entry.rsi.enable"
+                            @change="val=>changeEntrySignal('rsi',val)"
+                        />
                     </div>
                 </section>
                 <el-form
                     class="compact-form"
                     label-width="54px"
                     size="small">
-                    <el-form-item label="阈值">
-                        <el-input-number
-                            v-model="config.entry.rsi.value"
-                            :min="1"
-                            :max="100" />
-                    </el-form-item>
+                    <el-input-number
+                        v-model="config.entry.rsi.value"
+                        :disabled="!config.entry.rsi.enable"
+                        :min="1"
+                        :max="100"
+                    />
                 </el-form>
 
                 <section class="signal-card">
@@ -148,7 +210,10 @@
                                 趋势与动能共振确认
                             </div>
                         </div>
-                        <el-switch v-model="config.entry.macd.enable" />
+                        <el-switch
+                            :model-value="config.entry.macd.enable"
+                            @change="val=>changeEntrySignal('macd',val)"
+                        />
                     </div>
                 </section>
 
@@ -163,7 +228,9 @@
                             </div>
                         </div>
                         <el-switch
-                            v-model="config.entry.bb.enable" />
+                            :model-value="config.entry.bb.enable"
+                            @change="val=>changeEntrySignal('bb',val)"
+                        />
                     </div>
                 </section>
             </div>
@@ -199,32 +266,42 @@
             </el-alert>
 
             <div class="roi-list">
+
                 <div
-                    v-for="(roi, index) in config.tp.roi_levels"
+                    v-for="(roi,index) in config.tp.roi_levels || []"
                     :key="index"
                     class="roi-row">
-                    <div class="roi-index">
+
+                    <span class="roi-index">
                         {{ index + 1 }}
-                    </div>
+                    </span>
+
                     <el-input-number
                         v-model="roi.minutes"
                         class="roi-input"
                         controls-position="right"
                         :min="0"
-                        size="small" />
+                        size="small"
+                        placeholder="分钟"/>
+
                     <el-input-number
                         v-model="roi.roi"
                         class="roi-input"
                         controls-position="right"
-                        size="small" />
-                    <el-button
-                        type="danger"
                         size="small"
-                        plain
+                        placeholder="收益%"/>
+
+                    <el-button
+                        class="roi-delete"
+                        type="danger"
+                        link
+                        size="small"
                         @click="removeRoi(index)">
-                        删除
+                        ✕
                     </el-button>
+
                 </div>
+
             </div>
         </el-card>
 
@@ -330,15 +407,6 @@
                         >
                             回撤满足条件时分层补仓
                         </el-text>
-
-                        <el-button
-                            size="small"
-                            type="success"
-                            plain
-                            @click="addDca"
-                        >
-                            新增DCA
-                        </el-button>
                     </span>
                 </div>
             </template>
@@ -464,70 +532,31 @@
                 size="small"
             >
 
-            <el-table-column label="加仓金额USDT">
-
-                <template #default="{row}">
-
-                    <el-input-number
-
-                        v-model="row.amount"
-
-                        :min="1"
-
-                        :step="10"
-
-                    />
-
-                </template>
-
-            </el-table-column>
-
-
-            <el-table-column
-                :label="config.side==='long'?'RSI <':'RSI >'"
-            >
-
-                <template #default="{row}">
-
-                    <el-input-number
-
-                        v-model="row.rsi_limit"
-
-                    />
-
-                </template>
-
-            </el-table-column>
-
-
-
-            <el-table-column label="J值">
-
-                <template #default="{row}">
-
-                    <el-input-number
-
-                        v-model="row.j_limit"
-
-                    />
-
-                </template>
-
-            </el-table-column>
+                <el-table-column label="加仓金额USDT">
+                    <template #default="{row}">
+                        <el-input-number
+                            v-model="row.amount"
+                            :min="1"
+                            :step="10"
+                        />
+                    </template>
+                </el-table-column>
 
                 <el-table-column
-                    width="90"
-                    label="操作"
+                    :label="config.side==='long'?'RSI <':'RSI >'"
                 >
-                    <template #default="{ $index }">
-                        <el-button
-                            type="danger"
-                            size="small"
-                            plain
-                            @click="removeDca($index)"
-                        >
-                            删除
-                        </el-button>
+                    <template #default="{row}">
+                        <el-input-number
+                            v-model="row.rsi_limit"
+                        />
+                    </template>
+                </el-table-column>
+
+                <el-table-column label="J值">
+                    <template #default="{row}">
+                        <el-input-number
+                            v-model="row.j_limit"
+                        />
                     </template>
                 </el-table-column>
             </el-table>
@@ -535,246 +564,233 @@
 
         <el-card class="section-card">
 
+            <template #header>
 
-        <template #header>
+                <div class="card-head">
 
-        <div class="card-head">
+                    <span class="card-head__title">
+                    指标配置
+                    </span>
 
-        <span class="card-head__title">
-        指标配置
-        </span>
+                </div>
 
-        </div>
+            </template>
 
-        </template>
 
+            <el-divider>
+            MACD
+            </el-divider>
 
+            <el-row :gutter="12">
 
-        <el-divider>
-        MACD
-        </el-divider>
+                <el-col :span="8">
 
+                    <el-form-item label="Fast">
 
-        <el-row :gutter="12">
+                        <el-input-number
 
+                            v-model="config.indicator.macd.fast"
 
-        <el-col :span="8">
+                        />
 
-        <el-form-item label="Fast">
+                    </el-form-item>
 
-        <el-input-number
+                </el-col>
 
-        v-model="config.indicator.macd.fast"
 
-        />
+                <el-col :span="8">
 
-        </el-form-item>
+                    <el-form-item label="Slow">
 
-        </el-col>
+                        <el-input-number
 
+                            v-model="config.indicator.macd.slow"
 
+                        />
 
-        <el-col :span="8">
+                    </el-form-item>
 
-        <el-form-item label="Slow">
+                </el-col>
 
-        <el-input-number
 
-        v-model="config.indicator.macd.slow"
+                <el-col :span="8">
 
-        />
+                    <el-form-item label="Signal">
 
-        </el-form-item>
+                        <el-input-number
 
-        </el-col>
+                            v-model="config.indicator.macd.signal"
 
+                        />
 
+                    </el-form-item>
 
-        <el-col :span="8">
+                </el-col>
 
-        <el-form-item label="Signal">
 
-        <el-input-number
+            </el-row>
 
-        v-model="config.indicator.macd.signal"
+            <el-divider>
+            KDJ
+            </el-divider>
 
-        />
 
-        </el-form-item>
+            <el-row :gutter="12">
 
-        </el-col>
+                <el-col :span="8">
 
+                    <el-form-item label="FastK">
 
-        </el-row>
+                        <el-input-number
 
-        <el-divider>
-        KDJ
-        </el-divider>
+                            v-model="
+                            config.indicator.kdj.fastk
+                            "
 
+                        />
 
-        <el-row :gutter="12">
+                    </el-form-item>
 
+                </el-col>
 
-        <el-col :span="8">
+                <el-col :span="8">
 
-        <el-form-item label="FastK">
+                    <el-form-item label="SlowK">
 
-        <el-input-number
+                        <el-input-number
 
-        v-model="
-        config.indicator.kdj.fastk
-        "
+                        v-model="
+                        config.indicator.kdj.slowk
+                        "
 
-        />
+                        />
 
-        </el-form-item>
+                    </el-form-item>
 
-        </el-col>
+                </el-col>
 
 
-        <el-col :span="8">
+                <el-col :span="8">
 
-        <el-form-item label="SlowK">
+                    <el-form-item label="SlowD">
 
-        <el-input-number
+                        <el-input-number
 
-        v-model="
-        config.indicator.kdj.slowk
-        "
+                            v-model="
+                            config.indicator.kdj.slowd
+                            "
 
-        />
+                        />
 
-        </el-form-item>
+                    </el-form-item>
 
-        </el-col>
+                </el-col>
 
+            </el-row>
 
-        <el-col :span="8">
 
-        <el-form-item label="SlowD">
+            <el-divider>
+            EMA
+            </el-divider>
 
-        <el-input-number
+            <el-row :gutter="12">
 
-        v-model="
-        config.indicator.kdj.slowd
-        "
+                <el-col :span="8">
 
-        />
+                    <el-form-item label="EMA快">
 
-        </el-form-item>
+                        <el-input-number
 
-        </el-col>
+                            v-model="
+                            config.indicator.ema.fast
+                            "
+                        />
 
+                    </el-form-item>
 
-        </el-row>
+                </el-col>
 
-        <el-divider>
-        EMA
-        </el-divider>
 
+                <el-col :span="8">
 
-        <el-row :gutter="12">
+                    <el-form-item label="EMA中">
 
+                        <el-input-number
 
-        <el-col :span="8">
+                            v-model="
+                            config.indicator.ema.mid
+                            "
 
-        <el-form-item label="EMA快">
+                        />
 
-        <el-input-number
+                    </el-form-item>
 
-        v-model="
-        config.indicator.ema.fast
-        "
+                </el-col>
 
-        />
+                <el-divider>
+                RSI
+                </el-divider>
 
-        </el-form-item>
+                <el-form-item label="周期">
 
-        </el-col>
+                    <el-input-number
 
+                        v-model="config.indicator.rsi.period"
 
-        <el-col :span="8">
+                    />
 
-        <el-form-item label="EMA中">
+                </el-form-item>
 
-        <el-input-number
+                <el-divider>
+                Bollinger
+                </el-divider>
 
-        v-model="
-        config.indicator.ema.mid
-        "
+                <el-form-item label="周期">
 
-        />
+                    <el-input-number
 
-        </el-form-item>
+                        v-model="config.indicator.bb.period"
 
-        </el-col>
+                    />
 
-        <el-divider>
-        RSI
-        </el-divider>
+                </el-form-item>
 
 
-        <el-form-item label="周期">
+                <el-form-item label="STD">
 
-        <el-input-number
+                    <el-input-number
 
-        v-model="config.indicator.rsi.period"
+                        v-model="config.indicator.bb.std"
 
-        />
+                        :min="0.5"
 
-        </el-form-item>
+                        :max="5"
 
-        <el-divider>
-        Bollinger
-        </el-divider>
+                        :step="0.1"
 
+                    />
 
-        <el-form-item label="周期">
+                </el-form-item>
 
-        <el-input-number
 
-        v-model="config.indicator.bb.period"
+                <el-col :span="8">
 
-        />
+                    <el-form-item label="EMA慢">
 
-        </el-form-item>
+                    <el-input-number
 
+                        v-model="
+                        config.indicator.ema.slow
+                        "
 
-        <el-form-item label="STD">
+                        />
 
-        <el-input-number
+                    </el-form-item>
 
-        v-model="config.indicator.bb.std"
+                </el-col>
 
-        :min="0.5"
 
-        :max="5"
-
-        :step="0.1"
-
-        />
-
-        </el-form-item>
-
-
-        <el-col :span="8">
-
-        <el-form-item label="EMA慢">
-
-        <el-input-number
-
-        v-model="
-        config.indicator.ema.slow
-        "
-
-        />
-
-        </el-form-item>
-
-        </el-col>
-
-
-        </el-row>
+            </el-row>
         </el-card>
 
         <el-row
@@ -1019,6 +1035,19 @@
                             </el-col>
 
                             <el-col :span="12">
+
+                                <el-form-item label="订单规模">
+                                    <el-input-number
+                                        v-model="config.grid.order_scale"
+                                        class="compact-input-number"
+                                        controls-position="right"
+                                        :min="0.1"
+                                        :step="0.1"
+                                    />
+                                </el-form-item>
+                            </el-col>
+
+                            <el-col :span="12">
                                 <el-form-item label="减仓占总资金%">
                                     <el-input-number
                                         v-model="config.grid.sell_percent"
@@ -1179,6 +1208,7 @@
 </template>
 
 <script setup>
+import { ElMessage } from "element-plus"
 const props = defineProps({
     config: Object,
     tradeInfo: Object
@@ -1186,18 +1216,82 @@ const props = defineProps({
 
 const emit = defineEmits(["save"])
 
+const changeEntrySignal = (type,val)=>{
+
+    const entry = props.config.entry
+
+
+    if(!val){
+
+        const remain =
+            Object.keys(entry)
+                .filter(key=>key!==type)
+                .some(
+                    key=>entry[key].enable
+                )
+
+
+        if(!remain){
+
+            ElMessage.warning(
+                "开仓信号至少需要保留一个"
+            )
+
+            return
+        }
+    }
+
+
+    entry[type].enable = val
+
+}
+
 const addRoi = () => {
+
+    if(!props.config.tp){
+        return
+    }
+
+
+    if(!props.config.tp.roi_levels){
+        props.config.tp.roi_levels = []
+    }
+
+
     props.config.tp.roi_levels.push({
-        minutes: 60,
-        roi: 1
+
+        minutes:0,
+
+        roi:30
+
     })
+
 }
 
 const removeRoi = (index) => {
-    props.config.tp.roi_levels.splice(
+
+
+    const roiLevels =
+        props.config.tp.roi_levels
+
+
+    // 禁止删除最后一条 ROI
+    if (roiLevels.length <= 1) {
+
+        ElMessage.warning({
+            message: "ROI止盈规则至少需要保留一条",
+            duration: 2000
+        })
+
+        return
+    }
+
+
+    roiLevels.splice(
         index,
         1
     )
+
 }
 
 const addDca = () => {
@@ -1370,38 +1464,81 @@ const syncKdjReduce = () => {
     gap:4px;
 }
 
-.roi-list{
-    display:flex;
-    flex-direction:column;
-    gap:8px;
+.roi-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
 }
 
-.roi-row{
-    display:grid;
-    grid-template-columns:36px 1fr 1fr auto;
-    gap:8px;
-    align-items:center;
-    padding:10px 12px;
-    border:1px solid var(--el-border-color-lighter);
-    border-radius:10px;
-    background:var(--el-fill-color-extra-light);
+
+.roi-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #ebeef5;
+    border-radius: 6px;
 }
 
-.roi-index{
-    width:28px;
-    height:28px;
-    border-radius:50%;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    background:var(--el-color-primary-light-9);
-    color:var(--el-color-primary);
-    font-size:12px;
-    font-weight:600;
+
+.roi-index {
+    width: 24px;
+    text-align: center;
+    font-weight: bold;
 }
 
-.roi-input{
+
+.roi-input {
+    flex: none;
+    width: 90px;
+}
+
+
+.roi-input :deep(.el-input__wrapper) {
+    width: 100%;
+}
+
+
+.roi-row .el-button {
+    width: 32px;
+    padding: 0;
+}
+
+
+.roi-delete {
+    width: 22px;
+    padding: 0;
+}
+
+.roi-input:first-of-type {
+    width: 100px;
+}
+
+.roi-input:nth-of-type(2) {
+    width: 90px;
+}
+
+@media (max-width: 1200px) {
+
+    .roi-list {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+}
+
+
+@media (max-width: 700px) {
+
+    .roi-list {
+        grid-template-columns: 1fr;
+    }
+
+}
+
+.empty-placeholder{
+    display:inline-block;
     width:100%;
+    height:20px;
 }
 
 .panel-grid{

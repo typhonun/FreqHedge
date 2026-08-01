@@ -1594,7 +1594,7 @@ class DcaTpLong(IStrategy):
             )
         except Exception:
             grid_upper_pct = 2.0
-        grid_lower = anchor * (1 - grid_lower_pct / 100.0)
+        grid_lower = anchor * (1 + grid_lower_pct / 100.0)
         grid_upper = anchor * (1 + grid_upper_pct / 100.0)
 
         collateral = self._collateral_total()
@@ -1635,13 +1635,59 @@ class DcaTpLong(IStrategy):
 
             self._get_int(trade, 'dca_count', 0)
 
+            # ==========================
             # 动态网格加仓数量
+            # ==========================
+
             try:
-                buy_percent = float(grid_cfg.get("buy_percent", 2) or 2)
+                buy_percent = float(
+                    grid_cfg.get(
+                        "buy_percent",
+                        2
+                    ) or 2
+                )
             except Exception:
                 buy_percent = 2.0
-            grid_frac = max(0.01, (buy_percent / 100.0) - 0.002 * w)
-            buy_usdt = min(collateral * grid_frac, self._available_stake() * 0.8)
+
+            # 订单规模系数
+            # 1 = 固定网格
+            # >1 = 金字塔加仓
+            # <1 = 倒金字塔
+            try:
+                order_scale = float(
+                    grid_cfg.get(
+                        "order_scale",
+                        1
+                    ) or 1
+                )
+            except Exception:
+                order_scale = 1.0
+
+            # 防止异常
+            if order_scale <= 0:
+                order_scale = 1.0
+
+            # 第w层订单倍率
+            # 第一次 w=0
+            # 第二次 w=1
+            # 第三次 w=2
+            scale_factor = order_scale ** w
+
+            # 当前网格实际比例
+            grid_frac = (
+                                buy_percent / 100.0
+                        ) * scale_factor
+
+            # 最小保护
+            grid_frac = max(
+                0.01,
+                grid_frac
+            )
+
+            buy_usdt = min(
+                collateral * grid_frac,
+                self._available_stake() * 0.8
+            )
             if buy_usdt <= 0:
                 return None
 
@@ -1677,7 +1723,8 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'grid_w', int(new_w))
 
             logger.info(
-                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.1f}%]{RESET}, 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
+                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% "
+                f"(倍率x{scale_factor:.2f})]{RESET}, 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
             )
