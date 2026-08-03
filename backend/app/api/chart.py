@@ -4,16 +4,32 @@ import json
 import time
 from app.services.position_service import PositionService
 from pathlib import Path
+from fastapi import Depends
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models.trade_event import TradeEvent
+from app.schemas.chart import (
+    TradeEventCreate,
+    TradeEventOut
+)
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 router = APIRouter()
 kline_cache = {}
 
 exchange = ccxt.binance({
+
     "enableRateLimit": True,
+
+    "rateLimit": 1200,
+
     "options": {
-        "defaultType": "future"
+
+        "defaultType":"future"
+
     }
+
 })
 
 
@@ -249,4 +265,92 @@ def warmup_cache():
 
     print(
         "===== K线缓存预热完成 =====\n"
+    )
+
+
+@router.post("/event")
+def create_event(
+        event: TradeEventCreate,
+        db:Session=Depends(get_db)
+):
+
+
+    exists = db.query(
+        TradeEvent
+    ).filter(
+        TradeEvent.strategy==event.strategy,
+        TradeEvent.pair==event.pair,
+        TradeEvent.event_type==event.event_type,
+        TradeEvent.candle_time==event.candle_time
+    ).first()
+
+
+    if exists:
+        return exists
+
+    obj = TradeEvent(
+
+        strategy=event.strategy,
+
+        pair=event.pair,
+
+        trade_id=event.trade_id,
+
+        event_type=event.event_type,
+
+        side=event.side,
+
+        price=event.price,
+
+        amount=event.amount,
+
+        time=event.time,
+
+        candle_time=event.candle_time,
+
+        message=event.message
+    )
+
+
+    db.add(obj)
+
+    db.commit()
+
+    db.refresh(obj)
+
+    return obj
+
+
+@router.get(
+    "/events",
+    response_model=list[TradeEventOut]
+)
+def get_events(
+        strategy: str,
+        pair: str,
+        db: Session = Depends(get_db)
+):
+    pairs = [
+        pair,
+        pair.replace(":USDT", ""),
+        pair.replace("/", "")
+    ]
+
+    return (
+
+        db.query(
+            TradeEvent
+        )
+
+        .filter(
+            TradeEvent.strategy == strategy,
+            TradeEvent.pair.in_(pairs)
+        )
+
+        .order_by(
+            TradeEvent.time
+        )
+
+        .all()
+
     )

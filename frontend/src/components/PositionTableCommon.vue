@@ -466,6 +466,10 @@ const amountStep = computed(() => {
     )
 })
 
+const emit = defineEmits([
+    "selectPair"
+])
+
 const goToChart = (row) => {
 
     const strategy =
@@ -473,14 +477,22 @@ const goToChart = (row) => {
             ? "DcaTpShort"
             : "DcaTpLong"
 
+
+    emit(
+        "selectPair",
+        {
+            pair: row.pair,
+            strategy
+        }
+    )
+
+
     router.push({
 
-        path: "/charts",
+        path:"/charts",
 
-        query: {
-
-            pair: row.pair,
-
+        query:{
+            pair:row.pair,
             strategy
         }
     })

@@ -6,6 +6,9 @@ from app.services.config_service import ConfigService
 from pydantic import BaseModel
 from app.services.position_service import PositionService
 from app.services.risk_config_service import RiskConfigService
+from app.services.event_service import record_event
+
+from datetime import datetime, timezone
 router = APIRouter()
 
 
@@ -73,7 +76,8 @@ def available_pairs(side: str):
 def force_enter(
         data: ForceEnterRequest
 ):
-    return PositionService.force_enter(
+
+    result = PositionService.force_enter(
 
         side=data.side,
 
@@ -81,6 +85,55 @@ def force_enter(
 
         stakeamount=data.stakeamount
     )
+
+
+    # =========================
+    # 手动开仓记录事件
+    # =========================
+
+    try:
+
+        strategy = (
+            "DcaTpLong"
+            if data.side == "long"
+            else
+            "DcaTpShort"
+        )
+
+        record_event(
+
+            strategy=strategy,
+
+            pair=data.pair,
+
+            trade_id=0,
+
+            event_type="manual_entry",
+
+            side=data.side,
+
+            price=None,
+
+            amount=data.stakeamount,
+
+            message="手动开仓",
+
+            current_time=datetime.now(
+                timezone.utc
+            )
+
+        )
+
+
+    except Exception as e:
+
+        print(
+            "manual entry event error:",
+            e
+        )
+
+
+    return result
 
 
 @router.get("/round-info")

@@ -13,6 +13,7 @@ import pandas as pd
 from typing import Any, Optional
 import talib.abstract as ta
 from datetime import datetime
+from event_logger import record_event
 import logging
 
 RED = "\033[31m"
@@ -126,6 +127,48 @@ class DcaTpLong(IStrategy):
             **kwargs
     ):
 
+        print(
+            "ORDER_FILLED:",
+            pair,
+            order.average,
+            trade.id
+        )
+
+        entry_price = float(
+            getattr(order, "average", None)
+            or trade.open_rate
+            or 0
+        )
+
+        # =========================
+        # 记录真实成交
+        # =========================
+
+        record_event(
+
+            strategy=self.__class__.__name__,
+
+            pair=pair,
+
+            trade_id=trade.id,
+
+            event_type="entry",
+
+            side="long",
+
+            price=entry_price,
+
+            amount=float(order.amount),
+
+            message="开仓成交",
+
+            current_time=current_time
+        )
+
+        # =========================
+        # 初始化只执行一次
+        # =========================
+
         if self._get_bool(
                 trade,
                 "initialized",
@@ -156,20 +199,35 @@ class DcaTpLong(IStrategy):
         )
 
         flags = {
+
             'dca_count': 0,
+
             'tp_count': 0,
+
             'dca_done': False,
+
             'last_dca_candle': None,
+
             'last_dca_time': None,
+
             'need_rebuy': False,
+
             'last_tp_time': None,
+
             'trend_level': 0,
+
             'last_trend_candle': None,
+
             'reset_needed': False,
+
             'grid_anchor_price': 0,
+
             'loss_tp_armed': False,
+
             'grid_w': 0,
+
             'loss_tp_min_profit': 0.0,
+
         }
 
         for k, v in flags.items():
@@ -180,21 +238,41 @@ class DcaTpLong(IStrategy):
             )
 
         entry_price = float(
-            getattr(order, "average", None)
+
+            getattr(
+                order,
+                "average",
+                None
+            )
+
             or trade.open_rate
+
             or 0
+
         )
 
         self._set(
+
             trade,
+
             "grid_upper",
-            entry_price * (1 + upper_pct / 100)
+
+            entry_price * (
+                    1 + upper_pct / 100
+            )
+
         )
 
         self._set(
+
             trade,
+
             "grid_lower",
-            entry_price * (1 + lower_pct / 100)
+
+            entry_price * (
+                    1 + lower_pct / 100
+            )
+
         )
 
         self._set(
@@ -476,13 +554,22 @@ class DcaTpLong(IStrategy):
                 dataframe['macdsig_tf']
             )
         if conds:
-            long_cond = conds[0]
-            for cond in conds[1:]:
-                long_cond = long_cond & cond
-        else:
-            long_cond = pd.Series(False, index=dataframe.index)
 
-        dataframe['enter_long'] = long_cond.astype(int)
+            long_cond = conds[0]
+
+            for cond in conds[1:]:
+                long_cond &= cond
+
+        else:
+
+            long_cond = pd.Series(
+                False,
+                index=dataframe.index
+            )
+
+        # 这里必须先赋值
+        dataframe["enter_long"] = long_cond.astype(int)
+
         logger.info(f"entry_cfg={entry_cfg}")
         logger.info(
             f"conds={len(conds)}, "
@@ -498,6 +585,43 @@ class DcaTpLong(IStrategy):
             f"MACD触发={(dataframe['macd_tf'] > dataframe['macdsig_tf']).sum()}"
         )
         return dataframe
+
+    def confirm_trade_entry(
+            self,
+            pair,
+            order_type,
+            amount,
+            rate,
+            time_in_force,
+            current_time,
+            entry_tag,
+            side,
+            **kwargs
+    ):
+
+        record_event(
+
+            strategy=self.__class__.__name__,
+
+            pair=pair,
+
+            trade_id=0,
+
+            event_type="confirm",
+
+            side=side,
+
+            price=float(rate),
+
+            amount=float(amount),
+
+            message="确认入场",
+
+            current_time=current_time
+
+        )
+
+        return True
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe['exit_long'] = 0

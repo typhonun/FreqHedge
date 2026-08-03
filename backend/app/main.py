@@ -13,6 +13,8 @@ from app.api.config import router as config_router
 from app.api.chart import router as chart_router
 from app.api import logs
 from app.api import strategy
+from app.database import Base, engine
+from app.models import trade_event
 
 app = FastAPI()
 
@@ -36,6 +38,8 @@ def root():
 
 @app.on_event("startup")
 async def startup():
+    # 创建数据库表
+    Base.metadata.create_all(bind=engine)
 
     RiskConfigService.load()
 
@@ -48,10 +52,6 @@ async def startup():
         target=cache_refresh_loop,
         daemon=True
     ).start()
-
-    print(
-        "K线缓存预热线程已启动"
-    )
 
 
 app.include_router(
