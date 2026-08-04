@@ -70,7 +70,7 @@
                 </el-descriptions-item>
 
                 <el-descriptions-item
-                    label="浮亏止盈"
+                    label="DCA止盈"
                     :span="2">
 
                     <span v-if="tradeInfo.lossTpSignal">
@@ -1076,7 +1076,7 @@
                             type="info"
                             size="small"
                         >
-                            DCA后快速回收资金，深亏等待反弹
+                            DCA后达到收益目标，自动减仓保留仓位
                         </el-text>
                     </span>
                 </div>
@@ -1144,53 +1144,7 @@
                         </el-form-item>
 
                     </el-col>
-
-
-
-
-                    <!-- 深亏触发 -->
-                    <el-col :span="12">
-
-                        <el-form-item label="触发亏损%">
-
-                            <el-input-number
-                                v-model="config.loss_tp.trigger_loss"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="-100"
-                                :max="0"
-                                :step="0.5"
-                            />
-
-                        </el-form-item>
-
-                    </el-col>
-
-
-
-
-                    <!-- 反弹退出 -->
-                    <el-col :span="12">
-
-                        <el-form-item label="反弹幅度%">
-
-                            <el-input-number
-                                v-model="config.loss_tp.trigger_rebound"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0"
-                                :max="20"
-                                :step="0.1"
-                            />
-
-                        </el-form-item>
-
-                    </el-col>
-
-
                 </el-row>
-
-
             </el-form>
 
         </el-card>

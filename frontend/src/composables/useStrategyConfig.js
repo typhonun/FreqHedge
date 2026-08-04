@@ -365,13 +365,7 @@ const defaultLongConfig = () => ({
     },
     loss_tp:{
         enable:true,
-
-        trigger_loss:-10,
-
-        trigger_rebound:1,
-
         dca_tp_profit:0.3,
-
         target_wallet_percent:5
     },
     grid: {

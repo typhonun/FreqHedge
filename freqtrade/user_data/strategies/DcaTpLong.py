@@ -120,50 +120,73 @@ class DcaTpLong(IStrategy):
 
     def order_filled(
             self,
-            pair: str,
-            trade: Trade,
-            order: Order,
-            current_time: datetime,
+            pair,
+            trade,
+            order,
+            current_time,
             **kwargs
     ):
 
-        print(
-            "ORDER_FILLED:",
-            pair,
-            order.average,
-            trade.id
-        )
+        if order.ft_order_side != "buy":
+            return
 
         entry_price = float(
-            getattr(order, "average", None)
+            order.average
             or trade.open_rate
-            or 0
         )
 
         # =========================
-        # 记录真实成交
+        # 判断是否DCA
         # =========================
 
-        record_event(
+        if trade.nr_of_successful_entries > 1:
 
-            strategy=self.__class__.__name__,
+            record_event(
 
-            pair=pair,
+                strategy=self.__class__.__name__,
 
-            trade_id=trade.id,
+                pair=pair,
 
-            event_type="entry",
+                trade_id=trade.id,
 
-            side="long",
+                event_type="dca",
 
-            price=entry_price,
+                side="long",
 
-            amount=float(order.amount),
+                price=entry_price,
 
-            message="开仓成交",
+                amount=float(order.amount),
 
-            current_time=current_time
-        )
+                message="DCA加仓",
+
+                current_time=current_time
+
+            )
+
+
+        else:
+
+            record_event(
+
+                strategy=self.__class__.__name__,
+
+                pair=pair,
+
+                trade_id=trade.id,
+
+                event_type="filled_entry",
+
+                side="long",
+
+                price=entry_price,
+
+                amount=float(order.amount),
+
+                message="成交开仓",
+
+                current_time=current_time
+
+            )
 
         # =========================
         # 初始化只执行一次
@@ -222,11 +245,7 @@ class DcaTpLong(IStrategy):
 
             'grid_anchor_price': 0,
 
-            'loss_tp_armed': False,
-
             'grid_w': 0,
-
-            'loss_tp_min_profit': 0.0,
 
         }
 
@@ -569,6 +588,10 @@ class DcaTpLong(IStrategy):
 
         # 这里必须先赋值
         dataframe["enter_long"] = long_cond.astype(int)
+        dataframe.loc[
+            long_cond,
+            "enter_tag"
+        ] = "RSI_BB_MACD"
 
         logger.info(f"entry_cfg={entry_cfg}")
         logger.info(
@@ -599,27 +622,8 @@ class DcaTpLong(IStrategy):
             **kwargs
     ):
 
-        record_event(
-
-            strategy=self.__class__.__name__,
-
-            pair=pair,
-
-            trade_id=0,
-
-            event_type="confirm",
-
-            side=side,
-
-            price=float(rate),
-
-            amount=float(amount),
-
-            message="确认入场",
-
-            current_time=current_time
-
-        )
+        if side != "long":
+            return True
 
         return True
 
@@ -1021,6 +1025,29 @@ class DcaTpLong(IStrategy):
             logger.info(f"[{trade.pair}] {GREEN}[多头趋势加仓 {amount_pct * 100:.1f}%]{RESET}, "
                         f"{YELLOW} 保证金={margin:.2f}{RESET}, "f"当前价={price:.4f}, "
                         f"加仓={abs(amt):.4f} USDT, 新均价={new_avg:.4f}")
+
+            record_event(
+
+                strategy=self.__class__.__name__,
+
+                pair=trade.pair,
+
+                trade_id=trade.id,
+
+                event_type="trend_add",
+
+                side="long",
+
+                price=float(price),
+
+                amount=float(amt),
+
+                message="趋势加仓",
+
+                current_time=current_time
+
+            )
+
             return float(amt), 'trend_add20_bull'
 
         if (
@@ -1072,6 +1099,28 @@ class DcaTpLong(IStrategy):
                 logger.info(f"[{trade.pair}] {RED}[KDJ 减仓]{RESET}, "
                             f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
                             f"减仓={abs(amt):.4f} USDT")
+
+                record_event(
+
+                    strategy=self.__class__.__name__,
+
+                    pair=trade.pair,
+
+                    trade_id=trade.id,
+
+                    event_type="kdj_reduce",
+
+                    side="long",
+
+                    price=float(last.get('close')),
+
+                    amount=float(abs(amt)),
+
+                    message="KDJ减仓",
+
+                    current_time=current_time
+
+                )
                 return float(amt), 'kdj_reduce_by_trend_added'
 
     def dca_add(self, trade: Trade, df: DataFrame, last: dict, current_time: datetime, current_rate: float):
@@ -1332,7 +1381,11 @@ class DcaTpLong(IStrategy):
         cfg = self.get_runtime_config()
 
         tp_cfg = self._cfg(cfg, "tp", default={}) or {}
-        loss_tp_cfg = self._cfg(cfg, "loss_tp", default={}) or {}
+        dca_tp_cfg = self._cfg(
+            cfg,
+            "loss_tp",
+            default={}
+        ) or {}
 
         if not bool(tp_cfg.get("enable", True)):
             return None
@@ -1396,7 +1449,7 @@ class DcaTpLong(IStrategy):
         try:
             dca_tp_profit = (
                     float(
-                        loss_tp_cfg.get(
+                        dca_tp_cfg.get(
                             "dca_tp_profit",
                             0.8
                         )
@@ -1406,112 +1459,6 @@ class DcaTpLong(IStrategy):
 
         except Exception:
             dca_tp_profit = 0.008
-
-        # ==============================
-        # 浮亏反弹保护
-        # ==============================
-
-        loss_enabled = bool(
-            loss_tp_cfg.get(
-                "enable",
-                True
-            )
-        )
-
-        loss_tp_ready = False
-
-        if u > 0 and loss_enabled:
-
-            try:
-                trigger_loss = (
-                        float(
-                            loss_tp_cfg.get(
-                                "trigger_loss",
-                                -10
-                            )
-                        )
-                        / 100
-                )
-
-            except Exception:
-                trigger_loss = -0.10
-
-            try:
-                rebound_from_low = (
-                        float(
-                            loss_tp_cfg.get(
-                                "rebound_from_low",
-                                1
-                            )
-                        )
-                        / 100
-                )
-
-            except Exception:
-                rebound_from_low = 0.01
-
-            armed = self._get_bool(
-                trade,
-                'loss_tp_armed',
-                False
-            )
-
-            # 进入深亏状态
-            if current_profit <= trigger_loss and not armed:
-                self._set(
-                    trade,
-                    'loss_tp_armed',
-                    True
-                )
-
-                self._set(
-                    trade,
-                    'loss_tp_min_profit',
-                    float(current_profit)
-                )
-
-                return None
-
-            if armed:
-
-                min_profit = self._get_float(
-                    trade,
-                    'loss_tp_min_profit',
-                    current_profit
-                )
-
-                # 继续创新低
-                if current_profit < min_profit:
-                    self._set(
-                        trade,
-                        'loss_tp_min_profit',
-                        float(current_profit)
-                    )
-
-                    return None
-
-                # 反弹不足
-                min_profit = self._get_float(
-                    trade,
-                    'loss_tp_min_profit',
-                    current_profit
-                )
-
-                rebound = max(
-                    0,
-                    current_profit - min_profit
-                )
-
-                if rebound < rebound_from_low:
-                    return None
-
-                self._set(
-                    trade,
-                    'loss_tp_armed',
-                    False
-                )
-
-                loss_tp_ready = True
 
         # ==============================
         # DCA快速止盈
@@ -1531,7 +1478,7 @@ class DcaTpLong(IStrategy):
         if u > 0:
 
             # DCA止盈
-            if not dca_tp_ready and not loss_tp_ready:
+            if not dca_tp_ready :
                 return None
 
 
@@ -1606,28 +1553,10 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'dca_done', False)
             self._set(trade, 'last_tp_time', int(current_time.timestamp()))
 
-            if dca_tp_ready:
-
-                tp_reason = (
-                    f"DCA快速止盈目标="
-                    f"{dca_tp_profit * 100:.2f}%"
-                )
-
-            else:
-
-                min_profit = self._get_float(
-                    trade,
-                    'loss_tp_min_profit',
-                    current_profit
-                )
-
-                rebound = current_profit - min_profit
-
-                tp_reason = (
-                    f"浮亏反弹止盈 "
-                    f"最低={min_profit * 100:.2f}% "
-                    f"反弹={rebound * 100:.2f}%"
-                )
+            tp_reason = (
+                f"DCA快速止盈目标="
+                f"{dca_tp_profit * 100:.2f}%"
+            )
 
             logger.info(
                 f"[{trade.pair}] {GREEN}[浮亏止盈减仓至 {target_wallet_percent:.0f}%]{RESET}, "
@@ -1638,6 +1567,29 @@ class DcaTpLong(IStrategy):
                 f"当前价={last.get('close'):.4f}, "
                 f"减仓={sell_usdt_capped:.4f} USDT"
             )
+
+            record_event(
+
+                strategy=self.__class__.__name__,
+
+                pair=trade.pair,
+
+                trade_id=trade.id,
+
+                event_type="tp",
+
+                side="long",
+
+                price=float(current_rate),
+
+                amount=float(abs(sell_qty)),
+
+                message="DCA止盈",
+
+                current_time=current_time
+
+            )
+
             return float(-sell_usdt_capped), "tp_afterDCA_sell_keep_target"
 
         # -- 浮盈 TP 减仓 --
@@ -1666,6 +1618,28 @@ class DcaTpLong(IStrategy):
             f"当前价={last.get('close'):.4f}, "
             f"减仓={abs(sell_amt):.4f}"
         )
+        record_event(
+
+            strategy=self.__class__.__name__,
+
+            pair=trade.pair,
+
+            trade_id=trade.id,
+
+            event_type="tp",
+
+            side="long",
+
+            price=float(current_rate),
+
+            amount=float(abs(sell_amt)),
+
+            message="普通止盈",
+
+            current_time=current_time
+
+        )
+
         tp_tag = f"tp_{reduce_percent}"
         return float(sell_amt), tp_tag
 
@@ -1852,6 +1826,17 @@ class DcaTpLong(IStrategy):
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
             )
+            record_event(
+                strategy=self.__class__.__name__,
+                pair=trade.pair,
+                trade_id=trade.id,
+                event_type="grid_add",
+                side="long",
+                price=price,
+                amount=buy_usdt,
+                message="网格加仓",
+                current_time=current_time
+            )
             return float(buy_usdt), f"grid_add_{grid_frac:.3f}"
 
         if price >= grid_upper:
@@ -1884,6 +1869,17 @@ class DcaTpLong(IStrategy):
                 f"[{trade.pair}] {RED}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
+            )
+            record_event(
+                strategy=self.__class__.__name__,
+                pair=trade.pair,
+                trade_id=trade.id,
+                event_type="grid_sell",
+                side="long",
+                price=price,
+                amount=sell_usdt,
+                message="网格减仓",
+                current_time=current_time
             )
             return float(-sell_usdt), "grid_sell_20pct"
         return None

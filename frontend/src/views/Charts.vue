@@ -347,18 +347,15 @@ const loadChart = async () => {
 
             switch(e.event_type){
 
-
-                case "entry":
+                case "filled_entry":
 
                     config={
 
-                        position:
-                        "belowBar",
+                        position:"belowBar",
 
                         color:"#0066ff",
 
-                        shape:
-                        "arrowUp",
+                        shape:"arrowUp",
 
                         text:
                         `BUY ${e.price}`
@@ -367,18 +364,18 @@ const loadChart = async () => {
 
                 break
 
-                case "signal":
+                case "confirm":
 
                     config={
 
-                         position:"belowBar",
+                        position:"belowBar",
 
-                         color:"#00c853",
+                        color:"#00c853",
 
-                         shape:"arrowUp",
+                        shape:"arrowUp",
 
-                         text:
-                         `SIGNAL ${e.price}`
+                        text:
+                        `信号开仓 ${e.price}`
 
                     }
 
@@ -386,23 +383,23 @@ const loadChart = async () => {
 
                 case "manual_entry":
 
-                config={
+                    config={
 
-                    position:"belowBar",
+                        position:"belowBar",
 
-                    color:"#9c27b0",
+                        color:"#9c27b0",
 
-                    shape:"arrowUp",
+                        shape:"arrowUp",
 
-                    text:"手动开仓",
+                        text:"手动开仓",
 
-                    size:2,
+                        size:2,
 
-                    title:
-                    `价格:${e.price ?? '-'}
-                    数量:${e.amount ?? '-'}`
-                
-                }
+                        title:
+                        `价格:${e.price ?? '-'}
+                        数量:${e.amount ?? '-'}`
+
+                    }
 
                 break
 
@@ -410,45 +407,108 @@ const loadChart = async () => {
 
                     config={
 
-                        position:
-                        "belowBar",
+                        position:"belowBar",
 
-                        color:
-                        "#2196f3",
+                        color:"#2196f3",
 
-                        shape:
-                        "circle",
+                        shape:"arrowUp",
 
-                        text:
-                        `DCA ${e.price}`
+                        text:"DCA加仓",
+
+                        size:1,
+
+                        title:
+                            `价格:${e.price}
+                            数量:${e.amount}`
 
                     }
 
                 break
 
-
-
-                case "grid":
+                case "trend_add":
 
                     config={
 
-                        position:
-                        "belowBar",
+                        position:"belowBar",
 
-                        color:
-                        "#9c27b0",
+                        color:"#00bcd4",
 
-                        shape:
-                        "circle",
+                        shape:"arrowUp",
 
                         text:
-                        `GRID ${e.price}`
+                        `趋势加仓 ${e.price}`,
+
+                        title:
+                        `价格:${e.price}
+                        数量:${e.amount}`
+
+                    }
+
+                break
+
+                case "kdj_reduce":
+
+                    config={
+
+                        position:"aboveBar",
+
+                        color:"#9c27b0",
+
+                        shape:"arrowDown",
+
+                        text:
+                        `KDJ减仓 ${e.price}`,
+
+                        title:
+                        `价格:${e.price}
+                        数量:${e.amount}`
+
+                    }
+
+                break
+
+                case "grid_add":
+
+                    config={
+
+                        position:"belowBar",
+
+                        color:"#4caf50",
+
+                        shape:"arrowUp",
+
+                        text:
+                        `网格加仓 ${e.price}`,
+
+                        title:
+                        `价格:${e.price}
+                        数量:${e.amount}`
 
                     }
 
                 break
 
 
+                case "grid_sell":
+
+                    config={
+
+                        position:"aboveBar",
+
+                        color:"#e91e63",
+
+                        shape:"arrowDown",
+
+                        text:
+                        `网格减仓 ${e.price}`,
+
+                        title:
+                        `价格:${e.price}
+                        数量:${e.amount}`
+
+                    }
+
+                break
 
                 case "tp":
 
@@ -464,7 +524,7 @@ const loadChart = async () => {
                         "arrowDown",
 
                         text:
-                        `TP ${e.price}`
+                        `${e.message || "TP"} ${e.price}`
 
                     }
 
