@@ -196,7 +196,45 @@
 
 </div>
 
-  </div>
+<div class="switch-item">
+
+<span>
+🛑 全部平仓
+</span>
+
+
+<div>
+
+
+<el-button
+    size="small"
+    type="primary"
+    @click="confirmCloseAll('long')"
+>
+
+    全平多头
+
+</el-button>
+
+
+
+<el-button
+    size="small"
+    type="danger"
+    @click="confirmCloseAll('short')"
+>
+
+    全平空头
+
+</el-button>
+
+
+</div>
+
+
+</div>
+
+</div>
 
 </el-card>
 
@@ -282,6 +320,8 @@ const {
     confirmStop,
     confirmReload,
     confirmDeleteTrade,
+
+    confirmCloseAll,
 
     updateStopEntry,
 

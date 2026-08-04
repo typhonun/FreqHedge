@@ -212,6 +212,94 @@ export function useRunControl() {
         }
     }
 
+    const confirmCloseAll = async(side)=>{
+
+
+        const name =
+            side === "long"
+            ? "多头"
+            : "空头"
+
+
+        try{
+
+
+            await ElMessageBox.confirm(
+
+                `是否平仓${name}全部仓位？`,
+
+                "确认平仓",
+
+                {
+                    confirmButtonText:"确认",
+                    cancelButtonText:"取消",
+                    type:"warning"
+                }
+
+            )
+
+
+            const res = await axios.post(
+
+                `${API}/control/close_all`,
+
+                {
+                    side:side
+                }
+
+            )
+
+
+            if(res.data.success){
+
+                if(res.data.closed_count > 0){
+
+                    const msg =
+                        `${name}已全部平仓，共${res.data.closed_count}个仓位`
+
+                    ElMessage.success(msg)
+
+                    systemNotify(msg)
+
+                }
+                else{
+
+                    ElMessage.info(
+                        `${name}当前没有持仓`
+                    )
+
+                }
+
+            }
+            else{
+
+                ElMessage.error(
+                    "平仓失败"
+                )
+
+            }
+
+
+
+        }
+        catch(e){
+
+
+            if(e !== "cancel"){
+
+                console.error(e)
+
+                ElMessage.error(
+                    "请求失败"
+                )
+
+            }
+
+        }
+
+
+    }
+
     const loadRiskConfig = async () => {
 
         const { data } =
@@ -269,6 +357,9 @@ export function useRunControl() {
         confirmStart,
         confirmStop,
         confirmReload,
+
+        confirmCloseAll,
+
         confirmDeleteTrade,
 
         updateStopEntry,

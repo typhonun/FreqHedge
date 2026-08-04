@@ -472,6 +472,110 @@ class PositionService:
         return result["total_closed_profit"]
 
     @staticmethod
+    def close_all(
+            side: str
+    ):
+
+        # =====================
+        # 获取对应方向机器人
+        # =====================
+
+        positions = {
+
+            "long":
+                FreqtradeService.get_status(
+                    LONG_URL
+                ),
+
+            "short":
+                FreqtradeService.get_status(
+                    SHORT_URL
+                )
+
+        }
+
+        if side.lower() == "long":
+
+            trades = positions["long"]
+
+            trade_side = "LONG"
+
+
+        elif side.lower() == "short":
+
+            trades = positions["short"]
+
+            trade_side = "SHORT"
+
+
+        else:
+
+            raise Exception(
+                "invalid side"
+            )
+
+        results = []
+
+        # =====================
+        # 逐个 forceexit
+        # =====================
+
+        for trade in trades:
+
+            trade_id = trade.get(
+                "trade_id"
+            )
+
+            if not trade_id:
+                continue
+
+            try:
+
+                result = PositionService.force_exit(
+                    trade_id,
+                    trade_side
+                )
+
+                results.append({
+
+                    "trade_id": trade_id,
+
+                    "pair": trade.get("pair"),
+
+                    "success": True,
+
+                    "result": result
+
+                })
+
+
+            except Exception as e:
+
+                results.append({
+
+                    "trade_id": trade_id,
+
+                    "pair": trade.get("pair"),
+
+                    "success": False,
+
+                    "error": str(e)
+
+                })
+
+        return {
+
+            "success": True,
+
+            "side": side,
+
+            "closed_count": len(results),
+
+            "details": results
+
+        }
+
+    @staticmethod
     def force_exit(
             trade_id,
             side

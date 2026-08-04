@@ -9,6 +9,7 @@ from app.services.risk_config_service import RiskConfigService
 from app.services.event_service import record_event
 
 from datetime import datetime, timezone
+
 router = APIRouter()
 
 
@@ -18,6 +19,10 @@ class ForceEnterRequest(BaseModel):
     pair: str
 
     stakeamount: float
+
+
+class CloseAllRequest(BaseModel):
+    side: str
 
 
 @router.post("/start")
@@ -76,7 +81,6 @@ def available_pairs(side: str):
 def force_enter(
         data: ForceEnterRequest
 ):
-
     result = PositionService.force_enter(
 
         side=data.side,
@@ -85,7 +89,6 @@ def force_enter(
 
         stakeamount=data.stakeamount
     )
-
 
     # =========================
     # 手动开仓记录事件
@@ -132,13 +135,60 @@ def force_enter(
             e
         )
 
+    return result
+
+
+@router.post("/close_all")
+def close_all(
+        data: CloseAllRequest
+):
+    result = PositionService.close_all(
+        data.side
+    )
+
+    try:
+
+        record_event(
+
+            strategy=
+            "DcaTpLong"
+            if data.side == "long"
+            else
+            "DcaTpShort",
+
+            pair="ALL",
+
+            trade_id=0,
+
+            event_type="manual_exit",
+
+            side=data.side,
+
+            price=None,
+
+            amount=0,
+
+            message="手动全部平仓",
+
+            current_time=datetime.now(
+                timezone.utc
+            )
+
+        )
+
+
+    except Exception as e:
+
+        print(
+            "close all event error:",
+            e
+        )
 
     return result
 
 
 @router.get("/round-info")
 def get_round_info():
-
     return runtime.ROUND_INFO
 
 
@@ -149,7 +199,6 @@ def get_risk_config():
 
 @router.post("/risk-config")
 def save_risk_config(data: dict):
-
     runtime.GLOBAL_RISK.update(data)
 
     RiskConfigService.save(
