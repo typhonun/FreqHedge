@@ -381,6 +381,25 @@ const loadChart = async () => {
 
                 break
 
+                case "signal":
+
+                    config={
+
+                        position:"belowBar",
+
+                        color:"#673ab7",
+                
+                        shape:"arrowUp",
+
+                        text:
+                        `信号 ${e.price}`,
+
+                        size:2
+
+                    }
+
+                break
+
                 case "manual_entry":
 
                     config={
@@ -556,6 +575,7 @@ const loadChart = async () => {
 
             let markerTime;
 
+
             if(e.candle_time){
 
                 markerTime =
@@ -572,10 +592,26 @@ const loadChart = async () => {
                     )
 
             }
+            else if(e.created_at){
+
+                markerTime =
+                    parseEventTime(
+                        e.created_at
+                    )
+
+            }
+            else if(e.current_time){
+
+                markerTime =
+                    parseEventTime(
+                        e.current_time
+                    )
+
+            }
             else{
 
                 console.warn(
-                    "事件没有时间",
+                    "事件无时间",
                     e
                 )
 

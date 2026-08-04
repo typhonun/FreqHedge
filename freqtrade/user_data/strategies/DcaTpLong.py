@@ -127,66 +127,131 @@ class DcaTpLong(IStrategy):
             **kwargs
     ):
 
-        if order.ft_order_side != "buy":
-            return
-
         entry_price = float(
             order.average
             or trade.open_rate
         )
 
-        # =========================
-        # 判断是否DCA
-        # =========================
+        reason = order.ft_order_reason or ""
 
-        if trade.nr_of_successful_entries > 1:
+        if order.ft_order_side == "buy":
 
-            record_event(
+            if reason.startswith("trend_add"):
 
-                strategy=self.__class__.__name__,
-
-                pair=pair,
-
-                trade_id=trade.id,
-
-                event_type="dca",
-
-                side="long",
-
-                price=entry_price,
-
-                amount=float(order.amount),
-
-                message="DCA加仓",
-
-                current_time=current_time
-
-            )
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="trend_add",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="趋势加仓成交",
+                    current_time=current_time
+                )
 
 
-        else:
+            elif reason.startswith("grid_add"):
 
-            record_event(
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="grid_add",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="网格加仓成交",
+                    current_time=current_time
+                )
 
-                strategy=self.__class__.__name__,
 
-                pair=pair,
+            elif trade.nr_of_successful_entries > 1:
 
-                trade_id=trade.id,
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="dca",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="DCA加仓成交",
+                    current_time=current_time
+                )
 
-                event_type="filled_entry",
 
-                side="long",
+            else:
 
-                price=entry_price,
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="filled_entry",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="成交开仓",
+                    current_time=current_time
+                )
 
-                amount=float(order.amount),
 
-                message="成交开仓",
 
-                current_time=current_time
+        elif order.ft_order_side == "sell":
 
-            )
+            if reason == "kdj_reduce_by_trend_added":
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="kdj_reduce",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="KDJ减仓成交",
+                    current_time=current_time
+                )
+
+            elif reason.startswith("tp_afterDCA"):
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="tp",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="DCA止盈",
+                    current_time=current_time
+                )
+
+            elif reason.startswith("tp_"):
+
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="tp",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="普通止盈",
+                    current_time=current_time
+                )
+
+            elif reason.startswith("grid_sell"):
+
+                record_event(
+                    strategy=self.__class__.__name__,
+                    pair=pair,
+                    trade_id=trade.id,
+                    event_type="grid_sell",
+                    side="long",
+                    price=entry_price,
+                    amount=float(order.amount),
+                    message="网格减仓成交",
+                    current_time=current_time
+                )
 
         # =========================
         # 初始化只执行一次
@@ -622,8 +687,28 @@ class DcaTpLong(IStrategy):
             **kwargs
     ):
 
-        if side != "long":
-            return True
+        if side == "long":
+            record_event(
+
+                strategy=self.__class__.__name__,
+
+                pair=pair,
+
+                trade_id=0,
+
+                event_type="signal",
+
+                side="long",
+
+                price=float(rate),
+
+                amount=float(amount),
+
+                message="策略入场信号",
+
+                current_time=current_time
+
+            )
 
         return True
 
@@ -1026,28 +1111,6 @@ class DcaTpLong(IStrategy):
                         f"{YELLOW} 保证金={margin:.2f}{RESET}, "f"当前价={price:.4f}, "
                         f"加仓={abs(amt):.4f} USDT, 新均价={new_avg:.4f}")
 
-            record_event(
-
-                strategy=self.__class__.__name__,
-
-                pair=trade.pair,
-
-                trade_id=trade.id,
-
-                event_type="trend_add",
-
-                side="long",
-
-                price=float(price),
-
-                amount=float(amt),
-
-                message="趋势加仓",
-
-                current_time=current_time
-
-            )
-
             return float(amt), 'trend_add20_bull'
 
         if (
@@ -1099,28 +1162,6 @@ class DcaTpLong(IStrategy):
                 logger.info(f"[{trade.pair}] {RED}[KDJ 减仓]{RESET}, "
                             f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
                             f"减仓={abs(amt):.4f} USDT")
-
-                record_event(
-
-                    strategy=self.__class__.__name__,
-
-                    pair=trade.pair,
-
-                    trade_id=trade.id,
-
-                    event_type="kdj_reduce",
-
-                    side="long",
-
-                    price=float(last.get('close')),
-
-                    amount=float(abs(amt)),
-
-                    message="KDJ减仓",
-
-                    current_time=current_time
-
-                )
                 return float(amt), 'kdj_reduce_by_trend_added'
 
     def dca_add(self, trade: Trade, df: DataFrame, last: dict, current_time: datetime, current_rate: float):
@@ -1478,7 +1519,7 @@ class DcaTpLong(IStrategy):
         if u > 0:
 
             # DCA止盈
-            if not dca_tp_ready :
+            if not dca_tp_ready:
                 return None
 
 
@@ -1566,28 +1607,6 @@ class DcaTpLong(IStrategy):
                 f"{YELLOW}保证金={margin:.2f} USDT, "
                 f"当前价={last.get('close'):.4f}, "
                 f"减仓={sell_usdt_capped:.4f} USDT"
-            )
-
-            record_event(
-
-                strategy=self.__class__.__name__,
-
-                pair=trade.pair,
-
-                trade_id=trade.id,
-
-                event_type="tp",
-
-                side="long",
-
-                price=float(current_rate),
-
-                amount=float(abs(sell_qty)),
-
-                message="DCA止盈",
-
-                current_time=current_time
-
             )
 
             return float(-sell_usdt_capped), "tp_afterDCA_sell_keep_target"
@@ -1825,17 +1844,6 @@ class DcaTpLong(IStrategy):
                 f"(倍率x{scale_factor:.2f})]{RESET}, 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
-            )
-            record_event(
-                strategy=self.__class__.__name__,
-                pair=trade.pair,
-                trade_id=trade.id,
-                event_type="grid_add",
-                side="long",
-                price=price,
-                amount=buy_usdt,
-                message="网格加仓",
-                current_time=current_time
             )
             return float(buy_usdt), f"grid_add_{grid_frac:.3f}"
 

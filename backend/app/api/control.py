@@ -82,17 +82,10 @@ def force_enter(
         data: ForceEnterRequest
 ):
     result = PositionService.force_enter(
-
         side=data.side,
-
         pair=data.pair,
-
         stakeamount=data.stakeamount
     )
-
-    # =========================
-    # 手动开仓记录事件
-    # =========================
 
     try:
 
@@ -103,19 +96,47 @@ def force_enter(
             "DcaTpShort"
         )
 
+        from config.settings import (
+            LONG_URL,
+            SHORT_URL
+        )
+
+        url = (
+            LONG_URL
+            if data.side == "long"
+            else SHORT_URL
+        )
+
+        trades = FreqtradeService.get_status(
+            url
+        )
+
+        trade = next(
+            (
+                t
+                for t in trades
+                if t["pair"] == data.pair
+            ),
+            None
+        )
+
         record_event(
 
             strategy=strategy,
 
             pair=data.pair,
 
-            trade_id=0,
+            trade_id=
+            trade["trade_id"]
+            if trade else 0,
 
             event_type="manual_entry",
 
             side=data.side,
 
-            price=None,
+            price=
+            trade["open_rate"]
+            if trade else None,
 
             amount=data.stakeamount,
 
@@ -124,7 +145,6 @@ def force_enter(
             current_time=datetime.now(
                 timezone.utc
             )
-
         )
 
 
