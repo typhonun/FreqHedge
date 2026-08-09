@@ -118,6 +118,87 @@ class DcaTpLong(IStrategy):
         except Exception:
             return 0
 
+    def _latest_candle_time(self, dataframe: DataFrame):
+        if dataframe.empty:
+            return None
+
+        candle_time = None
+        if isinstance(dataframe.index, pd.DatetimeIndex):
+            candle_time = dataframe.index[-1]
+        elif "date" in dataframe.columns:
+            candle_time = dataframe.iloc[-1].get("date")
+
+        if candle_time is None:
+            return None
+
+        ts = pd.Timestamp(candle_time)
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        else:
+            ts = ts.tz_convert("UTC")
+
+        return ts.to_pydatetime()
+
+    def _record_chart_marker(
+            self,
+            *,
+            event_type: str,
+            pair: str,
+            trade_id: int,
+            side: str,
+            price,
+            amount,
+            current_time,
+            message: str
+    ) -> None:
+        if current_time is None or price is None:
+            return
+
+        try:
+            price = float(price)
+            amount = float(amount)
+        except Exception:
+            return
+
+        record_event(
+            strategy=self.__class__.__name__,
+            pair=pair,
+            trade_id=trade_id,
+            event_type=event_type,
+            side=side,
+            price=price,
+            amount=amount,
+            message=message,
+            current_time=current_time
+        )
+
+    def _record_signal_marker(self, dataframe: DataFrame, metadata: dict) -> None:
+        if dataframe.empty or "close" not in dataframe.columns:
+            return
+
+        last_row = dataframe.iloc[-1]
+        close_price = last_row.get("close")
+        if pd.isna(close_price):
+            return
+
+        candle_time = self._latest_candle_time(dataframe)
+        if candle_time is None:
+            logger.warning(
+                f"{metadata['pair']} 无法确定信号K线时间，跳过 signal 标记"
+            )
+            return
+
+        self._record_chart_marker(
+            event_type="signal",
+            pair=metadata["pair"],
+            trade_id=0,
+            side="long",
+            price=close_price,
+            amount=0.0,
+            current_time=candle_time,
+            message="策略入场信号"
+        )
+
     def order_filled(
             self,
             pair,
@@ -138,61 +219,57 @@ class DcaTpLong(IStrategy):
 
             if reason.startswith("trend_add"):
 
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="trend_add",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="trend_add",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="趋势加仓成交",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="趋势加仓成交"
                 )
 
 
             elif reason.startswith("grid_add"):
 
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="grid_add",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="grid_add",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="网格加仓成交",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="网格加仓成交"
                 )
 
 
             elif trade.nr_of_successful_entries > 1:
 
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="dca",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="dca",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="DCA加仓成交",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="DCA加仓成交"
                 )
 
 
             else:
 
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="filled_entry",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="filled_entry",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="成交开仓",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="成交开仓"
                 )
 
 
@@ -200,57 +277,53 @@ class DcaTpLong(IStrategy):
         elif order.ft_order_side == "sell":
 
             if reason == "kdj_reduce_by_trend_added":
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="kdj_reduce",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="kdj_reduce",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="KDJ减仓成交",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="KDJ减仓成交"
                 )
 
             elif reason.startswith("tp_afterDCA"):
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="tp",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="tp",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="DCA止盈",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="DCA止盈"
                 )
 
             elif reason.startswith("tp_"):
 
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="tp",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="tp",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="普通止盈",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="普通止盈"
                 )
 
             elif reason.startswith("grid_sell"):
 
-                record_event(
-                    strategy=self.__class__.__name__,
+                self._record_chart_marker(
+                    event_type="grid_sell",
                     pair=pair,
                     trade_id=trade.id,
-                    event_type="grid_sell",
                     side="long",
                     price=entry_price,
-                    amount=float(order.amount),
-                    message="网格减仓成交",
-                    current_time=current_time
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="网格减仓成交"
                 )
 
         # =========================
@@ -686,29 +759,6 @@ class DcaTpLong(IStrategy):
             side,
             **kwargs
     ):
-
-        if side == "long":
-            record_event(
-
-                strategy=self.__class__.__name__,
-
-                pair=pair,
-
-                trade_id=0,
-
-                event_type="signal",
-
-                side="long",
-
-                price=float(rate),
-
-                amount=float(amount),
-
-                message="策略入场信号",
-
-                current_time=current_time
-
-            )
 
         return True
 
@@ -1637,28 +1687,6 @@ class DcaTpLong(IStrategy):
             f"当前价={last.get('close'):.4f}, "
             f"减仓={abs(sell_amt):.4f}"
         )
-        record_event(
-
-            strategy=self.__class__.__name__,
-
-            pair=trade.pair,
-
-            trade_id=trade.id,
-
-            event_type="tp",
-
-            side="long",
-
-            price=float(current_rate),
-
-            amount=float(abs(sell_amt)),
-
-            message="普通止盈",
-
-            current_time=current_time
-
-        )
-
         tp_tag = f"tp_{reduce_percent}"
         return float(sell_amt), tp_tag
 

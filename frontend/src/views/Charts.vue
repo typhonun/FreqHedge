@@ -392,7 +392,7 @@ const loadChart = async () => {
                         shape:"arrowUp",
 
                         text:
-                        `信号 ${e.price}`,
+                        `信号开仓 ${e.price}`,
 
                         size:2
 

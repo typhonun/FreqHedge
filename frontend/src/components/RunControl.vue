@@ -1,451 +1,417 @@
 <template>
+  <el-card class="control-card">
+    <!-- ======================
+         运行模式
+    ====================== -->
+    <div class="panel-grid">
+      <el-card class="inner-card">
+        <template #header>
+          <div class="card-title">
+            🚀 运行模式
+          </div>
+        </template>
 
-<el-card class="control-card">
+        <div class="action-row">
+          <el-button
+            type="primary"
+            size="large"
+            @click="confirmStart"
+          >
+            ▶ 启动机器人
+          </el-button>
 
-<template #header>
+          <el-button
+            type="danger"
+            size="large"
+            @click="confirmStop"
+          >
+            ■ 停止机器人
+          </el-button>
 
-<div class="card-title">
-  ⚙️ 控制中心
-</div>
+          <el-button
+            type="success"
+            size="large"
+            @click="confirmReload"
+          >
+            ↻ 重载配置
+          </el-button>
 
-  </template>
+          <el-button
+            type="warning"
+            size="large"
+            @click="confirmDeleteTrade"
+          >
+            🗑 删除数据库
+          </el-button>
+        </div>
 
-  <!-- 快捷操作 -->
+        <div class="switch-grid">
+          <div class="switch-item">
+            <span>📈 多头交易</span>
+            <el-switch v-model="enableLong" />
+          </div>
 
-  <div class="section-title">
-    快捷操作
-  </div>
+          <div class="switch-item">
+            <span>📉 空头交易</span>
+            <el-switch v-model="enableShort" />
+          </div>
 
-  <div class="action-grid">
+          <div class="switch-item">
+            <span>🧪 Dry Run</span>
+            <el-switch v-model="dryRun" />
+          </div>
+        </div>
+      </el-card>
 
-<el-button
-  type="primary"
-  size="large"
-  @click="confirmStart"
->
-  ▶ 启动机器人
-</el-button>
+      <!-- ======================
+            手动交易
+      ====================== -->
+      <el-card class="inner-card">
+        <template #header>
+          <div class="card-title">
+            ⚡ 手动交易
+          </div>
+        </template>
 
-<el-button
-  type="danger"
-  size="large"
-  @click="confirmStop"
->
-  ■ 停止机器人
-</el-button>
+        <div class="manual-grid">
+          <el-button
+            type="success"
+            size="large"
+            @click="openForceEnter('long')"
+          >
+            ↑ 立即开多
+          </el-button>
 
-<el-button
-  type="success"
-  size="large"
-  @click="confirmReload"
->
-  ↻ 重载配置
-</el-button>
+          <el-button
+            type="danger"
+            size="large"
+            @click="openForceEnter('short')"
+          >
+            ↓ 立即开空
+          </el-button>
 
-<el-button
-  type="warning"
-  size="large"
-  @click="confirmDeleteTrade"
->
-  🗑 删除数据库
-</el-button>
+          <el-button
+            type="primary"
+            plain
+            @click="confirmCloseAll('long')"
+          >
+            全部平多
+          </el-button>
 
-  </div>
+          <el-button
+            type="danger"
+            plain
+            @click="confirmCloseAll('short')"
+          >
+            全部平空
+          </el-button>
+        </div>
 
-  <el-divider />
+        <el-divider />
 
-<div class="section-title">
-  全局止盈止损
-</div>
+        <div class="switch-grid">
+          <div class="switch-item">
+            <span>⛔ 停止多头加仓</span>
+            <el-switch
+              v-model="stopLongEntry"
+              @change="updateStopEntry"
+            />
+          </div>
 
-<div class="switch-grid">
+          <div class="switch-item">
+            <span>⛔ 停止空头加仓</span>
+            <el-switch
+              v-model="stopShortEntry"
+              @change="updateStopEntry"
+            />
+          </div>
+        </div>
+      </el-card>
+    </div>
 
-  <div class="switch-item">
-
-    <span>🎯 启用全局止盈</span>
-
-    <el-switch
-      v-model="globalTpEnabled"
-      @change="saveRiskConfig"
-    />
-
-  </div>
-
-  <div class="switch-item">
-
-    <span>🛑 启用全局止损</span>
-
-    <el-switch
-      v-model="globalSlEnabled"
-      @change="saveRiskConfig"
-    />
-
-  </div>
-
-  <div class="switch-item">
-
-    <span>止盈%</span>
-
-    <el-input-number
-      v-model="globalTpPercent"
-      :step="0.5"
-      @change="saveRiskConfig"
-    />
-
-  </div>
-
-  <div class="switch-item">
-
-    <span>止损%</span>
-
-    <el-input-number
-      v-model="globalSlPercent"
-      :step="0.5"
-      @change="saveRiskConfig"
-    />
-
-  </div>
-
-</div>
-
-  <el-divider />
-
-  <!-- 运行模式 -->
-
-  <div class="section-title">
-    运行模式
-  </div>
-
-  <div class="switch-grid">
-
-<div class="switch-item">
-
-  <span>📈 多头交易</span>
-
-  <el-switch
-    v-model="enableLong"
-  />
-
-</div>
-
-<div class="switch-item">
-
-  <span>📉 空头交易</span>
-
-  <el-switch
-    v-model="enableShort"
-  />
-
-</div>
-
-<div class="switch-item">
-
-  <span>🧪 Dry Run</span>
-
-  <el-switch
-    v-model="dryRun"
-  />
-
-</div>
-
-<div class="switch-item">
-
-  <span>⛔ 停止多头加仓</span>
-
-  <el-switch
-    v-model="stopLongEntry"
-    @change="updateStopEntry"
-  />
-
-</div>
-
-<div class="switch-item">
-
-  <span>⛔ 停止空头加仓</span>
-
-  <el-switch
-    v-model="stopShortEntry"
-    @change="updateStopEntry"
-  />
-
-</div>
-
-<div class="switch-item">
-
-  <span>🚀 手动开仓</span>
-
-  <div>
-
-    <el-button
-      size="small"
-      type="success"
-      @click="openForceEnter('long')"
+    <el-dialog
+      v-model="forceEnterVisible"
+      title="立即开仓"
+      width="25%"
+      class="force-enter-dialog"
     >
-      立即开多
-    </el-button>
-
-    <el-button
-      size="small"
-      type="danger"
-      @click="openForceEnter('short')"
-    >
-      立即开空
-    </el-button>
-
-  </div>
-
-</div>
-
-<div class="switch-item">
-
-<span>
-🛑 全部平仓
-</span>
-
-
-<div>
-
-
-<el-button
-    size="small"
-    type="primary"
-    @click="confirmCloseAll('long')"
->
-
-    全平多头
-
-</el-button>
-
-
-
-<el-button
-    size="small"
-    type="danger"
-    @click="confirmCloseAll('short')"
->
-
-    全平空头
-
-</el-button>
-
-
-</div>
-
-
-</div>
-
-</div>
-
-</el-card>
-
-<el-dialog
-    v-model="forceEnterVisible"
-    title="立即开仓"
-    width="25%"
-    class="force-enter-dialog"
->
-
-    <el-form
+      <el-form
         label-position="top"
         class="force-form"
-    >
-
+      >
         <el-form-item label="交易对">
-
-            <el-select
-                v-model="selectedPair"
-                filterable
-            >
-
-                <el-option
-                    v-for="pair in pairList"
-                    :key="pair"
-                    :label="pair"
-                    :value="pair"
-                />
-
-            </el-select>
-
+          <el-select
+            v-model="selectedPair"
+            filterable
+          >
+            <el-option
+              v-for="pair in pairList"
+              :key="pair"
+              :label="pair"
+              :value="pair"
+            />
+          </el-select>
         </el-form-item>
 
         <el-form-item label="金额">
-
-            <el-input-number
-                v-model="stakeAmount"
-                :min="1"
-                style="width:100%"
-            />
-
+          <el-input-number
+            v-model="stakeAmount"
+            :min="1"
+            style="width:100%"
+          />
         </el-form-item>
+      </el-form>
 
-    </el-form>
-
-    <template #footer>
-
-        <el-button
-            @click="forceEnterVisible=false"
-        >
-            取消
+      <template #footer>
+        <el-button @click="forceEnterVisible=false">
+          取消
         </el-button>
 
         <el-button
-            type="primary"
-            @click="submitForceEnter"
+          type="primary"
+          @click="submitForceEnter"
         >
-            开仓
+          开仓
         </el-button>
+      </template>
+    </el-dialog>
 
-    </template>
+    <el-card class="inner-card risk-card">
+      <template #header>
+        <div class="card-title">
+          🎯 全局风控
+        </div>
+      </template>
 
-</el-dialog>
+      <div class="risk-grid">
+        <div class="risk-item">
+          <div>
+            <span>🎯 启用全局止盈</span>
+            <p>达到目标收益自动平仓</p>
+          </div>
 
+          <el-switch
+            v-model="globalTpEnabled"
+            @change="saveRiskConfig"
+          />
+        </div>
+
+        <div class="risk-item">
+          <div>
+            <span>止盈比例</span>
+          </div>
+
+          <el-input-number
+            v-model="globalTpPercent"
+            :min="0"
+            :max="100"
+            :step="0.5"
+            @change="saveRiskConfig"
+          />
+        </div>
+
+        <div class="risk-item">
+          <div>
+            <span>🛑 启用全局止损</span>
+            <p>达到亏损限制自动止损</p>
+          </div>
+
+          <el-switch
+            v-model="globalSlEnabled"
+            @change="saveRiskConfig"
+          />
+        </div>
+
+        <div class="risk-item">
+          <div>
+            <span>止损比例</span>
+          </div>
+
+          <el-input-number
+            v-model="globalSlPercent"
+            :min="-100"
+            :max="0"
+            :step="0.5"
+            @change="saveRiskConfig"
+          />
+        </div>
+      </div>
+    </el-card>
+  </el-card>
 </template>
 
 <script setup>
-
-import { useRunControl }
-from "../composables/useRunControl"
-
+import { useRunControl } from "../composables/useRunControl"
 import { onMounted } from "vue"
+
 const {
-
-    enableLong,
-    enableShort,
-    dryRun,
-
-    stopLongEntry,
-    stopShortEntry,
-
-    confirmStart,
-    confirmStop,
-    confirmReload,
-    confirmDeleteTrade,
-
-    confirmCloseAll,
-
-    updateStopEntry,
-
-    forceEnterVisible,
-    pairList,
-    selectedPair,
-    stakeAmount,
-
-    openForceEnter,
-    submitForceEnter,
-    loadStopEntryStatus,
-
-    globalTpEnabled,
-    globalSlEnabled,
-
-    globalTpPercent,
-    globalSlPercent,
-
-    loadRiskConfig,
-    saveRiskConfig
-
+  enableLong,
+  enableShort,
+  dryRun,
+  stopLongEntry,
+  stopShortEntry,
+  confirmStart,
+  confirmStop,
+  confirmReload,
+  confirmDeleteTrade,
+  openForceEnter,
+  confirmCloseAll,
+  updateStopEntry,
+  forceEnterVisible,
+  pairList,
+  selectedPair,
+  stakeAmount,
+  submitForceEnter,
+  loadStopEntryStatus,
+  globalTpEnabled,
+  globalSlEnabled,
+  globalTpPercent,
+  globalSlPercent,
+  loadRiskConfig,
+  saveRiskConfig
 } = useRunControl()
 
 onMounted(async () => {
-
-    await loadStopEntryStatus()
-
-    await loadRiskConfig()
-
+  await loadStopEntryStatus()
+  await loadRiskConfig()
 })
-
 </script>
 
 <style scoped>
-
-.control-card{
-    border-radius:14px;
+.control-card {
+  border-radius: 14px;
 }
 
-.card-title{
-    font-size:18px;
-    font-weight:700;
+.card-title {
+  font-size: 18px;
+  font-weight: 700;
 }
 
-.section-title{
-    font-size:15px;
-    font-weight:600;
-    margin-bottom:15px;
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 15px;
 }
 
-.action-grid{
-
-    display:grid;
-
-    grid-template-columns:
-    repeat(2,1fr);
-
-    gap:15px;
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
 }
 
-.action-grid .el-button{
-
-    height:65px;
-
-    font-size:15px;
-
-    font-weight:600;
-
-    border-radius:10px;
+.action-grid .el-button {
+  height: 65px;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 10px;
 }
 
-.switch-grid{
-
-    display:flex;
-
-    flex-direction:column;
-
-    gap:12px;
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
 }
 
-.switch-item{
-
-    display:flex;
-
-    justify-content:space-between;
-
-    align-items:center;
-
-    padding:12px 15px;
-
-    background:#fafafa;
-
-    border-radius:10px;
+.inner-card {
+  border-radius: 14px;
 }
 
-.switch-item:hover{
-    background:#f4f4f5;
+.manual-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
 }
 
-:deep(.force-enter-dialog .el-dialog__body){
-
-    min-height: 300px;
-
-    display:flex;
-
-    align-items:center;
-
-    justify-content:center;
+.manual-grid .el-button {
+  height: 45px;
+  font-weight: 600;
 }
 
-.force-form{
-
-    width:100%;
-
-    display:flex;
-
-    flex-direction:column;
-
-    align-items:center;
+.switch-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.force-form .el-form-item{
-
-    width:80%;
+.switch-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #fafafa;
+  border-radius: 8px;
+  font-size: 14px;
 }
 
+.switch-item:hover {
+  background: #f3f4f6;
+}
+
+.switch-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.switch-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 15px;
+  background: #fafafa;
+  border-radius: 10px;
+}
+
+.switch-item:hover {
+  background: #f4f4f5;
+}
+
+.risk-card {
+  background: #fafafa;
+}
+
+.risk-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+}
+
+.risk-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px;
+  border-radius: 12px;
+  background: white;
+  border: 1px solid #ebeef5;
+}
+
+.risk-item span {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.risk-item p {
+  margin: 5px 0 0;
+  color: #909399;
+  font-size: 12px;
+}
+
+:deep(.force-enter-dialog .el-dialog__body) {
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.force-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.force-form .el-form-item {
+  width: 80%;
+}
 </style>
