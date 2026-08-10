@@ -121,17 +121,54 @@ export function useRunControl() {
         try{
 
             await ElMessageBox.confirm(
-                "将删除全部交易记录并停止策略，是否继续？",
-                "危险操作"
+                "删除数据库会清空全部交易记录，是否继续？",
+                "危险操作",
+                {
+                    confirmButtonText:"确认删除",
+                    cancelButtonText:"取消",
+                    type:"warning"
+                }
             )
 
-            await deleteTrade()
 
-            ElMessage.success(
-                "交易记录已清空"
-            )
+            const res = await deleteTrade()
 
-        }catch{}
+
+            if(res.data.success){
+
+
+                ElMessage.success(
+                    `删除数据库${res.data.detail.database.length}个，日志${res.data.detail.logs.length}个`
+                )
+
+
+            }
+            else{
+
+
+                ElMessage.warning(
+                    res.data.error
+                )
+
+
+            }
+
+
+        }
+        catch(e){
+
+
+            if(e !== "cancel"){
+
+                console.error(e)
+
+                ElMessage.error(
+                    "删除失败"
+                )
+
+            }
+
+        }
     }
 
     const openForceEnter = async (side) => {

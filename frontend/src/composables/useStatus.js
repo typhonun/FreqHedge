@@ -1,51 +1,85 @@
 import axios from "axios"
-import { ref, onMounted, onUnmounted } from "vue"
+import { ref } from "vue"
+
 
 const API = "http://localhost:9000"
 
+const normalizeStatus = (value) => {
+    if (typeof value === "string") {
+        return value.toUpperCase()
+    }
+
+    if (typeof value === "boolean") {
+        return value ? "RUNNING" : "STOPPED"
+    }
+
+    if (value && typeof value === "object") {
+        if (typeof value.state === "string") {
+            return value.state.toUpperCase()
+        }
+
+        if (typeof value.status === "string") {
+            return value.status.toUpperCase()
+        }
+
+        if (typeof value.running === "boolean") {
+            return value.running ? "RUNNING" : "STOPPED"
+        }
+    }
+
+    return "STOPPED"
+}
+
+
 export function useStatus() {
 
-    const longRunning = ref(false)
-    const shortRunning = ref(false)
 
-    let timer = null
+    const longState = ref("STOPPED")
 
-    const loadStatus = async () => {
+    const shortState = ref("STOPPED")
 
-        try {
+
+    const loadStatus = async()=>{
+
+        try{
 
             const res =
                 await axios.get(
                     `${API}/control/status`
                 )
 
-            longRunning.value =
-                res.data.long
 
-            shortRunning.value =
-                res.data.short
+            console.log(
+                "STATUS:",
+                res.data
+            )
 
-        } catch (err) {
+            longState.value = normalizeStatus(res.data.long)
+            shortState.value = normalizeStatus(res.data.short)
 
-            longRunning.value = false
-            shortRunning.value = false
 
-            console.error(err)
         }
+        catch(e){
+
+            console.error(e)
+
+            longState.value="STOPPED"
+
+            shortState.value="STOPPED"
+
+        }
+
     }
 
-    onMounted(() => {
-        loadStatus()
-        timer = setInterval(loadStatus, 5000)
-    })
-
-    onUnmounted(() => {
-        if (timer) clearInterval(timer)
-    })
 
     return {
-        longRunning,
-        shortRunning,
+
+        longState,
+
+        shortState,
+
         loadStatus
+
     }
+
 }

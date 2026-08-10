@@ -57,7 +57,30 @@ def get_stopentry():
 
 @router.post("/delete_trade")
 def delete_trade():
-    return FreqtradeService.delete_trade()
+
+    print("============================")
+    print("DELETE TRADE API CALLED")
+
+    print(
+        "LONG PROCESS:",
+        runtime.LONG_PROCESS
+    )
+
+    print(
+        "SHORT PROCESS:",
+        runtime.SHORT_PROCESS
+    )
+
+
+    result = FreqtradeService.delete_trade()
+
+
+    print(
+        "DELETE RESULT:",
+        result
+    )
+
+    return result
 
 
 @router.get("/config")
