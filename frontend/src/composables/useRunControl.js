@@ -34,8 +34,13 @@ export function useRunControl() {
     const reload = () =>
         post("/control/reload")
 
-    const deleteTrade = () =>
-        post("/control/delete_trade")
+    const deleteTrade = async () => {
+
+        return await post(
+            "/control/delete_trade"
+        )
+
+    }
 
     const stopLongEntry = ref(false)
     const stopShortEntry = ref(false)
@@ -131,25 +136,40 @@ export function useRunControl() {
             )
 
 
-            const res = await deleteTrade()
+            ElMessage.info(
+                "正在删除数据库，请稍候..."
+            )
+
+
+            const res = await axios.post(
+                `${API}/control/delete_trade`
+            )
+
+
+            console.log(
+                "DELETE RESULT:",
+                res.data
+            )
 
 
             if(res.data.success){
 
-
-                ElMessage.success(
-                    `删除数据库${res.data.detail.database.length}个，日志${res.data.detail.logs.length}个`
-                )
-
+                ElMessage.success({
+                    message:
+                        res.data.message ||
+                        "已成功删除数据库",
+                    duration:3000
+                })
 
             }
             else{
 
-
-                ElMessage.warning(
-                    res.data.error
-                )
-
+                ElMessage.warning({
+                    message:
+                        res.data.error ||
+                        "删除失败",
+                    duration:3000
+                })
 
             }
 
@@ -160,11 +180,17 @@ export function useRunControl() {
 
             if(e !== "cancel"){
 
-                console.error(e)
-
-                ElMessage.error(
-                    "删除失败"
+                console.error(
+                    "DELETE ERROR:",
+                    e
                 )
+
+
+                ElMessage.error({
+                    message:
+                        "删除失败",
+                    duration:3000
+                })
 
             }
 

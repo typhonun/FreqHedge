@@ -35,9 +35,9 @@ class FreqtradeService:
             }
 
         with open(
-            cls.STATE_FILE,
-            "r",
-            encoding="utf-8"
+                cls.STATE_FILE,
+                "r",
+                encoding="utf-8"
         ) as f:
             data = json.load(f)
 
@@ -55,9 +55,9 @@ class FreqtradeService:
         }
 
         with open(
-            cls.STATE_FILE,
-            "w",
-            encoding="utf-8"
+                cls.STATE_FILE,
+                "w",
+                encoding="utf-8"
         ) as f:
             json.dump(
                 state,
@@ -121,6 +121,24 @@ class FreqtradeService:
         return r.json()
 
     @classmethod
+    def is_freqtrade_alive(cls, url):
+
+        try:
+
+            r = requests.get(
+                f"{url}/api/v1/status",
+                auth=cls.auth,
+                timeout=3
+            )
+
+            return r.status_code == 200
+
+
+        except:
+
+            return False
+
+    @classmethod
     def start_bot(cls, url):
         r = requests.post(
             f"{url}/api/v1/start",
@@ -142,40 +160,54 @@ class FreqtradeService:
     def start_bot_service(cls, data):
 
         try:
+
             current_state = cls.load_run_state()
+
+            # ==========================
+            # 确保freqtrade存在
+            # ==========================
 
             cls.start_freqtrade()
 
-            for i in range(10):
+            # ==========================
+            # 等待API启动
+            # ==========================
 
-                try:
+            for i in range(30):
 
-                    cls.get_bot_state(
-                        LONG_URL
-                    )
+                long_ok = cls.is_freqtrade_alive(
+                    LONG_URL
+                )
 
+                short_ok = cls.is_freqtrade_alive(
+                    SHORT_URL
+                )
+
+                if long_ok and short_ok:
                     break
 
-                except:
+                time.sleep(1)
 
-                    time.sleep(1)
+            # ==========================
+            # 启动bot
+            # ==========================
 
             if data.get("long"):
-                response = requests.post(
+                requests.post(
                     f"{LONG_URL}/api/v1/start",
                     auth=cls.auth,
                     timeout=10
                 )
-                response.raise_for_status()
+
                 current_state["long"] = True
 
             if data.get("short"):
-                response = requests.post(
+                requests.post(
                     f"{SHORT_URL}/api/v1/start",
                     auth=cls.auth,
                     timeout=10
                 )
-                response.raise_for_status()
+
                 current_state["short"] = True
 
             cls.save_run_state(
@@ -186,6 +218,8 @@ class FreqtradeService:
             return {
                 "success": True
             }
+
+
 
         except Exception as e:
 
@@ -344,40 +378,29 @@ class FreqtradeService:
 
             if data.get("long"):
 
-                try:
+                requests.post(
+                    f"{LONG_URL}/api/v1/stop",
+                    auth=cls.auth,
+                    timeout=5
+                )
 
-                    response = requests.post(
-                        f"{LONG_URL}/api/v1/stop",
-                        auth=cls.auth,
-                        timeout=5
+                for i in range(20):
+
+                    state = cls.get_bot_state(
+                        LONG_URL
                     )
-
-                    response.raise_for_status()
 
                     print(
-                        "LONG Freqtrade -> STOP"
+                        "LONG STOP WAIT:",
+                        state
                     )
 
-                    # 自己的运行状态同步
-                    current_state["long"] = False
+                    if state == "STOPPED":
+                        break
 
-                    runtime.RUNNING["long"] = False
+                    time.sleep(1)
 
-                    print(
-                        "LONG state -> STOPPED"
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "LONG stop error:",
-                        e
-                    )
-
-                    return {
-                        "success": False,
-                        "error": f"LONG停止失败: {str(e)}"
-                    }
+                current_state["long"] = False
 
             # =========================
             # SHORT
@@ -385,40 +408,29 @@ class FreqtradeService:
 
             if data.get("short"):
 
-                try:
+                requests.post(
+                    f"{SHORT_URL}/api/v1/stop",
+                    auth=cls.auth,
+                    timeout=5
+                )
 
-                    response = requests.post(
-                        f"{SHORT_URL}/api/v1/stop",
-                        auth=cls.auth,
-                        timeout=5
+                for i in range(20):
+
+                    state = cls.get_bot_state(
+                        SHORT_URL
                     )
-
-                    response.raise_for_status()
 
                     print(
-                        "SHORT Freqtrade -> STOP"
+                        "SHORT STOP WAIT:",
+                        state
                     )
 
-                    # 自己的运行状态同步
-                    current_state["short"] = False
+                    if state == "STOPPED":
+                        break
 
-                    runtime.RUNNING["short"] = False
+                    time.sleep(1)
 
-                    print(
-                        "SHORT state -> STOPPED"
-                    )
-
-                except Exception as e:
-
-                    print(
-                        "SHORT stop error:",
-                        e
-                    )
-
-                    return {
-                        "success": False,
-                        "error": f"SHORT停止失败: {str(e)}"
-                    }
+                current_state["short"] = False
 
             # =========================
             # 保存自己的状态
@@ -720,24 +732,118 @@ class FreqtradeService:
         time.sleep(3)
 
     @classmethod
+    def wait_sqlite_release(cls):
+
+        for i in range(20):
+
+            locked = False
+
+            for name in [
+                "tradesv3_long.sqlite",
+                "tradesv3_short.sqlite"
+            ]:
+
+                path = cls.FREQTRADE_DIR / name
+
+                if path.exists():
+
+                    try:
+
+                        with open(
+                                path,
+                                "a"
+                        ):
+                            pass
+
+
+                    except PermissionError:
+
+                        locked = True
+
+            if not locked:
+                print(
+                    "SQLite文件已释放"
+                )
+                return True
+
+            print(
+                "等待SQLite释放..."
+            )
+
+            time.sleep(1)
+
+        return False
+
+    @classmethod
     def stop_processes_for_delete(cls):
 
-        long_stopped = cls.kill_freqtrade_worker(
-            "LONG",
-            runtime.LONG_PROCESS,
-            8011
+        print(
+            "准备关闭freqtrade"
         )
 
-        short_stopped = cls.kill_freqtrade_worker(
-            "SHORT",
-            runtime.SHORT_PROCESS,
-            8012
-        )
+        # 1. 优雅关闭
+
+        try:
+
+            requests.post(
+                f"{LONG_URL}/api/v1/stop",
+                auth=cls.auth,
+                timeout=5
+            )
+
+        except:
+            pass
+
+        try:
+
+            requests.post(
+                f"{SHORT_URL}/api/v1/stop",
+                auth=cls.auth,
+                timeout=5
+            )
+
+        except:
+            pass
+
+        # 2. 等待进程
+
+        time.sleep(5)
+
+        # 3. 强杀
+
+        if runtime.LONG_PROCESS:
+            cls.kill_process(
+                runtime.LONG_PROCESS,
+                "LONG"
+            )
+
+        if runtime.SHORT_PROCESS:
+            cls.kill_process(
+                runtime.SHORT_PROCESS,
+                "SHORT"
+            )
 
         runtime.LONG_PROCESS = None
         runtime.SHORT_PROCESS = None
 
-        return long_stopped and short_stopped
+        # 4. 根据端口杀残留
+
+        for port, name in [
+            (8011, "LONG"),
+            (8012, "SHORT")
+        ]:
+
+            for pid in cls.get_port_pids(port):
+                cls.terminate_pid(
+                    pid,
+                    name
+                )
+
+        # 5. 等待释放
+
+        time.sleep(3)
+
+        return True
 
     @classmethod
     def delete_trade(cls):
@@ -777,7 +883,15 @@ class FreqtradeService:
 
         # 等待sqlite释放
 
-        time.sleep(3)
+        if not cls.wait_sqlite_release():
+            return {
+
+                "success": False,
+
+                "error":
+                    "数据库文件仍被占用"
+
+            }
 
         # ======================
         # 删除数据库
@@ -894,7 +1008,7 @@ class FreqtradeService:
             "success": True,
 
             "message":
-                "数据库和日志已清理",
+                "已成功删除数据库",
 
             "detail":
                 result
@@ -930,49 +1044,73 @@ class FreqtradeService:
     @classmethod
     def start_freqtrade(cls):
 
-        if runtime.LONG_PROCESS is None or \
-                runtime.LONG_PROCESS.poll() is not None:
-            runtime.LONG_PROCESS = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "freqtrade",
-                    "trade",
-                    "--config",
-                    "user_data/config_long.json",
-                    "--strategy",
-                    "DcaTpLong"
-                ],
-                cwd=str(FREQTRADE_DIR),
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            )
+        log_dir = cls.FREQTRADE_DIR / "logs"
 
-            print(
-                "LONG PID:",
-                runtime.LONG_PROCESS.pid
-            )
+        log_dir.mkdir(
+            exist_ok=True
+        )
 
-        if runtime.SHORT_PROCESS is None or \
-                runtime.SHORT_PROCESS.poll() is not None:
-            runtime.SHORT_PROCESS = subprocess.Popen(
-                [
-                    sys.executable,
-                    "-m",
-                    "freqtrade",
-                    "trade",
-                    "--config",
-                    "user_data/config_short.json",
-                    "--strategy",
-                    "DcaTpShort"
-                ],
-                cwd=str(FREQTRADE_DIR),
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-            )
+        if not cls.is_freqtrade_alive(LONG_URL):
 
-            print(
-                "SHORT PID:",
-                runtime.SHORT_PROCESS.pid
-            )
+            if runtime.LONG_PROCESS is None or \
+                    runtime.LONG_PROCESS.poll() is not None:
+                runtime.LONG_PROCESS = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "freqtrade",
+                        "trade",
+
+                        "--config",
+                        "user_data/config_long.json",
+
+                        "--strategy",
+                        "DcaTpLong",
+
+                        "--logfile",
+                        "logs/long.log"
+                    ],
+
+                    cwd=str(cls.FREQTRADE_DIR),
+
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+
+                print(
+                    "LONG PID:",
+                    runtime.LONG_PROCESS.pid
+                )
+
+        if not cls.is_freqtrade_alive(SHORT_URL):
+
+            if runtime.SHORT_PROCESS is None or \
+                    runtime.SHORT_PROCESS.poll() is not None:
+                runtime.SHORT_PROCESS = subprocess.Popen(
+                    [
+                        sys.executable,
+                        "-m",
+                        "freqtrade",
+                        "trade",
+
+                        "--config",
+                        "user_data/config_short.json",
+
+                        "--strategy",
+                        "DcaTpShort",
+
+                        "--logfile",
+                        "logs/short.log"
+                    ],
+
+                    cwd=str(cls.FREQTRADE_DIR),
+
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                )
+
+                print(
+                    "SHORT PID:",
+                    runtime.SHORT_PROCESS.pid
+                )
 
     @classmethod
     def get_whitelist(cls, url):
