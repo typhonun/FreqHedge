@@ -1,4 +1,4 @@
-from .freqtrade_service import FreqtradeService
+from app.services.freqtrade_client import FreqtradeClient
 
 from config.settings import (
     LONG_URL,
@@ -12,30 +12,30 @@ class BotManager:
     def get_all_status():
 
         return {
-            "long": FreqtradeService.get_status(LONG_URL),
-            "short": FreqtradeService.get_status(SHORT_URL)
+            "long": FreqtradeClient.get_status(LONG_URL),
+            "short": FreqtradeClient.get_status(SHORT_URL)
         }
 
     @staticmethod
     def get_all_balance():
 
         return {
-            "long": FreqtradeService.get_balance(LONG_URL),
-            "short": FreqtradeService.get_balance(SHORT_URL)
+            "long": FreqtradeClient.get_balance(LONG_URL),
+            "short": FreqtradeClient.get_balance(SHORT_URL)
         }
 
     @staticmethod
     def start_all():
 
         return {
-            "long": FreqtradeService.start_bot(LONG_URL),
-            "short": FreqtradeService.start_bot(SHORT_URL)
+            "long": FreqtradeClient.start_bot(LONG_URL),
+            "short": FreqtradeClient.start_bot(SHORT_URL)
         }
 
     @staticmethod
     def stop_all():
 
         return {
-            "long": FreqtradeService.stop_bot(LONG_URL),
-            "short": FreqtradeService.stop_bot(SHORT_URL)
+            "long": FreqtradeClient.stop_bot(LONG_URL),
+            "short": FreqtradeClient.stop_bot(SHORT_URL)
         }

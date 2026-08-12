@@ -1,4 +1,4 @@
-from .freqtrade_service import FreqtradeService
+from app.services.freqtrade_client import FreqtradeClient
 import time
 
 from config.settings import (
@@ -6,10 +6,12 @@ from config.settings import (
     SHORT_URL
 )
 
+
 position_cache = {
     "time": 0,
     "data": None
 }
+
 
 closed_profit_cache = {
     "time": 0,
@@ -19,6 +21,69 @@ closed_profit_cache = {
 
 class PositionService:
 
+    # =========================================================
+    # Freqtrade 返回数据统一解析
+    # =========================================================
+
+    @staticmethod
+    def _extract_trades(data):
+
+        if isinstance(data, list):
+            return data
+
+        if isinstance(data, dict):
+
+            trades = data.get("trades")
+
+            if isinstance(trades, list):
+                return trades
+
+        return []
+
+    @staticmethod
+    def _safe_get_status(url):
+
+        try:
+
+            if not FreqtradeClient.is_freqtrade_alive(url):
+                return []
+
+            return FreqtradeClient.get_status(url)
+
+        except Exception as e:
+
+            print(
+                "get status error:",
+                url,
+                e
+            )
+
+            return []
+
+    @staticmethod
+    def _safe_get_trades(url):
+
+        try:
+
+            if not FreqtradeClient.is_freqtrade_alive(url):
+                return []
+
+            return FreqtradeClient.get_trades(url)
+
+        except Exception as e:
+
+            print(
+                "get trades error:",
+                url,
+                e
+            )
+
+            return []
+
+    # =========================================================
+    # 当前持仓
+    # =========================================================
+
     @staticmethod
     def get_open_positions():
 
@@ -26,19 +91,29 @@ class PositionService:
 
         if (
                 position_cache["data"]
-                and now - position_cache["time"] < 5
+                and
+                now - position_cache["time"] < 5
         ):
             return position_cache["data"]
 
+        long_resp = PositionService._safe_get_status(
+            LONG_URL
+        )
+
+        short_resp = PositionService._safe_get_status(
+            SHORT_URL
+        )
+
         data = {
+
             "long":
-                FreqtradeService.get_status(
-                    LONG_URL
+                PositionService._extract_trades(
+                    long_resp
                 ),
 
             "short":
-                FreqtradeService.get_status(
-                    SHORT_URL
+                PositionService._extract_trades(
+                    short_resp
                 )
         }
 
@@ -47,23 +122,62 @@ class PositionService:
 
         return data
 
+    # =========================================================
+    # 持仓数量
+    # =========================================================
+
     @staticmethod
     def get_position_count():
 
-        long_positions = FreqtradeService.get_status(LONG_URL)
-        short_positions = FreqtradeService.get_status(SHORT_URL)
+        long_resp = PositionService._safe_get_status(
+            LONG_URL
+        )
+
+        short_resp = PositionService._safe_get_status(
+            SHORT_URL
+        )
+
+        long_positions = PositionService._extract_trades(
+            long_resp
+        )
+
+        short_positions = PositionService._extract_trades(
+            short_resp
+        )
+
+        long_count = len(long_positions)
+        short_count = len(short_positions)
 
         return {
-            "long": len(long_positions),
-            "short": len(short_positions),
-            "total": len(long_positions) + len(short_positions)
+
+            "long": long_count,
+
+            "short": short_count,
+
+            "total":
+                long_count + short_count
         }
+
+    # =========================================================
+    # 账户余额
+    # =========================================================
 
     @staticmethod
     def get_account_summary():
 
-        long_balance = FreqtradeService.get_balance(LONG_URL)
-        short_balance = FreqtradeService.get_balance(SHORT_URL)
+        try:
+            long_balance = FreqtradeClient.get_balance(
+                LONG_URL
+            )
+        except Exception:
+            long_balance = {}
+
+        try:
+            short_balance = FreqtradeClient.get_balance(
+                SHORT_URL
+            )
+        except Exception:
+            short_balance = {}
 
         long_available = 0
         short_available = 0
@@ -71,68 +185,167 @@ class PositionService:
         long_total = 0
         short_total = 0
 
-        for item in long_balance.get("currencies", []):
+        for item in long_balance.get(
+                "currencies",
+                []
+        ):
 
-            if item["currency"] == "USDT":
-                long_available = item["free"]
-                long_total = item["balance"]
+            if item.get("currency") == "USDT":
 
-        for item in short_balance.get("currencies", []):
+                long_available = item.get(
+                    "free",
+                    0
+                )
 
-            if item["currency"] == "USDT":
-                short_available = item["free"]
-                short_total = item["balance"]
+                long_total = item.get(
+                    "balance",
+                    0
+                )
+
+        for item in short_balance.get(
+                "currencies",
+                []
+        ):
+
+            if item.get("currency") == "USDT":
+
+                short_available = item.get(
+                    "free",
+                    0
+                )
+
+                short_total = item.get(
+                    "balance",
+                    0
+                )
 
         return {
 
             "total_balance":
-                round(long_total + short_total, 2),
+                round(
+                    float(long_total or 0)
+                    +
+                    float(short_total or 0),
+                    2
+                ),
 
             "long_available":
-                round(long_available, 2),
+                round(
+                    float(long_available or 0),
+                    2
+                ),
 
             "short_available":
-                round(short_available, 2)
+                round(
+                    float(short_available or 0),
+                    2
+                )
         }
+
+    # =========================================================
+    # 当前持仓利润
+    # =========================================================
 
     @staticmethod
     def get_profit_summary():
 
-        long_positions = FreqtradeService.get_status(LONG_URL)
-        short_positions = FreqtradeService.get_status(SHORT_URL)
+        long_resp = PositionService._safe_get_status(
+            LONG_URL
+        )
+
+        short_resp = PositionService._safe_get_status(
+            SHORT_URL
+        )
+
+        long_positions = PositionService._extract_trades(
+            long_resp
+        )
+
+        short_positions = PositionService._extract_trades(
+            short_resp
+        )
 
         long_profit = sum(
-            trade.get("profit_abs") or 0
+            float(
+                trade.get(
+                    "profit_abs",
+                    0
+                ) or 0
+            )
             for trade in long_positions
         )
 
         short_profit = sum(
-            trade.get("profit_abs") or 0
+            float(
+                trade.get(
+                    "profit_abs",
+                    0
+                ) or 0
+            )
             for trade in short_positions
         )
 
         return {
-            "long_profit": round(long_profit, 2),
-            "short_profit": round(short_profit, 2),
-            "total_profit": round(
-                long_profit + short_profit,
-                2
-            )
+
+            "long_profit":
+                round(
+                    long_profit,
+                    2
+                ),
+
+            "short_profit":
+                round(
+                    short_profit,
+                    2
+                ),
+
+            "total_profit":
+                round(
+                    long_profit + short_profit,
+                    2
+                )
         }
+
+    # =========================================================
+    # 浮动利润
+    # =========================================================
 
     @staticmethod
     def get_floating_profit():
 
-        long_positions = FreqtradeService.get_status(LONG_URL)
-        short_positions = FreqtradeService.get_status(SHORT_URL)
+        long_resp = PositionService._safe_get_status(
+            LONG_URL
+        )
+
+        short_resp = PositionService._safe_get_status(
+            SHORT_URL
+        )
+
+        long_positions = PositionService._extract_trades(
+            long_resp
+        )
+
+        short_positions = PositionService._extract_trades(
+            short_resp
+        )
 
         long_float = sum(
-            trade.get("profit_abs", 0)
+            float(
+                trade.get(
+                    "profit_abs",
+                    0
+                ) or 0
+            )
             for trade in long_positions
         )
 
         short_float = sum(
-            trade.get("profit_abs", 0)
+            float(
+                trade.get(
+                    "profit_abs",
+                    0
+                ) or 0
+            )
             for trade in short_positions
         )
 
@@ -151,48 +364,256 @@ class PositionService:
                 )
         }
 
+    # =========================================================
+    # 已关闭交易
+    # =========================================================
+
     @staticmethod
     def get_closed_positions():
 
-        long_resp = FreqtradeService.get_trades(
+        long_resp = FreqtradeClient.get_trades(
             LONG_URL
         )
 
-        short_resp = FreqtradeService.get_trades(
+        short_resp = FreqtradeClient.get_trades(
             SHORT_URL
         )
 
-        long_trades = (
-            long_resp["trades"]
-            if isinstance(long_resp, dict)
-            else long_resp
+        long_trades = PositionService._extract_trades(
+            long_resp
         )
 
-        short_trades = (
-            short_resp["trades"]
-            if isinstance(short_resp, dict)
-            else short_resp
+        short_trades = PositionService._extract_trades(
+            short_resp
         )
 
         return {
+
             "long": [
                 {
-                    **t,
+                    **trade,
                     "side": "LONG"
                 }
-                for t in long_trades
-                if not t.get("is_open", True)
+
+                for trade in long_trades
+
+                if not trade.get(
+                    "is_open",
+                    True
+                )
             ],
 
             "short": [
                 {
-                    **t,
+                    **trade,
                     "side": "SHORT"
                 }
-                for t in short_trades
-                if not t.get("is_open", True)
+
+                for trade in short_trades
+
+                if not trade.get(
+                    "is_open",
+                    True
+                )
             ]
         }
+
+    # =========================================================
+    # 已关闭利润
+    # =========================================================
+
+    @staticmethod
+    def get_closed_profit_summary():
+
+        now = time.time()
+
+        if (
+                closed_profit_cache["data"]
+                and
+                now - closed_profit_cache["time"] < 30
+        ):
+            return closed_profit_cache["data"]
+
+        long_resp = PositionService._safe_get_trades(
+            LONG_URL
+        )
+
+        short_resp = PositionService._safe_get_trades(
+            SHORT_URL
+        )
+
+        long_trades = PositionService._extract_trades(
+            long_resp
+        )
+
+        short_trades = PositionService._extract_trades(
+            short_resp
+        )
+
+        long_profit = 0.0
+        short_profit = 0.0
+
+        for trade in long_trades:
+
+            if not trade.get(
+                    "is_open",
+                    True
+            ):
+
+                long_profit += float(
+                    trade.get(
+                        "close_profit_abs",
+                        0
+                    ) or 0
+                )
+
+        for trade in short_trades:
+
+            if not trade.get(
+                    "is_open",
+                    True
+            ):
+
+                short_profit += float(
+                    trade.get(
+                        "close_profit_abs",
+                        0
+                    ) or 0
+                )
+
+        result = {
+
+            "long_closed_profit":
+                round(
+                    long_profit,
+                    2
+                ),
+
+            "short_closed_profit":
+                round(
+                    short_profit,
+                    2
+                ),
+
+            "total_closed_profit":
+                round(
+                    long_profit + short_profit,
+                    2
+                )
+        }
+
+        closed_profit_cache["time"] = now
+        closed_profit_cache["data"] = result
+
+        return result
+
+    # =========================================================
+    # 总已关闭利润
+    # =========================================================
+
+    @staticmethod
+    def get_closed_profit():
+
+        result = PositionService.get_closed_profit_summary()
+
+        return result[
+            "total_closed_profit"
+        ]
+
+    # =========================================================
+    # 可开交易对
+    # =========================================================
+
+    @staticmethod
+    def get_available_pairs(side: str):
+
+        base_url = (
+            LONG_URL
+            if side == "long"
+            else SHORT_URL
+        )
+
+        whitelist_resp = FreqtradeClient.get_whitelist(
+            base_url
+        )
+
+        whitelist = whitelist_resp.get(
+            "whitelist",
+            []
+        )
+
+        positions = PositionService.get_open_positions()
+
+        opened_pairs = {
+
+            trade.get("pair")
+
+            for trade in (
+                    positions["long"]
+                    +
+                    positions["short"]
+            )
+
+            if trade.get("pair")
+        }
+
+        return [
+            pair
+            for pair in whitelist
+            if pair not in opened_pairs
+        ]
+
+    # =========================================================
+    # Force Entry
+    # =========================================================
+
+    @staticmethod
+    def force_enter(
+            side: str,
+            pair: str,
+            stakeamount: float
+    ):
+
+        return FreqtradeClient.force_enter(
+            side,
+            pair,
+            stakeamount
+        )
+
+    # =========================================================
+    # 所有当前持仓
+    # =========================================================
+
+    @staticmethod
+    def get_all_positions():
+
+        positions = PositionService.get_open_positions()
+
+        result = []
+
+        for trade in positions["long"]:
+
+            trade = {
+                **trade,
+                "side": "LONG"
+            }
+
+            result.append(trade)
+
+        for trade in positions["short"]:
+
+            trade = {
+                **trade,
+                "side": "SHORT"
+            }
+
+            result.append(trade)
+
+        return result
+
+    # =========================================================
+    # 单笔交易操作
+    # =========================================================
 
     @staticmethod
     def trade_action(
@@ -209,28 +630,20 @@ class PositionService:
             else SHORT_URL
         )
 
-        # ===================
-        # 市价退出
-        # ===================
-
         if action == "market_exit":
 
             payload = {
                 "tradeid": trade_id
             }
 
-            if amount:
+            if amount is not None:
                 payload["amount"] = amount
 
-            return FreqtradeService.post(
+            return FreqtradeClient.post(
                 base_url,
                 "/api/v1/forceexit",
                 payload
             )
-
-        # ===================
-        # 限价退出
-        # ===================
 
         elif action == "limit_exit":
 
@@ -240,273 +653,86 @@ class PositionService:
                 "rate": price
             }
 
-            if amount:
+            if amount is not None:
                 payload["amount"] = amount
 
-            return FreqtradeService.post(
+            return FreqtradeClient.post(
                 base_url,
                 "/api/v1/forceexit",
                 payload
             )
 
-        # ===================
-        # 加仓
-        # ===================
-
         elif action == "increase":
-
-            endpoint = "/api/v1/forceenter"
 
             positions = PositionService.get_open_positions()
 
             trades = (
-
                 positions["long"]
-
                 if side == "LONG"
-
                 else positions["short"]
-
             )
 
             trade = next(
-
                 (
-
                     t
-
                     for t in trades
-
-                    if t["trade_id"] == trade_id
-
+                    if t.get("trade_id") == trade_id
                 ),
-
                 None
-
             )
 
             if not trade:
-                raise Exception("Trade not found")
+                raise Exception(
+                    "Trade not found"
+                )
 
             payload = {
 
-                "pair": trade["pair"],
+                "pair":
+                    trade["pair"],
 
-                "side": "long" if side == "LONG" else "short",
+                "side":
+                    "long"
+                    if side == "LONG"
+                    else "short",
 
-                "stakeamount": amount,
+                "stakeamount":
+                    amount,
 
-                "ordertype": "market"
-
+                "ordertype":
+                    "market"
             }
 
-            return FreqtradeService.post(
-
+            return FreqtradeClient.post(
                 base_url,
-
-                endpoint,
-
+                "/api/v1/forceenter",
                 payload
-
             )
 
+        else:
+
+            raise ValueError(
+                f"Unsupported action: {action}"
+            )
+
+    # =========================================================
+    # 全部平仓
+    # =========================================================
+
     @staticmethod
-    def get_available_pairs(side: str):
-
-        base_url = (
-            LONG_URL
-            if side == "long"
-            else SHORT_URL
-        )
-
-        whitelist_resp = FreqtradeService.get_whitelist(
-            base_url
-        )
-
-        whitelist = whitelist_resp.get(
-            "whitelist",
-            []
-        )
+    def close_all(side: str):
 
         positions = PositionService.get_open_positions()
-
-        opened_pairs = {
-
-            trade["pair"]
-
-            for trade in (
-                    positions["long"]
-                    + positions["short"]
-            )
-        }
-
-        return [
-
-            pair
-
-            for pair in whitelist
-
-            if pair not in opened_pairs
-        ]
-
-    @staticmethod
-    def force_enter(
-            side: str,
-            pair: str,
-            stakeamount: float
-    ):
-
-        return FreqtradeService.force_enter(
-            side,
-            pair,
-            stakeamount
-        )
-
-    @staticmethod
-    def get_all_positions():
-
-        positions = \
-            PositionService.get_open_positions()
-
-        result = []
-
-        for trade in positions["long"]:
-            trade["side"] = "LONG"
-
-            result.append(trade)
-
-        for trade in positions["short"]:
-            trade["side"] = "SHORT"
-
-            result.append(trade)
-
-        return result
-
-    @staticmethod
-    def get_closed_profit_summary():
-
-        now = time.time()
-
-        if (
-                closed_profit_cache["data"]
-                and
-                now - closed_profit_cache["time"] < 30
-        ):
-            return closed_profit_cache["data"]
-
-        long_resp = FreqtradeService.get_trades(
-            LONG_URL
-        )
-
-        short_resp = FreqtradeService.get_trades(
-            SHORT_URL
-        )
-
-        long_trades = (
-            long_resp["trades"]
-            if isinstance(long_resp, dict)
-            else long_resp
-        )
-
-        short_trades = (
-            short_resp["trades"]
-            if isinstance(short_resp, dict)
-            else short_resp
-        )
-
-        long_profit = 0
-        short_profit = 0
-
-        for trade in long_trades:
-
-            if not trade.get(
-                    "is_open",
-                    True
-            ):
-                long_profit += float(
-                    trade.get(
-                        "close_profit_abs",
-                        0
-                    ) or 0
-                )
-
-        for trade in short_trades:
-
-            if not trade.get(
-                    "is_open",
-                    True
-            ):
-                short_profit += float(
-                    trade.get(
-                        "close_profit_abs",
-                        0
-                    ) or 0
-                )
-
-        result = {
-
-            "long_closed_profit":
-                round(long_profit, 2),
-
-            "short_closed_profit":
-                round(short_profit, 2),
-
-            "total_closed_profit":
-                round(
-                    long_profit + short_profit,
-                    2
-                )
-        }
-
-        closed_profit_cache["time"] = now
-
-        closed_profit_cache["data"] = result
-
-        return result
-
-    @staticmethod
-    def get_closed_profit():
-
-        result = PositionService.get_closed_profit_summary()
-
-        return result["total_closed_profit"]
-
-    @staticmethod
-    def close_all(
-            side: str
-    ):
-
-        # =====================
-        # 获取对应方向机器人
-        # =====================
-
-        positions = {
-
-            "long":
-                FreqtradeService.get_status(
-                    LONG_URL
-                ),
-
-            "short":
-                FreqtradeService.get_status(
-                    SHORT_URL
-                )
-
-        }
 
         if side.lower() == "long":
 
             trades = positions["long"]
-
             trade_side = "LONG"
-
 
         elif side.lower() == "short":
 
             trades = positions["short"]
-
             trade_side = "SHORT"
-
 
         else:
 
@@ -515,10 +741,6 @@ class PositionService:
             )
 
         results = []
-
-        # =====================
-        # 逐个 forceexit
-        # =====================
 
         for trade in trades:
 
@@ -538,42 +760,54 @@ class PositionService:
 
                 results.append({
 
-                    "trade_id": trade_id,
+                    "trade_id":
+                        trade_id,
 
-                    "pair": trade.get("pair"),
+                    "pair":
+                        trade.get("pair"),
 
-                    "success": True,
+                    "success":
+                        True,
 
-                    "result": result
-
+                    "result":
+                        result
                 })
-
 
             except Exception as e:
 
                 results.append({
 
-                    "trade_id": trade_id,
+                    "trade_id":
+                        trade_id,
 
-                    "pair": trade.get("pair"),
+                    "pair":
+                        trade.get("pair"),
 
-                    "success": False,
+                    "success":
+                        False,
 
-                    "error": str(e)
-
+                    "error":
+                        str(e)
                 })
 
         return {
 
-            "success": True,
+            "success":
+                True,
 
-            "side": side,
+            "side":
+                side,
 
-            "closed_count": len(results),
+            "closed_count":
+                len(results),
 
-            "details": results
-
+            "details":
+                results
         }
+
+    # =========================================================
+    # 单笔平仓
+    # =========================================================
 
     @staticmethod
     def force_exit(

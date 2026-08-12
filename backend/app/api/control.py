@@ -10,6 +10,9 @@ from app.services.event_service import record_event
 
 from datetime import datetime, timezone
 
+from app.services.freqtrade_client import FreqtradeClient
+from app.services.delete_service import DeleteService
+
 router = APIRouter()
 
 
@@ -71,8 +74,7 @@ def delete_trade():
         runtime.SHORT_PROCESS
     )
 
-
-    result = FreqtradeService.delete_trade()
+    result = DeleteService.delete_trade()
 
 
     print(
@@ -130,7 +132,7 @@ def force_enter(
             else SHORT_URL
         )
 
-        trades = FreqtradeService.get_status(
+        trades = FreqtradeClient.get_status(
             url
         )
 

@@ -1,5 +1,5 @@
 import json
-from app.services.freqtrade_service import FreqtradeService
+from app.services.freqtrade_client import FreqtradeClient
 
 from config.settings import (
     LONG_CONFIG,
@@ -148,8 +148,8 @@ class ConfigService:
 
         # reload
         if data["side"] == "long":
-            FreqtradeService.send_command(LONG_URL, "reload_config")
+            FreqtradeClient.send_command(LONG_URL, "reload_config")
         else:
-            FreqtradeService.send_command(SHORT_URL, "reload_config")
+            FreqtradeClient.send_command(SHORT_URL, "reload_config")
 
         return {"success": True}
