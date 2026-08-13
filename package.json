@@ -9,7 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "vue": "^3.5.38"
+    "echarts": "^6.1.0",
+    "vue": "^3.5.38",
+    "vue-echarts": "^8.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.7",
