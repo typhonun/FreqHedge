@@ -347,40 +347,6 @@ const loadChart = async () => {
 
             switch(e.event_type){
 
-                case "filled_entry":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#0066ff",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `BUY ${e.price}`
-
-                    }
-
-                break
-
-                case "confirm":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#00c853",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `信号开仓 ${e.price}`
-
-                    }
-
-                break
-
                 case "signal":
 
                     config={
