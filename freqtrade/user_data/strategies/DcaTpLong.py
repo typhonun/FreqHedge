@@ -172,33 +172,6 @@ class DcaTpLong(IStrategy):
             current_time=current_time
         )
 
-    def _record_signal_marker(self, dataframe: DataFrame, metadata: dict) -> None:
-        if dataframe.empty or "close" not in dataframe.columns:
-            return
-
-        last_row = dataframe.iloc[-1]
-        close_price = last_row.get("close")
-        if pd.isna(close_price):
-            return
-
-        candle_time = self._latest_candle_time(dataframe)
-        if candle_time is None:
-            logger.warning(
-                f"{metadata['pair']} 无法确定信号K线时间，跳过 signal 标记"
-            )
-            return
-
-        self._record_chart_marker(
-            event_type="signal",
-            pair=metadata["pair"],
-            trade_id=0,
-            side="long",
-            price=close_price,
-            amount=0.0,
-            current_time=candle_time,
-            message="策略入场信号"
-        )
-
     def order_filled(
             self,
             pair,
@@ -208,12 +181,32 @@ class DcaTpLong(IStrategy):
             **kwargs
     ):
 
+        logger.info(
+            f"""
+        ========== ORDER FILLED ==========
+        pair={pair}
+        trade_id={trade.id}
+        side={getattr(order, 'side', None)}
+        ft_order_side={getattr(order, 'ft_order_side', None)}
+        ft_order_reason={getattr(order, 'ft_order_reason', None)}
+        ft_order_tag={getattr(order, 'ft_order_tag', None)}
+        amount={getattr(order, 'amount', None)}
+        average={getattr(order, 'average', None)}
+        status={getattr(order, 'status', None)}
+        ==================================
+        """
+        )
+
         entry_price = float(
             order.average
             or trade.open_rate
         )
 
-        reason = order.ft_order_reason or ""
+        reason = str(
+            getattr(order, "ft_order_reason", None)
+            or getattr(order, "ft_order_tag", None)
+            or ""
+        ).lower()
 
         if order.ft_order_side == "buy":
 
@@ -244,8 +237,7 @@ class DcaTpLong(IStrategy):
                     message="网格加仓成交"
                 )
 
-
-            elif trade.nr_of_successful_entries > 1:
+            elif reason.startswith("dca"):
 
                 self._record_chart_marker(
                     event_type="dca",
@@ -257,22 +249,6 @@ class DcaTpLong(IStrategy):
                     current_time=current_time,
                     message="DCA加仓成交"
                 )
-
-
-            else:
-
-                self._record_chart_marker(
-                    event_type="filled_entry",
-                    pair=pair,
-                    trade_id=trade.id,
-                    side="long",
-                    price=entry_price,
-                    amount=order.amount,
-                    current_time=current_time,
-                    message="成交开仓"
-                )
-
-
 
         elif order.ft_order_side == "sell":
 
@@ -461,6 +437,16 @@ class DcaTpLong(IStrategy):
             "initialized",
             True
         )
+        tag = getattr(order, 'ft_order_tag', '') or ''
+
+        if tag.startswith("tp_") and order.side == "sell":
+            tp_cfg = self.get_runtime_config().get("tp", {})
+            if bool(tp_cfg.get("rebuy_enable", True)):
+                self._set(
+                    trade,
+                    'need_rebuy',
+                    True
+                )
 
     def _serial(self, v):
         if v is None:
@@ -759,6 +745,17 @@ class DcaTpLong(IStrategy):
             side,
             **kwargs
     ):
+
+        self._record_chart_marker(
+            event_type="signal",
+            pair=pair,
+            trade_id=0,
+            side="long",
+            price=rate,
+            amount=amount,
+            current_time=current_time,
+            message=f"入场信号 {entry_tag}"
+        )
 
         return True
 
@@ -1906,17 +1903,6 @@ class DcaTpLong(IStrategy):
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
             )
-            record_event(
-                strategy=self.__class__.__name__,
-                pair=trade.pair,
-                trade_id=trade.id,
-                event_type="grid_sell",
-                side="long",
-                price=price,
-                amount=sell_usdt,
-                message="网格减仓",
-                current_time=current_time
-            )
             return float(-sell_usdt), "grid_sell_20pct"
         return None
 
@@ -1977,18 +1963,6 @@ class DcaTpLong(IStrategy):
         if res:
             return res
         return None
-
-    def order_filled(self, pair: str, trade: Trade, order: Order, current_time: datetime, **kwargs) -> None:
-        tag = getattr(order, 'ft_order_tag', '') or ''
-
-        if tag.startswith("tp_") and order.side == "sell":
-            tp_cfg = self.get_runtime_config().get("tp", {})
-            if bool(tp_cfg.get("rebuy_enable", True)):
-                self._set(
-                    trade,
-                    'need_rebuy',
-                    True
-                )
 
     def custom_stoploss(self, *args, **kwargs) -> float | None:
         trade = kwargs.get("trade")
