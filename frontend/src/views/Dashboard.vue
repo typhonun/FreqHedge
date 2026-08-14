@@ -2,29 +2,39 @@
 
     <el-row :gutter="20">
 
-        <el-col :span="12">
-
+        <el-col :span="16">
             <AccountCard
                 :summary="store.summary"
                 :floating="store.floating"
             />
-
         </el-col>
 
-        <el-col :span="12">
-
-            <ProfitCard
-                :profit="store.profit"
+        <el-col :span="8">
+            <ExposureCard
+                :summary="store.summary"
             />
-
         </el-col>
 
     </el-row>
 
     <br />
 
+    <ProfitCard
+        :profit="store.profit"
+    />
+
+    <br />
+
     <ClosedProfitCard
         :profit="store.closedProfit"
+    />
+
+    <br />
+
+    <br/>
+
+    <ProfitCurve
+      :data="store.profitCurve"
     />
 
     <el-card>
@@ -49,9 +59,11 @@
 
 import AccountCard from "../components/AccountCard.vue"
 import ProfitCard from "../components/ProfitCard.vue"
+import ExposureCard from "../components/ExposureCard.vue"
 import PositionTableCommon from "@/components/PositionTableCommon.vue"
 import ClosedTradeTable from "../components/ClosedTradeTable.vue"
 import ClosedProfitCard from "../components/ClosedProfitCard.vue"
+import ProfitCurve from "../components/ProfitCurve.vue"
 
 import { useTradeStore } from "../stores/tradeStore"
 import {
@@ -98,7 +110,7 @@ onMounted(async()=>{
         store.refreshHistory()
 
 
-    },30000)
+    },60000)
 
 
 

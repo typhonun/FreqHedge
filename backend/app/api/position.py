@@ -53,6 +53,18 @@ def closed_profit():
     return PositionService.get_closed_profit_summary()
 
 
+@router.get("/total_profit")
+def total_profit():
+
+    return PositionService.get_total_profit_summary()
+
+
+@router.get("/profit_curve")
+def get_profit_curve():
+
+    return PositionService.get_profit_curve()
+
+
 @router.get("/floating")
 def floating():
     return PositionService.get_floating_profit()

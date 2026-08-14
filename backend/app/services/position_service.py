@@ -6,17 +6,16 @@ from config.settings import (
     SHORT_URL
 )
 
-
 position_cache = {
     "time": 0,
     "data": None
 }
 
-
 closed_profit_cache = {
     "time": 0,
     "data": None
 }
+profit_history = []
 
 
 class PositionService:
@@ -191,15 +190,12 @@ class PositionService:
         ):
 
             if item.get("currency") == "USDT":
-
-                long_available = item.get(
-                    "free",
-                    0
+                long_available = float(
+                    item.get("free", 0) or 0
                 )
 
-                long_total = item.get(
-                    "balance",
-                    0
+                long_total = float(
+                    item.get("balance", 0) or 0
                 )
 
         for item in short_balance.get(
@@ -208,38 +204,95 @@ class PositionService:
         ):
 
             if item.get("currency") == "USDT":
-
-                short_available = item.get(
-                    "free",
-                    0
+                short_available = float(
+                    item.get("free", 0) or 0
                 )
 
-                short_total = item.get(
-                    "balance",
-                    0
+                short_total = float(
+                    item.get("balance", 0) or 0
                 )
+
+        # 当前持仓
+
+        long_positions = PositionService._extract_trades(
+            PositionService._safe_get_status(
+                LONG_URL
+            )
+        )
+
+        short_positions = PositionService._extract_trades(
+            PositionService._safe_get_status(
+                SHORT_URL
+            )
+        )
+
+        # 多头保证金
+
+        long_margin = sum(
+            float(
+                trade.get(
+                    "stake_amount",
+                    0
+                ) or 0
+            )
+            for trade in long_positions
+        )
+
+        # 空头保证金
+
+        short_margin = sum(
+            float(
+                trade.get(
+                    "stake_amount",
+                    0
+                ) or 0
+            )
+            for trade in short_positions
+        )
+
+        # 总保证金
+
+        used_margin = (
+                long_margin
+                + short_margin
+        )
+
+        # 总资金
+
+        total_balance = (
+                long_total
+                + short_total
+        )
+
+        # 可用资金
+
+        available_balance = (
+                total_balance
+                - used_margin
+        )
 
         return {
 
             "total_balance":
-                round(
-                    float(long_total or 0)
-                    +
-                    float(short_total or 0),
-                    2
-                ),
+                round(total_balance, 2),
+
+            "available_balance":
+                round(available_balance, 2),
+
+            "used_margin":
+                round(used_margin, 2),
+
+            "long_margin":
+                round(long_margin, 2),
+
+            "short_margin":
+                round(short_margin, 2),
 
             "long_available":
-                round(
-                    float(long_available or 0),
-                    2
-                ),
+                round(long_available, 2),
 
             "short_available":
-                round(
-                    float(short_available or 0),
-                    2
-                )
+                round(short_available, 2)
         }
 
     # =========================================================
@@ -459,7 +512,6 @@ class PositionService:
                     "is_open",
                     True
             ):
-
                 long_profit += float(
                     trade.get(
                         "close_profit_abs",
@@ -473,7 +525,6 @@ class PositionService:
                     "is_open",
                     True
             ):
-
                 short_profit += float(
                     trade.get(
                         "close_profit_abs",
@@ -519,6 +570,92 @@ class PositionService:
         return result[
             "total_closed_profit"
         ]
+
+    # =========================================================
+    # 累计收益
+    # =========================================================
+
+    @staticmethod
+    def get_total_profit_summary():
+
+        current_profit = (
+            PositionService.get_profit_summary()
+        )
+
+        closed_profit = (
+            PositionService.get_closed_profit_summary()
+        )
+
+        long_total = (
+                current_profit["long_profit"]
+                +
+                closed_profit["long_closed_profit"]
+        )
+
+        short_total = (
+                current_profit["short_profit"]
+                +
+                closed_profit["short_closed_profit"]
+        )
+
+        return {
+
+            "long_total_profit":
+                round(long_total, 2),
+
+            "short_total_profit":
+                round(short_total, 2),
+
+            "total_profit":
+                round(
+                    long_total
+                    +
+                    short_total,
+                    2
+                ),
+
+            "long_float":
+                current_profit["long_profit"],
+
+            "short_float":
+                current_profit["short_profit"],
+
+            "long_closed":
+                closed_profit["long_closed_profit"],
+
+            "short_closed":
+                closed_profit["short_closed_profit"]
+        }
+
+    @staticmethod
+    def get_profit_curve():
+
+        global profit_history
+
+        profit = (
+            PositionService.get_total_profit_summary()
+        )
+
+        profit_history.append({
+
+            "time": int(time.time()),
+
+            "total_profit":
+                profit["total_profit"],
+
+            "long_profit":
+                profit["long_total_profit"],
+
+            "short_profit":
+                profit["short_total_profit"]
+        })
+
+        if len(profit_history) > 500:
+            profit_history = (
+                profit_history[-500:]
+            )
+
+        return profit_history
 
     # =========================================================
     # 可开交易对
@@ -592,7 +729,6 @@ class PositionService:
         result = []
 
         for trade in positions["long"]:
-
             trade = {
                 **trade,
                 "side": "LONG"
@@ -601,7 +737,6 @@ class PositionService:
             result.append(trade)
 
         for trade in positions["short"]:
-
             trade = {
                 **trade,
                 "side": "SHORT"
