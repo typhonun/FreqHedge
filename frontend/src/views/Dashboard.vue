@@ -6,16 +6,18 @@
             <AccountCard
                 :summary="store.summary"
                 :floating="store.floating"
+                :balanceCurve="store.balanceCurve"
             />
         </el-col>
 
+    </el-row>
+
+    <br />
         <el-col :span="8">
             <ExposureCard
                 :summary="store.summary"
             />
         </el-col>
-
-    </el-row>
 
     <br />
 

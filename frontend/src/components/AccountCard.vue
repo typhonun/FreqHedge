@@ -44,10 +44,19 @@
         </div>
       </el-col>
     </el-row>
+
+    <div class="curve-title">
+      实时权益曲线（Equity）
+    </div>
+
+    <BalanceCurve
+      :data="balanceCurve"
+    />
   </el-card>
 </template>
 
 <script setup>
+import BalanceCurve from "./BalanceCurve.vue"
 const props = defineProps({
   summary: {
     type: Object,
@@ -56,6 +65,10 @@ const props = defineProps({
   floating: {
     type: Object,
     default: () => ({})
+  },
+  balanceCurve: {
+    type:Array,
+    default:()=>[]
   }
 })
 

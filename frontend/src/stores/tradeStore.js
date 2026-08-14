@@ -14,6 +14,8 @@ export const useTradeStore = defineStore(
 
             profitCurve: [],
 
+            balanceCurve: [],
+
             summary: {},
 
             floating: {},
@@ -108,7 +110,8 @@ export const useTradeStore = defineStore(
                     const [
                         closed,
                         closedProfit,
-                        profitCurve
+                        profitCurve,
+                        balanceCurve
                     ] = await Promise.all([
 
                         axios.get(
@@ -123,6 +126,10 @@ export const useTradeStore = defineStore(
                             `${API}/position/profit_curve`
                         ),
 
+                        axios.get(
+                            `${API}/position/balance_curve`
+                        )
+
                     ])
 
                     this.closedPositions =
@@ -133,6 +140,9 @@ export const useTradeStore = defineStore(
 
                     this.profitCurve =
                         profitCurve.data
+
+                    this.balanceCurve =
+                        balanceCurve.data
 
                 } catch(e){
 

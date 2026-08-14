@@ -16,6 +16,7 @@ closed_profit_cache = {
     "data": None
 }
 profit_history = []
+balance_history = []
 
 
 class PositionService:
@@ -626,6 +627,48 @@ class PositionService:
             "short_closed":
                 closed_profit["short_closed_profit"]
         }
+
+    @staticmethod
+    def get_balance_curve():
+
+        global balance_history
+
+        summary = (
+            PositionService.get_account_summary()
+        )
+
+        profit = (
+            PositionService.get_total_profit_summary()
+        )
+
+        equity = (
+                summary["total_balance"]
+                +
+                profit["total_profit"]
+        )
+
+        balance_history.append({
+
+            "time":
+                int(time.time()),
+
+            "balance":
+                round(equity, 2),
+
+            "wallet":
+                summary["total_balance"],
+
+            "profit":
+                profit["total_profit"]
+        })
+
+        if len(balance_history) > 1440:
+            balance_history = (
+                balance_history[-1440:]
+            )
+
+        return balance_history
+
 
     @staticmethod
     def get_profit_curve():

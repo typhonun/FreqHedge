@@ -59,6 +59,12 @@ def total_profit():
     return PositionService.get_total_profit_summary()
 
 
+@router.get("/balance_curve")
+def get_balance_curve():
+
+    return PositionService.get_balance_curve()
+
+
 @router.get("/profit_curve")
 def get_profit_curve():
 
