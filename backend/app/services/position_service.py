@@ -1,6 +1,8 @@
 from app.services.freqtrade_client import FreqtradeClient
 import time
-
+from app.database import SessionLocal
+from app.models.equity_history import EquityHistory
+from app.models.profit_history import ProfitHistory
 from config.settings import (
     LONG_URL,
     SHORT_URL
@@ -15,8 +17,6 @@ closed_profit_cache = {
     "time": 0,
     "data": None
 }
-profit_history = []
-balance_history = []
 
 
 class PositionService:
@@ -629,77 +629,203 @@ class PositionService:
         }
 
     @staticmethod
-    def get_balance_curve():
+    def record_equity():
 
-        global balance_history
+        db = SessionLocal()
 
-        summary = (
-            PositionService.get_account_summary()
-        )
+        try:
 
-        profit = (
-            PositionService.get_total_profit_summary()
-        )
+            summary = PositionService.get_account_summary()
 
-        equity = (
-                summary["total_balance"]
-                +
-                profit["total_profit"]
-        )
+            floating = PositionService.get_floating_profit()
 
-        balance_history.append({
+            wallet = summary["total_balance"]
 
-            "time":
-                int(time.time()),
+            floating_profit = floating["total_float"]
 
-            "balance":
-                round(equity, 2),
+            equity = wallet + floating_profit
 
-            "wallet":
-                summary["total_balance"],
+            record = EquityHistory(
 
-            "profit":
-                profit["total_profit"]
-        })
+                timestamp=int(time.time()),
 
-        if len(balance_history) > 1440:
-            balance_history = (
-                balance_history[-1440:]
+                equity=round(
+                    equity,
+                    2
+                ),
+
+                wallet=round(
+                    wallet,
+                    2
+                ),
+
+                profit=round(
+                    floating_profit,
+                    2
+                )
             )
 
-        return balance_history
+            db.add(record)
 
+            db.commit()
+
+            print(
+                f"[Equity] "
+                f"wallet={wallet:.2f} "
+                f"floating={floating_profit:.2f} "
+                f"equity={equity:.2f}"
+            )
+
+        except Exception as e:
+
+            db.rollback()
+
+            print(
+                "record equity error:",
+                e
+            )
+
+        finally:
+
+            db.close()
+
+    @staticmethod
+    def get_balance_curve():
+
+        db = SessionLocal()
+
+        try:
+
+            records = (
+                db.query(EquityHistory)
+                .order_by(
+                    EquityHistory.timestamp.desc()
+                )
+                .limit(1440)
+                .all()
+            )
+
+            records.reverse()
+
+            return [
+
+                {
+                    "time":
+                        record.timestamp,
+
+                    "balance":
+                        record.equity,
+
+                    "wallet":
+                        record.wallet,
+
+                    "profit":
+                        record.profit
+                }
+
+                for record in records
+            ]
+
+        finally:
+
+            db.close()
 
     @staticmethod
     def get_profit_curve():
 
-        global profit_history
+        db = SessionLocal()
 
-        profit = (
-            PositionService.get_total_profit_summary()
-        )
+        try:
 
-        profit_history.append({
-
-            "time": int(time.time()),
-
-            "total_profit":
-                profit["total_profit"],
-
-            "long_profit":
-                profit["long_total_profit"],
-
-            "short_profit":
-                profit["short_total_profit"]
-        })
-
-        if len(profit_history) > 500:
-            profit_history = (
-                profit_history[-500:]
+            records = (
+                db.query(ProfitHistory)
+                .order_by(
+                    ProfitHistory.timestamp.desc()
+                )
+                .limit(1440)
+                .all()
             )
 
-        return profit_history
+            records.reverse()
 
+            return [
+
+                {
+                    "time":
+                        record.timestamp,
+
+                    "total_profit":
+                        record.total_profit,
+
+                    "long_profit":
+                        record.long_profit,
+
+                    "short_profit":
+                        record.short_profit
+                }
+
+                for record in records
+            ]
+
+        finally:
+
+            db.close()
+
+    @staticmethod
+    def record_profit():
+
+        db = SessionLocal()
+
+        try:
+
+            profit = (
+                PositionService.get_total_profit_summary()
+            )
+
+            record = ProfitHistory(
+
+                timestamp=int(time.time()),
+
+                total_profit=round(
+                    profit["total_profit"],
+                    2
+                ),
+
+                long_profit=round(
+                    profit["long_total_profit"],
+                    2
+                ),
+
+                short_profit=round(
+                    profit["short_total_profit"],
+                    2
+                )
+            )
+
+            db.add(record)
+
+            db.commit()
+
+            print(
+                f"[Profit] "
+                f"total={profit['total_profit']:.2f} "
+                f"long={profit['long_total_profit']:.2f} "
+                f"short={profit['short_total_profit']:.2f}"
+            )
+
+        except Exception as e:
+
+            db.rollback()
+
+            print(
+                "record profit error:",
+                e
+            )
+
+        finally:
+
+            db.close()
+            
     # =========================================================
     # 可开交易对
     # =========================================================

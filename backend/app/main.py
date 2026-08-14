@@ -1,10 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from threading import Thread
-from app.api.chart import cache_refresh_loop
 import threading
+
+from contextlib import asynccontextmanager
+
+from app.api.chart import cache_refresh_loop
 from app.services.risk_service import RiskService
 from app.services.risk_config_service import RiskConfigService
+
 from app.api.trade import router as trade_router
 from app.api.control import router as control_router
 from app.api.system import router as system_router
@@ -13,12 +18,83 @@ from app.api.config import router as config_router
 from app.api.chart import router as chart_router
 from app.api import logs
 from app.api import strategy
+
 from app.database import Base, engine
+
+# 重要：确保模型被导入
 from app.models import trade_event
+from app.models.equity_history import EquityHistory
+from app.models.profit_history import ProfitHistory
 
-app = FastAPI()
+from app.scheduler.equity_scheduler import (
+    start_scheduler,
+    stop_scheduler
+)
 
-# 允许前端访问
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+
+    # =====================================================
+    # 1. 创建数据库表
+    # =====================================================
+
+    Base.metadata.create_all(bind=engine)
+
+    print("Database tables initialized.")
+
+    # =====================================================
+    # 2. 加载风险配置
+    # =====================================================
+
+    RiskConfigService.load()
+
+    # =====================================================
+    # 3. 启动 Equity 定时任务
+    # =====================================================
+
+    start_scheduler()
+
+    # =====================================================
+    # 4. 启动风险监控
+    # =====================================================
+
+    threading.Thread(
+        target=RiskService.monitor,
+        daemon=True
+    ).start()
+
+    # =====================================================
+    # 5. 启动缓存刷新
+    # =====================================================
+
+    Thread(
+        target=cache_refresh_loop,
+        daemon=True
+    ).start()
+
+    print("Application started.")
+
+    yield
+
+    # =====================================================
+    # 6. 关闭 scheduler
+    # =====================================================
+
+    stop_scheduler()
+
+    print("Application stopped.")
+
+
+app = FastAPI(
+    lifespan=lifespan
+)
+
+
+# =========================================================
+# CORS
+# =========================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -36,23 +112,9 @@ def root():
     return "ok"
 
 
-@app.on_event("startup")
-async def startup():
-    # 创建数据库表
-    Base.metadata.create_all(bind=engine)
-
-    RiskConfigService.load()
-
-    threading.Thread(
-        target=RiskService.monitor,
-        daemon=True
-    ).start()
-
-    Thread(
-        target=cache_refresh_loop,
-        daemon=True
-    ).start()
-
+# =========================================================
+# Routers
+# =========================================================
 
 app.include_router(
     trade_router,
