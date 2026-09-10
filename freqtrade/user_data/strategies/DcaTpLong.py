@@ -773,17 +773,20 @@ class DcaTpLong(IStrategy):
         try:
            return int(float(value))
 
-        except (TypeError, ValueError):
+       except (TypeError, ValueError) as e:
 
             logger.error(
                 f"_get_int转换失败 "
                 f"key={key} "
                 f"value={value!r} "
                 f"type={type(value).__name__} "
-                f"default={default}"
-            )
+               f"default={default} "
+               f"error={e}"
+           )
+           import traceback
+           logger.error(f"Traceback: {traceback.format_exc()}")
 
-            return default
+           return default
 
     def _cfg_int(self, cfg: dict, key: str, default: int) -> int:
         v = cfg.get(key, default)
@@ -1705,45 +1708,59 @@ class DcaTpLong(IStrategy):
                     margin: float = None):
         cfg = self.get_runtime_config()
         grid_cfg = self._cfg(cfg, "grid", default={}) or {}
-        if not bool(grid_cfg.get("enable", True)):
-            return None
+       logger.info(f"[grid_single] Step 1: grid_cfg loaded")
+       if not bool(grid_cfg.get("enable", True)):
+           logger.info(f"[grid_single] Step 2: grid disabled, returning None")
+           return None
 
-        try:
-            price = float(current_rate) if current_rate is not None else None
-        except Exception:
-            price = None
+       logger.info(f"[grid_single] Step 3: trying to convert current_rate to float")
+       try:
+           price = float(current_rate) if current_rate is not None else None
+       except Exception as e:
+           logger.error(f"[grid_single] Step 3 error: {e}")
+           price = None
 
-        if price is None:
-            price = last.get('close', None)
+       if price is None:
+           price = last.get('close', None)
+           logger.info(f"[grid_single] Step 4: price from last.close = {price}")
 
-        if price is None:
-            return None
+       if price is None:
+           logger.info(f"[grid_single] Step 5: price is None, returning None")
+           return None
 
-        if getattr(current_time, 'tzinfo', None):
-            current_time = current_time.replace(tzinfo=None)
+       if getattr(current_time, 'tzinfo', None):
+           current_time = current_time.replace(tzinfo=None)
 
-        anchor = self._get_float(trade, 'grid_anchor_price', None)
-        if anchor is None or anchor <= 0:
-            try:
-                anchor = float(trade.open_rate or 0.0)
-            except Exception:
-                anchor = None
-        if anchor is None or anchor <= 0:
-            return None
+       logger.info(f"[grid_single] Step 6: getting grid_anchor_price")
+       anchor = self._get_float(trade, 'grid_anchor_price', None)
+       logger.info(f"[grid_single] Step 7: anchor = {anchor}")
+       if anchor is None or anchor <= 0:
+           try:
+               anchor = float(trade.open_rate or 0.0)
+               logger.info(f"[grid_single] Step 8: anchor from trade.open_rate = {anchor}")
+           except Exception as e:
+               logger.error(f"[grid_single] Step 8 error: {e}")
+               anchor = None
+       if anchor is None or anchor <= 0:
+           logger.info(f"[grid_single] Step 9: anchor invalid, returning None")
+           return None
 
-        # 网格阈值
-        grid_lower_pct = self._cfg_float(
-            grid_cfg,
-            "init_lower",
-            self._cfg_float(grid_cfg, "grid_lower", -2.0)
-        )
-        grid_upper_pct = self._cfg_float(
-            grid_cfg,
-            "init_upper",
-            self._cfg_float(grid_cfg, "grid_upper", 2.0)
-        )
-        grid_lower = anchor * (1 + grid_lower_pct / 100.0)
-        grid_upper = anchor * (1 + grid_upper_pct / 100.0)
+       # 网格阈值
+       logger.info(f"[grid_single] Step 10: getting grid thresholds")
+       grid_lower_pct = self._cfg_float(
+           grid_cfg,
+           "init_lower",
+           self._cfg_float(grid_cfg, "grid_lower", -2.0)
+       )
+       grid_upper_pct = self._cfg_float(
+           grid_cfg,
+           "init_upper",
+           self._cfg_float(grid_cfg, "grid_upper", 2.0)
+       )
+       logger.info(f"[grid_single] Step 11: grid_lower_pct={grid_lower_pct}, grid_upper_pct={grid_upper_pct}")
+       grid_lower = anchor * (1 + grid_lower_pct / 100.0)
+       grid_upper = anchor * (1 + grid_upper_pct / 100.0)
+       logger.info(f"[grid_single] Step 12: grid_lower={grid_lower}, grid_upper={grid_upper}")
 
         collateral = self._collateral_total()
         try:
@@ -1893,39 +1910,49 @@ class DcaTpLong(IStrategy):
 
     def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float,
                               **kwargs) -> tuple[float, str] | None:
-        if trade.has_open_orders:
-            return None
+       try:
+           return self._adjust_trade_position_impl(trade, current_time, current_rate, current_profit, **kwargs)
+       except Exception as e:
+           logger.error(f"[adjust_trade_position] Uncaught exception: {e}")
+           import traceback
+           logger.error(f"[adjust_trade_position] Traceback:\n{traceback.format_exc()}")
+           raise
 
-        df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
-        if df.empty:
-            return None
-        last = df.iloc[-1]
+    def _adjust_trade_position_impl(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float,
+                                    **kwargs) -> tuple[float, str] | None:
+       if trade.has_open_orders:
+           return None
 
-        try:
-            margin = float(trade.stake_amount)
-        except Exception:
-            margin = 0.0
+       df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
+       if df.empty:
+           return None
+       last = df.iloc[-1]
 
-        if current_time.tzinfo:
-            current_time = current_time.replace(tzinfo=None)
-        open_time = trade.open_date_utc
-        if getattr(open_time, 'tzinfo', None):
-            open_time = open_time.replace(tzinfo=None)
-        candle_ts = self._index_candle_key(df.index[-1])
-        if candle_ts is None:
-            return None
-        df_tf, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
-        if df_tf.empty:
-            return None
-        last30_ts = self._index_candle_key(df_tf.index[-1])
-        if last30_ts is None:
-            return None
-        if candle_ts != last30_ts:
-            return None
+       try:
+           margin = float(trade.stake_amount)
+       except Exception:
+           margin = 0.0
 
-        collateral = self._collateral_total()
-        if collateral <= 0:
-            return None
+       if current_time.tzinfo:
+           current_time = current_time.replace(tzinfo=None)
+       open_time = trade.open_date_utc
+       if getattr(open_time, 'tzinfo', None):
+           open_time = open_time.replace(tzinfo=None)
+       candle_ts = self._index_candle_key(df.index[-1])
+       if candle_ts is None:
+           return None
+       df_tf, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
+       if df_tf.empty:
+           return None
+       last30_ts = self._index_candle_key(df_tf.index[-1])
+       if last30_ts is None:
+           return None
+       if candle_ts != last30_ts:
+           return None
+
+       collateral = self._collateral_total()
+       if collateral <= 0:
+           return None
 
         # 1) 趋势加仓
         res = self.trend_add(trade, last, margin, collateral, current_time, current_profit)
