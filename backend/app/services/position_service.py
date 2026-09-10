@@ -1,5 +1,8 @@
 from app.services.freqtrade_client import FreqtradeClient
 import time
+import sqlite3
+import json
+from pathlib import Path
 from app.database import SessionLocal
 from app.models.equity_history import EquityHistory
 from app.models.profit_history import ProfitHistory
@@ -9,6 +12,10 @@ from config.settings import (
     LONG_URL,
     SHORT_URL
 )
+
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+DB_PATH = BASE_DIR / "strategy.db"
 
 snapshot_cache = {
     "time": 0,
@@ -234,20 +241,60 @@ class PositionService:
             return 0
 
     @staticmethod
+    def _get_roi_levels(side):
+
+        conn = sqlite3.connect(
+            str(DB_PATH)
+        )
+
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            SELECT config_json
+            FROM strategy_config
+            WHERE side=?
+            """,
+            (side,)
+        )
+
+        row = cursor.fetchone()
+
+        conn.close()
+
+        if not row:
+            return []
+
+        config = json.loads(
+            row[0]
+        )
+
+        return (
+            config
+            .get("tp", {})
+            .get("roi_levels", [])
+        )
+
+    @staticmethod
     def _current_roi(
             holding_minutes,
-            roi_table
+            roi_levels
     ):
 
         roi = 0
 
-        for minute in sorted(
-                roi_table.keys(),
-                key=int
-        ):
+        levels = sorted(
 
-            if holding_minutes >= int(minute):
-                roi = roi_table[minute]
+            roi_levels,
+
+            key=lambda x: x["minutes"]
+
+        )
+
+        for level in levels:
+
+            if holding_minutes >= level["minutes"]:
+                roi = level["roi"]
 
         return roi
 
@@ -260,6 +307,14 @@ class PositionService:
 
         snapshot = PositionService.get_snapshot()
 
+        long_roi_levels = PositionService._get_roi_levels(
+            "long"
+        )
+
+        short_roi_levels = PositionService._get_roi_levels(
+            "short"
+        )
+
         long_trades = PositionService._extract_trades(
             snapshot["long_status"]
         )
@@ -269,16 +324,34 @@ class PositionService:
         )
 
         for trade in long_trades:
-            trade["holding_minutes"] = (
+            holding_minutes = (
                 PositionService._holding_minutes(
                     trade.get("open_date")
                 )
             )
 
+            trade["holding_minutes"] = holding_minutes
+
+            trade["tp_roi"] = (
+                PositionService._current_roi(
+                    holding_minutes,
+                    long_roi_levels
+                )
+            )
+
         for trade in short_trades:
-            trade["holding_minutes"] = (
+            holding_minutes = (
                 PositionService._holding_minutes(
                     trade.get("open_date")
+                )
+            )
+
+            trade["holding_minutes"] = holding_minutes
+
+            trade["tp_roi"] = (
+                PositionService._current_roi(
+                    holding_minutes,
+                    short_roi_levels
                 )
             )
 

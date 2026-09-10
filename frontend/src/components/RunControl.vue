@@ -198,16 +198,15 @@
 
         <div class="risk-item">
           <div>
-            <span>止盈比例</span>
+            <span>止盈金额(USDT)</span>
           </div>
 
-          <el-input-number
-            v-model="globalTpPercent"
-            :min="0"
-            :max="100"
-            :step="0.5"
-            @change="saveRiskConfig"
-          />
+            <el-input-number
+              v-model="globalTpAmount"
+              :min="0"
+              :step="10"
+              @change="saveRiskConfig"
+            />
         </div>
 
         <div class="risk-item">
@@ -224,16 +223,15 @@
 
         <div class="risk-item">
           <div>
-            <span>止损比例</span>
+            <span>止损金额(USDT)</span>
           </div>
 
-          <el-input-number
-            v-model="globalSlPercent"
-            :min="-100"
-            :max="0"
-            :step="0.5"
-            @change="saveRiskConfig"
-          />
+            <el-input-number
+              v-model="globalSlAmount"
+              :min="0"
+              :step="10"
+              @change="saveRiskConfig"
+            />
         </div>
       </div>
     </el-card>
@@ -265,8 +263,8 @@ const {
   loadStopEntryStatus,
   globalTpEnabled,
   globalSlEnabled,
-  globalTpPercent,
-  globalSlPercent,
+  globalTpAmount,
+  globalSlAmount,
   loadRiskConfig,
   saveRiskConfig
 } = useRunControl()

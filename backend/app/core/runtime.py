@@ -17,9 +17,8 @@ GLOBAL_RISK = {
 
     "global_sl_enabled": False,
 
-    "global_tp_percent": 5.0,
-
-    "global_sl_percent": -20.0
+    "global_tp_amount": 100,
+    "global_sl_amount": -50
 }
 
 ROUND_INFO = {

@@ -120,19 +120,18 @@ class RiskService:
 
         risk = runtime.GLOBAL_RISK
 
-        ratio = runtime.ROUND_INFO[
-            "round_ratio"
-        ]
+        profit = runtime.ROUND_INFO["round_profit"]
 
         # TP
 
         if (
                 risk["global_tp_enabled"]
                 and
-                ratio >= risk["global_tp_percent"]
+                profit >= risk["global_tp_amount"]
         ):
             print(
-                f"触发全局止盈 {ratio:.2f}%"
+                f"触发全局止盈 "
+                f"{profit:.2f} USDT"
             )
 
             cls.force_exit_all()
@@ -156,10 +155,10 @@ class RiskService:
         if (
                 risk["global_sl_enabled"]
                 and
-                ratio <= risk["global_sl_percent"]
+                profit <= -risk["global_sl_amount"]
         ):
             print(
-                f"触发全局止损 {ratio:.2f}%"
+                f"触发全局止损 {profit:.2f} USDT"
             )
 
             cls.force_exit_all()

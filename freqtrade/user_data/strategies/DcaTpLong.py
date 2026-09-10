@@ -64,7 +64,7 @@ class DcaTpLong(IStrategy):
                 continue
 
             try:
-                minutes = int(level.get("minutes", 0))
+                minutes = self._cfg_int(level, "minutes", 0)
                 roi = float(level.get("roi", 0))
             except Exception:
                 continue
@@ -181,21 +181,21 @@ class DcaTpLong(IStrategy):
             **kwargs
     ):
 
-        logger.info(
-            f"""
-        ========== ORDER FILLED ==========
-        pair={pair}
-        trade_id={trade.id}
-        side={getattr(order, 'side', None)}
-        ft_order_side={getattr(order, 'ft_order_side', None)}
-        ft_order_reason={getattr(order, 'ft_order_reason', None)}
-        ft_order_tag={getattr(order, 'ft_order_tag', None)}
-        amount={getattr(order, 'amount', None)}
-        average={getattr(order, 'average', None)}
-        status={getattr(order, 'status', None)}
-        ==================================
-        """
-        )
+        # logger.info(
+        #     f"""
+        # ========== ORDER FILLED ==========
+        # pair={pair}
+        # trade_id={trade.id}
+        # side={getattr(order, 'side', None)}
+        # ft_order_side={getattr(order, 'ft_order_side', None)}
+        # ft_order_reason={getattr(order, 'ft_order_reason', None)}
+        # ft_order_tag={getattr(order, 'ft_order_tag', None)}
+        # amount={getattr(order, 'amount', None)}
+        # average={getattr(order, 'average', None)}
+        # status={getattr(order, 'status', None)}
+        # ==================================
+        # """
+        # )
 
         entry_price = float(
             order.average
@@ -321,18 +321,16 @@ class DcaTpLong(IStrategy):
             default={}
         )
 
-        upper_pct = float(
-            grid_cfg.get(
-                "init_upper",
-                2
-            )
+        upper_pct = self._cfg_float(
+            grid_cfg,
+            "init_upper",
+            self._cfg_float(grid_cfg, "grid_upper", 2.0)
         )
 
-        lower_pct = float(
-            grid_cfg.get(
-                "init_lower",
-                -2
-            )
+        lower_pct = self._cfg_float(
+            grid_cfg,
+            "init_lower",
+            self._cfg_float(grid_cfg, "grid_lower", -2.0)
         )
 
         flags = {
@@ -512,8 +510,8 @@ class DcaTpLong(IStrategy):
             default={}
         ) or {}
 
-        rsi_period = int(rsi_cfg.get("period", 14))
-        bb_period = int(bb_cfg.get("period", 20))
+        rsi_period = self._cfg_int(rsi_cfg, "period", 14)
+        bb_period = self._cfg_int(bb_cfg, "period", 20)
         bb_std = float(bb_cfg.get("std", 2))
 
         upper, mid, lower = ta.BBANDS(
@@ -536,26 +534,9 @@ class DcaTpLong(IStrategy):
             macd, macdsignal, macdhist = ta.MACD(
                 df_tf['close'],
 
-                fastperiod=int(
-                    macd_cfg.get(
-                        "fast",
-                        12
-                    )
-                ),
-
-                slowperiod=int(
-                    macd_cfg.get(
-                        "slow",
-                        26
-                    )
-                ),
-
-                signalperiod=int(
-                    macd_cfg.get(
-                        "signal",
-                        9
-                    )
-                )
+                fastperiod=self._cfg_int(macd_cfg, "fast", 12),
+                slowperiod=self._cfg_int(macd_cfg, "slow", 26),
+                signalperiod=self._cfg_int(macd_cfg, "signal", 9)
             )
 
             # KDJ
@@ -565,52 +546,18 @@ class DcaTpLong(IStrategy):
                 df_tf['low'],
                 df_tf['close'],
 
-                fastk_period=int(
-                    kdj_cfg.get(
-                        "fastk",
-                        5
-                    )
-                ),
-
-                slowk_period=int(
-                    kdj_cfg.get(
-                        "slowk",
-                        3
-                    )
-                ),
-
-                slowd_period=int(
-                    kdj_cfg.get(
-                        "slowd",
-                        3
-                    )
-                )
+                fastk_period=self._cfg_int(kdj_cfg, "fastk", 5),
+                slowk_period=self._cfg_int(kdj_cfg, "slowk", 3),
+                slowd_period=self._cfg_int(kdj_cfg, "slowd", 3)
             )
 
             j = 3 * k - 2 * d
 
             # EMA
 
-            ema_fast = int(
-                ema_cfg.get(
-                    "fast",
-                    9
-                )
-            )
-
-            ema_mid = int(
-                ema_cfg.get(
-                    "mid",
-                    21
-                )
-            )
-
-            ema_slow = int(
-                ema_cfg.get(
-                    "slow",
-                    99
-                )
-            )
+            ema_fast = self._cfg_int(ema_cfg, "fast", 9)
+            ema_mid = self._cfg_int(ema_cfg, "mid", 21)
+            ema_slow = self._cfg_int(ema_cfg, "slow", 99)
 
             series_map = {
                 'macd_tf': macd,
@@ -805,16 +752,103 @@ class DcaTpLong(IStrategy):
         except Exception:
             return default
 
-    def _get_int(self, trade: Trade, key: str, default: int = 0) -> int:
-        v = self._get(trade, key, None)
-        if v is None:
+    def _get_int(self, trade, key, default=0):
+
+        value = self._get(
+            trade,
+            key,
+            default
+        )
+
+        logger.info(
+            f"_get_int "
+            f"key={key} "
+            f"value={value!r} "
+            f"type={type(value).__name__}"
+        )
+
+        if value is None:
             return default
+
+        try:
+           return int(float(value))
+
+        except (TypeError, ValueError):
+
+            logger.error(
+                f"_get_int转换失败 "
+                f"key={key} "
+                f"value={value!r} "
+                f"type={type(value).__name__} "
+                f"default={default}"
+            )
+
+            return default
+
+    def _cfg_int(self, cfg: dict, key: str, default: int) -> int:
+        v = cfg.get(key, default)
         if isinstance(v, bool):
             return int(v)
         try:
             return int(float(v))
         except Exception:
             return default
+
+    def _cfg_float(self, cfg: dict, key: str, default: float) -> float:
+        v = cfg.get(key, default)
+        if isinstance(v, bool):
+            return 1.0 if v else 0.0
+        try:
+            f = float(v)
+            if not (float('-inf') < f < float('inf')) or pd.isna(f):
+                return default
+            return f
+        except Exception:
+            return default
+
+    def _safe_int(self, value, default=0):
+        logger.info(
+            f"_safe_int value={value!r} "
+            f"type={type(value).__name__} "
+            f"default={default!r}"
+        )
+
+        if value is None:
+            return default
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.error(
+                f"_safe_int转换失败 "
+                f"value={value!r} "
+                f"type={type(value).__name__} "
+                f"default={default!r}"
+            )
+            return default
+
+    def _index_candle_key(self, value) -> int | None:
+        if value is None:
+            return None
+        try:
+            ts = pd.Timestamp(value)
+        except Exception:
+            try:
+                ts = pd.Timestamp(float(value), unit='s')
+            except Exception:
+                return None
+        try:
+            ts = ts.tz_localize(None)
+        except Exception:
+            pass
+        try:
+            ts = ts.floor('min')
+        except Exception:
+            pass
+        try:
+            return int(ts.timestamp())
+        except Exception:
+            return None
 
     def _get_bool(self, trade: Trade, key: str, default: bool = False) -> bool:
         v = self._get(trade, key, None)
@@ -994,10 +1028,9 @@ class DcaTpLong(IStrategy):
             "condition",
             "and"
         )
-        if hasattr(last.name, "timestamp"):
-            candle = int(last.name.timestamp())
-        else:
-            candle = int(last.name)
+        candle = self._index_candle_key(last.name)
+        if candle is None:
+            return None
 
         last_trend = self._get_int(
             trade,
@@ -1012,32 +1045,10 @@ class DcaTpLong(IStrategy):
 
         level = self._get_int(trade, 'trend_level', 0)
         reset_needed = self._get_bool(trade, 'reset_needed', False)
-        max_count = int(
-            trend_cfg.get(
-                "max_count",
-                3
-            )
-        )
-        ema_fast = int(
-            ema_cfg.get(
-                "fast",
-                9
-            )
-        )
-
-        ema_mid = int(
-            ema_cfg.get(
-                "mid",
-                21
-            )
-        )
-
-        ema_slow = int(
-            ema_cfg.get(
-                "slow",
-                99
-            )
-        )
+        max_count = self._cfg_int(trend_cfg, "max_count", 3)
+        ema_fast = self._cfg_int(ema_cfg, "fast", 9)
+        ema_mid = self._cfg_int(ema_cfg, "mid", 21)
+        ema_slow = self._cfg_int(ema_cfg, "slow", 99)
         try:
             amount_pct = float(
                 trend_cfg.get(
@@ -1218,17 +1229,20 @@ class DcaTpLong(IStrategy):
             return None
 
         last_idx = df.index[-1]
-        candle_ts = pd.Timestamp(last_idx).tz_localize(None).floor('min')
+        candle_key = self._index_candle_key(last_idx)
+        if candle_key is None:
+            return None
+        candle_ts = pd.Timestamp(candle_key, unit='s').tz_localize(None).floor('min')
         last_rsi = df['rsi'].iat[-1] if 'rsi' in df.columns else None
         last_j = df['j_tf'].iat[-1] if 'j_tf' in df.columns else None
 
         u = self._get_int(trade, 'dca_count', 0)
         levels = dca_cfg.get("levels") or []
         level_cfg = levels[min(u, len(levels) - 1)] if levels else {}
-        max_dca = int(dca_cfg.get("max_count") or 7)
-        cooldown_minutes = int(dca_cfg.get("cooldown_minutes", 60) or 60)
+        max_dca = self._cfg_int(dca_cfg, "max_count", 7)
+        cooldown_minutes = self._cfg_int(dca_cfg, "cooldown_minutes", 60)
         last_dca = self._get_int(trade, 'last_dca_candle', 0)
-        last_dca_ts = Timestamp(int(last_dca), unit='s') if last_dca else None
+        last_dca_ts = Timestamp(self._safe_int(last_dca), unit='s') if last_dca else None
         if last_dca_ts is None or last_dca_ts != candle_ts:
             self._set(trade, 'dca_done', False)
         dca_done = self._get_bool(trade, 'dca_done', False)
@@ -1237,7 +1251,7 @@ class DcaTpLong(IStrategy):
         last_dca_time = self._get_int(trade, 'last_dca_time', 0)
         if last_dca_time:
             try:
-                last_dca_dt = datetime.fromtimestamp(int(last_dca_time))
+                last_dca_dt = datetime.fromtimestamp(self._safe_int(last_dca_time))
                 if (current_time - last_dca_dt).total_seconds() < 60 * cooldown_minutes:
                     within_dca_cooldown = True
             except Exception:
@@ -1377,8 +1391,8 @@ class DcaTpLong(IStrategy):
 
             self._set(trade, 'dca_count', u + 1)
             self._set(trade, 'dca_done', True)
-            self._set(trade, 'last_dca_candle', int(candle_ts.timestamp()))
-            self._set(trade, 'last_dca_time', int(current_time.timestamp()))
+            self._set(trade, 'last_dca_candle', self._safe_int(candle_ts.timestamp()))
+            self._set(trade, 'last_dca_time', self._safe_int(current_time.timestamp()))
             self._set(trade, 'tp_count', 0)
 
             logger.info(
@@ -1493,7 +1507,7 @@ class DcaTpLong(IStrategy):
         if last_tp is not None:
 
             base_time = datetime.fromtimestamp(
-                int(last_tp)
+                self._safe_int(last_tp)
             )
 
         else:
@@ -1616,7 +1630,7 @@ class DcaTpLong(IStrategy):
                 if need_add_usdt > 0:
                     self._set(trade, 'dca_count', 0)
                     self._set(trade, 'dca_done', False)
-                    self._set(trade, 'last_tp_time', int(current_time.timestamp()))
+                    self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
 
                     logger.info(
                         f"[{trade.pair}] {GREEN}[当前仓位过小，浮亏DCA止盈加仓至 {target_wallet_percent:.0f}%]{RESET}, "
@@ -1639,7 +1653,7 @@ class DcaTpLong(IStrategy):
 
             self._set(trade, 'dca_count', 0)
             self._set(trade, 'dca_done', False)
-            self._set(trade, 'last_tp_time', int(current_time.timestamp()))
+            self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
 
             tp_reason = (
                 f"DCA快速止盈目标="
@@ -1671,7 +1685,7 @@ class DcaTpLong(IStrategy):
             reduce_percent = 30
         sell_amt = -(reduce_percent / 100.0) * margin  # 浮盈止盈减仓数量
         self._set(trade, 'dca_done', False)
-        self._set(trade, 'last_tp_time', int(current_time.timestamp()))
+        self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
         self._set(trade, 'last_tp_margin', float(margin))
         self._set(trade, 'need_rebuy', bool(tp_cfg.get("rebuy_enable", True)))
 
@@ -1718,24 +1732,16 @@ class DcaTpLong(IStrategy):
             return None
 
         # 网格阈值
-        try:
-            grid_lower_pct = float(
-                grid_cfg.get(
-                    "init_lower",
-                    -2
-                )
-            )
-        except Exception:
-            grid_lower_pct = -2.0
-        try:
-            grid_upper_pct = float(
-                grid_cfg.get(
-                    "init_upper",
-                    2
-                )
-            )
-        except Exception:
-            grid_upper_pct = 2.0
+        grid_lower_pct = self._cfg_float(
+            grid_cfg,
+            "init_lower",
+            self._cfg_float(grid_cfg, "grid_lower", -2.0)
+        )
+        grid_upper_pct = self._cfg_float(
+            grid_cfg,
+            "init_upper",
+            self._cfg_float(grid_cfg, "grid_upper", 2.0)
+        )
         grid_lower = anchor * (1 + grid_lower_pct / 100.0)
         grid_upper = anchor * (1 + grid_upper_pct / 100.0)
 
@@ -1750,17 +1756,17 @@ class DcaTpLong(IStrategy):
         last_grid_ts = self._get_int(trade, 'last_grid_action_time', None)
         if last_grid_ts is not None:
             try:
-                last_dt = datetime.fromtimestamp(int(last_grid_ts))
-                cooldown_minutes = int(grid_cfg.get("cooldown_minutes", 30) or 30)
+                last_dt = datetime.fromtimestamp(self._safe_int(last_grid_ts))
+                cooldown_minutes = self._cfg_int(grid_cfg, "cooldown_minutes", 30)
                 if (current_time - last_dt).total_seconds() < 60 * cooldown_minutes:
                     logger.debug(f"[{trade.pair}] 网格冷却中（{cooldown_minutes}min），上次动作 ts={last_grid_ts}")
                     return None
             except Exception:
                 pass
 
-        w = int(self._get_int(trade, 'grid_w', 0))
+        w = self._get_int(trade, 'grid_w', 0)
 
-        max_w = int(grid_cfg.get("max_count", 5))  # 网格加仓次数
+        max_w = self._cfg_int(grid_cfg, "max_count", 5)  # 网格加仓次数
 
         try:
             lev = float(self.leverage(trade.pair) or 1.0)
@@ -1775,35 +1781,17 @@ class DcaTpLong(IStrategy):
                 logger.debug(f"[{trade.pair}] 网格加仓达到上限 w={w} >= {max_w}，跳过")
                 return None
 
-            self._get_int(trade, 'dca_count', 0)
-
             # ==========================
             # 动态网格加仓数量
             # ==========================
 
-            try:
-                buy_percent = float(
-                    grid_cfg.get(
-                        "buy_percent",
-                        2
-                    ) or 2
-                )
-            except Exception:
-                buy_percent = 2.0
+            buy_percent = self._cfg_float(grid_cfg, "buy_percent", 2.0)
 
             # 订单规模系数
             # 1 = 固定网格
             # >1 = 金字塔加仓
             # <1 = 倒金字塔
-            try:
-                order_scale = float(
-                    grid_cfg.get(
-                        "order_scale",
-                        1
-                    ) or 1
-                )
-            except Exception:
-                order_scale = 1.0
+            order_scale = self._cfg_float(grid_cfg, "order_scale", 1.0)
 
             # 防止异常
             if order_scale <= 0:
@@ -1858,11 +1846,11 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'grid_anchor_price', float(new_anchor))
             self._set(trade, 'grid_upper', float(next_sell))
             self._set(trade, 'grid_lower', float(next_buy))
-            self._set(trade, 'last_grid_action_time', int(current_time.timestamp()))
+            self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
             self._record_add_usdt(trade, 'grid_added_total_usdt', buy_usdt)
             self._record_add_qty(trade, 'grid_added_total_qty', added_qty)
-            self._set(trade, 'grid_count', int(self._get_int(trade, 'grid_count', 0) + 1))
-            self._set(trade, 'grid_w', int(new_w))
+            self._set(trade, 'grid_count', self._safe_int(self._get_int(trade, 'grid_count', 0) + 1))
+            self._set(trade, 'grid_w', self._safe_int(new_w))
 
             logger.info(
                 f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% "
@@ -1873,10 +1861,7 @@ class DcaTpLong(IStrategy):
             return float(buy_usdt), f"grid_add_{grid_frac:.3f}"
 
         if price >= grid_upper:
-            try:
-                sell_percent = float(grid_cfg.get("sell_percent", 2) or 2)
-            except Exception:
-                sell_percent = 2.0
+            sell_percent = self._cfg_float(grid_cfg, "sell_percent", 2.0)
             grid_sell_frac = max(0.01, sell_percent / 100.0)
             sell_usdt = collateral * grid_sell_frac
             sell_usdt = min(sell_usdt, cur_margin)
@@ -1894,9 +1879,9 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'grid_anchor_price', float(new_anchor))
             self._set(trade, 'grid_upper', float(next_sell))
             self._set(trade, 'grid_lower', float(next_buy))
-            self._set(trade, 'last_grid_action_time', int(current_time.timestamp()))
-            self._set(trade, 'grid_count', int(self._get_int(trade, 'grid_count', 0) + 1))
-            self._set(trade, 'grid_w', int(new_w))
+            self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
+            self._set(trade, 'grid_count', self._safe_int(self._get_int(trade, 'grid_count', 0) + 1))
+            self._set(trade, 'grid_w', self._safe_int(new_w))
 
             logger.info(
                 f"[{trade.pair}] {RED}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
@@ -1926,11 +1911,15 @@ class DcaTpLong(IStrategy):
         open_time = trade.open_date_utc
         if getattr(open_time, 'tzinfo', None):
             open_time = open_time.replace(tzinfo=None)
-        candle_ts = pd.Timestamp(df.index[-1]).tz_localize(None).floor('min')
+        candle_ts = self._index_candle_key(df.index[-1])
+        if candle_ts is None:
+            return None
         df_tf, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
         if df_tf.empty:
             return None
-        last30_ts = pd.Timestamp(df_tf.index[-1]).tz_localize(None).floor('min')
+        last30_ts = self._index_candle_key(df_tf.index[-1])
+        if last30_ts is None:
+            return None
         if candle_ts != last30_ts:
             return None
 

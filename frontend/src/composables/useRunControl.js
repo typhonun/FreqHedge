@@ -23,8 +23,8 @@ export function useRunControl() {
     const globalTpEnabled = ref(false)
     const globalSlEnabled = ref(false)
 
-    const globalTpPercent = ref(5)
-    const globalSlPercent = ref(-20)
+    const globalTpAmount = ref(0)
+    const globalSlAmount = ref(0)
 
     const configCache = ref({
         longStake: 20,
@@ -376,11 +376,11 @@ export function useRunControl() {
         globalSlEnabled.value =
             data.global_sl_enabled
 
-        globalTpPercent.value =
-            data.global_tp_percent
+        globalTpAmount.value =
+            data.global_tp_amount
 
-        globalSlPercent.value =
-            data.global_sl_percent
+        globalSlAmount.value =
+            data.global_sl_amount
     }
 
     const saveRiskConfig = async () => {
@@ -394,12 +394,11 @@ export function useRunControl() {
 
                 global_sl_enabled:
                     globalSlEnabled.value,
+                global_tp_amount:
+                    globalTpAmount.value,
 
-                global_tp_percent:
-                    globalTpPercent.value,
-
-                global_sl_percent:
-                    globalSlPercent.value
+                global_sl_amount:
+                    globalSlAmount.value
             }
         )
 
@@ -439,8 +438,8 @@ export function useRunControl() {
         globalTpEnabled,
         globalSlEnabled,
 
-        globalTpPercent,
-        globalSlPercent,
+        globalTpAmount,
+        globalSlAmount,
 
         loadRiskConfig,
         saveRiskConfig
