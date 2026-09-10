@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.services.position_service import PositionService
 from pydantic import BaseModel
+from fastapi import Query
 
 router = APIRouter()
 
@@ -60,15 +61,25 @@ def total_profit():
 
 
 @router.get("/balance_curve")
-def get_balance_curve():
+def get_balance_curve(
 
-    return PositionService.get_balance_curve()
+    period: str = Query("1D")
+
+):
+    return PositionService.get_balance_curve(
+        period
+    )
 
 
 @router.get("/profit_curve")
-def get_profit_curve():
+def get_profit_curve(
 
-    return PositionService.get_profit_curve()
+    period: str = Query("1D")
+
+):
+    return PositionService.get_profit_curve(
+        period
+    )
 
 
 @router.get("/floating")

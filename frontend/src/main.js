@@ -21,7 +21,8 @@ import { PieChart } from "echarts/charts"
 import {
   GridComponent,
   TooltipComponent,
-  LegendComponent
+  LegendComponent,
+  DataZoomComponent
 } from "echarts/components"
 
 // 注册
@@ -31,7 +32,8 @@ use([
   GridComponent,
   PieChart,
   TooltipComponent,
-  LegendComponent
+  LegendComponent,
+  DataZoomComponent
 ])
 
 const app = createApp(App)

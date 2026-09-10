@@ -3,19 +3,28 @@ import time
 from app.database import SessionLocal
 from app.models.equity_history import EquityHistory
 from app.models.profit_history import ProfitHistory
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from config.settings import (
     LONG_URL,
     SHORT_URL
 )
 
-position_cache = {
+snapshot_cache = {
     "time": 0,
     "data": None
 }
 
-closed_profit_cache = {
-    "time": 0,
-    "data": None
+last_good_data = {
+
+    "long_balance": {},
+    "short_balance": {},
+
+    "long_status": [],
+    "short_status": [],
+
+    "long_trades": [],
+    "short_trades": []
 }
 
 
@@ -41,14 +50,19 @@ class PositionService:
         return []
 
     @staticmethod
-    def _safe_get_status(url):
+    def _safe_get_status(url, cache_key):
 
         try:
 
             if not FreqtradeClient.is_freqtrade_alive(url):
-                return []
+                raise Exception("bot offline")
 
-            return FreqtradeClient.get_status(url)
+            data = FreqtradeClient.get_status(url)
+
+            if data:
+                last_good_data[cache_key] = data
+
+            return data
 
         except Exception as e:
 
@@ -58,17 +72,22 @@ class PositionService:
                 e
             )
 
-            return []
+            return last_good_data[cache_key]
 
     @staticmethod
-    def _safe_get_trades(url):
+    def _safe_get_trades(url, cache_key):
 
         try:
 
             if not FreqtradeClient.is_freqtrade_alive(url):
-                return []
+                raise Exception("bot offline")
 
-            return FreqtradeClient.get_trades(url)
+            data = FreqtradeClient.get_trades(url)
+
+            if data:
+                last_good_data[cache_key] = data
+
+            return data
 
         except Exception as e:
 
@@ -78,7 +97,159 @@ class PositionService:
                 e
             )
 
-            return []
+            return last_good_data[cache_key]
+
+    @staticmethod
+    def _safe_get_balance(url, cache_key):
+
+        try:
+
+            if not FreqtradeClient.is_freqtrade_alive(url):
+                raise Exception("bot offline")
+
+            data = FreqtradeClient.get_balance(url)
+
+            if data:
+                last_good_data[cache_key] = data
+
+            return data
+
+        except Exception as e:
+
+            print(
+                "get balance error:",
+                url,
+                e
+            )
+
+            return last_good_data[cache_key]
+
+    @staticmethod
+    def get_snapshot(cache_seconds=5):
+
+        now = time.time()
+
+        if (
+                snapshot_cache["data"]
+                and
+                now - snapshot_cache["time"] < cache_seconds
+        ):
+            return snapshot_cache["data"]
+
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            long_balance_future = executor.submit(
+                PositionService._safe_get_balance,
+                LONG_URL,
+                "long_balance"
+            )
+
+            short_balance_future = executor.submit(
+                PositionService._safe_get_balance,
+                SHORT_URL,
+                "short_balance"
+            )
+
+            long_status_future = executor.submit(
+                PositionService._safe_get_status,
+                LONG_URL,
+                "long_status"
+            )
+
+            short_status_future = executor.submit(
+                PositionService._safe_get_status,
+                SHORT_URL,
+                "short_status"
+            )
+
+            long_trades_future = executor.submit(
+                PositionService._safe_get_trades,
+                LONG_URL,
+                "long_trades"
+            )
+
+            short_trades_future = executor.submit(
+                PositionService._safe_get_trades,
+                SHORT_URL,
+                "short_trades"
+            )
+
+            snapshot = {
+
+                "long_balance":
+                    long_balance_future.result(),
+
+                "short_balance":
+                    short_balance_future.result(),
+
+                "long_status":
+                    long_status_future.result(),
+
+                "short_status":
+                    short_status_future.result(),
+
+                "long_trades":
+                    long_trades_future.result(),
+
+                "short_trades":
+                    short_trades_future.result()
+
+            }
+
+        snapshot_cache["time"] = now
+        snapshot_cache["data"] = snapshot
+
+        return snapshot
+
+    @staticmethod
+    def _holding_minutes(open_date_str):
+
+        try:
+
+            open_time = datetime.fromisoformat(
+                open_date_str
+            )
+
+            if open_time.tzinfo is None:
+                open_time = open_time.replace(
+                    tzinfo=timezone.utc
+                )
+
+            now = datetime.now(
+                timezone.utc
+            )
+
+            return int(
+                (now - open_time).total_seconds()
+                / 60
+            )
+
+        except Exception as e:
+
+            print(
+                "holding_minutes error:",
+                open_date_str,
+                e
+            )
+
+            return 0
+
+    @staticmethod
+    def _current_roi(
+            holding_minutes,
+            roi_table
+    ):
+
+        roi = 0
+
+        for minute in sorted(
+                roi_table.keys(),
+                key=int
+        ):
+
+            if holding_minutes >= int(minute):
+                roi = roi_table[minute]
+
+        return roi
 
     # =========================================================
     # 当前持仓
@@ -87,40 +258,34 @@ class PositionService:
     @staticmethod
     def get_open_positions():
 
-        now = time.time()
+        snapshot = PositionService.get_snapshot()
 
-        if (
-                position_cache["data"]
-                and
-                now - position_cache["time"] < 5
-        ):
-            return position_cache["data"]
-
-        long_resp = PositionService._safe_get_status(
-            LONG_URL
+        long_trades = PositionService._extract_trades(
+            snapshot["long_status"]
         )
 
-        short_resp = PositionService._safe_get_status(
-            SHORT_URL
+        short_trades = PositionService._extract_trades(
+            snapshot["short_status"]
         )
 
-        data = {
-
-            "long":
-                PositionService._extract_trades(
-                    long_resp
-                ),
-
-            "short":
-                PositionService._extract_trades(
-                    short_resp
+        for trade in long_trades:
+            trade["holding_minutes"] = (
+                PositionService._holding_minutes(
+                    trade.get("open_date")
                 )
+            )
+
+        for trade in short_trades:
+            trade["holding_minutes"] = (
+                PositionService._holding_minutes(
+                    trade.get("open_date")
+                )
+            )
+
+        return {
+            "long": long_trades,
+            "short": short_trades
         }
-
-        position_cache["time"] = now
-        position_cache["data"] = data
-
-        return data
 
     # =========================================================
     # 持仓数量
@@ -129,33 +294,24 @@ class PositionService:
     @staticmethod
     def get_position_count():
 
-        long_resp = PositionService._safe_get_status(
-            LONG_URL
+        snapshot = PositionService.get_snapshot()
+
+        long_positions = (
+            PositionService._extract_trades(
+                snapshot["long_status"]
+            )
         )
 
-        short_resp = PositionService._safe_get_status(
-            SHORT_URL
+        short_positions = (
+            PositionService._extract_trades(
+                snapshot["short_status"]
+            )
         )
-
-        long_positions = PositionService._extract_trades(
-            long_resp
-        )
-
-        short_positions = PositionService._extract_trades(
-            short_resp
-        )
-
-        long_count = len(long_positions)
-        short_count = len(short_positions)
 
         return {
-
-            "long": long_count,
-
-            "short": short_count,
-
-            "total":
-                long_count + short_count
+            "long": len(long_positions),
+            "short": len(short_positions),
+            "total": len(long_positions) + len(short_positions)
         }
 
     # =========================================================
@@ -163,21 +319,13 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_account_summary():
+    def get_account_summary(snapshot=None):
 
-        try:
-            long_balance = FreqtradeClient.get_balance(
-                LONG_URL
-            )
-        except Exception:
-            long_balance = {}
+        if snapshot is None:
+            snapshot = PositionService.get_snapshot()
 
-        try:
-            short_balance = FreqtradeClient.get_balance(
-                SHORT_URL
-            )
-        except Exception:
-            short_balance = {}
+        long_balance = snapshot["long_balance"]
+        short_balance = snapshot["short_balance"]
 
         long_available = 0
         short_available = 0
@@ -215,15 +363,15 @@ class PositionService:
 
         # 当前持仓
 
-        long_positions = PositionService._extract_trades(
-            PositionService._safe_get_status(
-                LONG_URL
+        long_positions = (
+            PositionService._extract_trades(
+                snapshot["long_status"]
             )
         )
 
-        short_positions = PositionService._extract_trades(
-            PositionService._safe_get_status(
-                SHORT_URL
+        short_positions = (
+            PositionService._extract_trades(
+                snapshot["short_status"]
             )
         )
 
@@ -301,22 +449,21 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_profit_summary():
+    def get_profit_summary(snapshot=None):
 
-        long_resp = PositionService._safe_get_status(
-            LONG_URL
+        if snapshot is None:
+            snapshot = PositionService.get_snapshot()
+
+        long_positions = (
+            PositionService._extract_trades(
+                snapshot["long_status"]
+            )
         )
 
-        short_resp = PositionService._safe_get_status(
-            SHORT_URL
-        )
-
-        long_positions = PositionService._extract_trades(
-            long_resp
-        )
-
-        short_positions = PositionService._extract_trades(
-            short_resp
+        short_positions = (
+            PositionService._extract_trades(
+                snapshot["short_status"]
+            )
         )
 
         long_profit = sum(
@@ -365,22 +512,21 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_floating_profit():
+    def get_floating_profit(snapshot=None):
 
-        long_resp = PositionService._safe_get_status(
-            LONG_URL
+        if snapshot is None:
+            snapshot = PositionService.get_snapshot()
+
+        long_positions = (
+            PositionService._extract_trades(
+                snapshot["long_status"]
+            )
         )
 
-        short_resp = PositionService._safe_get_status(
-            SHORT_URL
-        )
-
-        long_positions = PositionService._extract_trades(
-            long_resp
-        )
-
-        short_positions = PositionService._extract_trades(
-            short_resp
+        short_positions = (
+            PositionService._extract_trades(
+                snapshot["short_status"]
+            )
         )
 
         long_float = sum(
@@ -425,20 +571,18 @@ class PositionService:
     @staticmethod
     def get_closed_positions():
 
-        long_resp = FreqtradeClient.get_trades(
-            LONG_URL
+        snapshot = PositionService.get_snapshot()
+
+        long_trades = (
+            PositionService._extract_trades(
+                snapshot["long_trades"]
+            )
         )
 
-        short_resp = FreqtradeClient.get_trades(
-            SHORT_URL
-        )
-
-        long_trades = PositionService._extract_trades(
-            long_resp
-        )
-
-        short_trades = PositionService._extract_trades(
-            short_resp
+        short_trades = (
+            PositionService._extract_trades(
+                snapshot["short_trades"]
+            )
         )
 
         return {
@@ -477,31 +621,21 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_closed_profit_summary():
+    def get_closed_profit_summary(snapshot=None):
 
-        now = time.time()
+        if snapshot is None:
+            snapshot = PositionService.get_snapshot()
 
-        if (
-                closed_profit_cache["data"]
-                and
-                now - closed_profit_cache["time"] < 30
-        ):
-            return closed_profit_cache["data"]
-
-        long_resp = PositionService._safe_get_trades(
-            LONG_URL
+        long_trades = (
+            PositionService._extract_trades(
+                snapshot["long_trades"]
+            )
         )
 
-        short_resp = PositionService._safe_get_trades(
-            SHORT_URL
-        )
-
-        long_trades = PositionService._extract_trades(
-            long_resp
-        )
-
-        short_trades = PositionService._extract_trades(
-            short_resp
+        short_trades = (
+            PositionService._extract_trades(
+                snapshot["short_trades"]
+            )
         )
 
         long_profit = 0.0
@@ -554,9 +688,6 @@ class PositionService:
                 )
         }
 
-        closed_profit_cache["time"] = now
-        closed_profit_cache["data"] = result
-
         return result
 
     # =========================================================
@@ -577,14 +708,21 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_total_profit_summary():
+    def get_total_profit_summary(snapshot=None):
+
+        if snapshot is None:
+            snapshot = PositionService.get_snapshot()
 
         current_profit = (
-            PositionService.get_profit_summary()
+            PositionService.get_profit_summary(
+                snapshot
+            )
         )
 
         closed_profit = (
-            PositionService.get_closed_profit_summary()
+            PositionService.get_closed_profit_summary(
+                snapshot
+            )
         )
 
         long_total = (
@@ -629,25 +767,50 @@ class PositionService:
         }
 
     @staticmethod
-    def record_equity():
+    def record_metrics():
 
         db = SessionLocal()
 
         try:
 
-            summary = PositionService.get_account_summary()
+            snapshot = PositionService.get_snapshot(
+                cache_seconds=0
+            )
 
-            floating = PositionService.get_floating_profit()
+            summary = (
+                PositionService.get_account_summary(
+                    snapshot
+                )
+            )
+
+            floating = (
+                PositionService.get_floating_profit(
+                    snapshot
+                )
+            )
+
+            profit = (
+                PositionService.get_total_profit_summary(
+                    snapshot
+                )
+            )
+
+            now = int(time.time())
 
             wallet = summary["total_balance"]
 
-            floating_profit = floating["total_float"]
+            floating_profit = (
+                floating["total_float"]
+            )
 
-            equity = wallet + floating_profit
+            equity = (
+                    wallet
+                    + floating_profit
+            )
 
-            record = EquityHistory(
+            equity_record = EquityHistory(
 
-                timestamp=int(time.time()),
+                timestamp=now,
 
                 equity=round(
                     equity,
@@ -665,15 +828,35 @@ class PositionService:
                 )
             )
 
-            db.add(record)
+            profit_record = ProfitHistory(
+
+                timestamp=now,
+
+                total_profit=round(
+                    profit["total_profit"],
+                    2
+                ),
+
+                long_profit=round(
+                    profit["long_total_profit"],
+                    2
+                ),
+
+                short_profit=round(
+                    profit["short_total_profit"],
+                    2
+                )
+            )
+
+            db.add(equity_record)
+            db.add(profit_record)
 
             db.commit()
 
             print(
-                f"[Equity] "
-                f"wallet={wallet:.2f} "
-                f"floating={floating_profit:.2f} "
-                f"equity={equity:.2f}"
+                f"[Metrics] "
+                f"equity={equity:.2f} "
+                f"profit={profit['total_profit']:.2f}"
             )
 
         except Exception as e:
@@ -681,7 +864,7 @@ class PositionService:
             db.rollback()
 
             print(
-                "record equity error:",
+                "record metrics error:",
                 e
             )
 
@@ -690,37 +873,83 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def get_balance_curve():
+    def collect_account_snapshot():
+
+        snapshot = PositionService.get_snapshot()
+
+        summary = (
+            PositionService.get_account_summary(
+                snapshot
+            )
+        )
+
+        floating = (
+            PositionService.get_floating_profit(
+                snapshot
+            )
+        )
+
+        total_profit = (
+            PositionService.get_total_profit_summary(
+                snapshot
+            )
+        )
+
+        return {
+
+            "summary": summary,
+
+            "floating": floating,
+
+            "profit": total_profit
+
+        }
+
+    @staticmethod
+    def get_balance_curve(period="1D"):
 
         db = SessionLocal()
 
         try:
 
-            records = (
-                db.query(EquityHistory)
-                .order_by(
-                    EquityHistory.timestamp.desc()
-                )
-                .limit(1440)
-                .all()
+            now = int(time.time())
+
+            start_time = (
+                    now -
+                    PositionService._period_seconds(period)
             )
 
-            records.reverse()
+            records = (
+
+                db.query(
+                    EquityHistory
+                )
+
+                .filter(
+                    EquityHistory.timestamp >= start_time
+                )
+
+                .order_by(
+                    EquityHistory.timestamp.asc()
+                )
+
+                .all()
+
+            )
+
+            step = PositionService._sampling_step(
+                period
+            )
+
+            records = records[::step]
 
             return [
 
                 {
-                    "time":
-                        record.timestamp,
-
-                    "balance":
-                        record.equity,
-
-                    "wallet":
-                        record.wallet,
-
-                    "profit":
-                        record.profit
+                    "time": record.timestamp,
+                    "balance": record.equity,
+                    "wallet": record.wallet,
+                    "profit": record.profit
                 }
 
                 for record in records
@@ -731,22 +960,47 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def get_profit_curve():
+    def get_profit_curve(
+            period="1D"
+    ):
 
         db = SessionLocal()
 
         try:
 
-            records = (
-                db.query(ProfitHistory)
-                .order_by(
-                    ProfitHistory.timestamp.desc()
-                )
-                .limit(1440)
-                .all()
+            now = int(time.time())
+
+            start_time = (
+                    now
+                    -
+                    PositionService._period_seconds(
+                        period
+                    )
             )
 
-            records.reverse()
+            records = (
+
+                db.query(
+                    ProfitHistory
+                )
+
+                .filter(
+                    ProfitHistory.timestamp >= start_time
+                )
+
+                .order_by(
+                    ProfitHistory.timestamp.asc()
+                )
+
+                .all()
+
+            )
+
+            step = PositionService._sampling_step(
+                period
+            )
+
+            records = records[::step]
 
             return [
 
@@ -772,60 +1026,42 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def record_profit():
+    def _sampling_step(period):
 
-        db = SessionLocal()
+        mapping = {
 
-        try:
+            "1D": 1,
 
-            profit = (
-                PositionService.get_total_profit_summary()
-            )
+            "7D": 5,
 
-            record = ProfitHistory(
+            "30D": 15,
 
-                timestamp=int(time.time()),
+            "90D": 60
 
-                total_profit=round(
-                    profit["total_profit"],
-                    2
-                ),
+        }
 
-                long_profit=round(
-                    profit["long_total_profit"],
-                    2
-                ),
+        return mapping.get(period, 1)
 
-                short_profit=round(
-                    profit["short_total_profit"],
-                    2
-                )
-            )
+    @staticmethod
+    def _period_seconds(period: str):
 
-            db.add(record)
+        mapping = {
 
-            db.commit()
+            "1D": 86400,
 
-            print(
-                f"[Profit] "
-                f"total={profit['total_profit']:.2f} "
-                f"long={profit['long_total_profit']:.2f} "
-                f"short={profit['short_total_profit']:.2f}"
-            )
+            "7D": 86400 * 7,
 
-        except Exception as e:
+            "30D": 86400 * 30,
 
-            db.rollback()
+            "90D": 86400 * 90
 
-            print(
-                "record profit error:",
-                e
-            )
+        }
 
-        finally:
+        return mapping.get(
+            period,
+            86400
+        )
 
-            db.close()
-            
     # =========================================================
     # 可开交易对
     # =========================================================

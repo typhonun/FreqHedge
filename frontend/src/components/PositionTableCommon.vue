@@ -59,6 +59,12 @@
     />
 
     <el-table-column
+        prop="tp_roi"
+        label="目标止盈%"
+        :formatter="formatPercent"
+    />
+
+    <el-table-column
         prop="total_profit_abs"
         label="收益USDT"
         :formatter="formatNumber"
@@ -75,6 +81,19 @@
         label="开仓時間"
         :formatter="formatDate"
     />
+
+    <el-table-column
+        prop="holding_minutes"
+        label="持仓时间"
+    >
+        <template #default="scope">
+
+            {{ formatDuration(
+                scope.row.holding_minutes
+            ) }}
+
+        </template>
+    </el-table-column>
 
     <el-table-column
     label="操作"
@@ -496,6 +515,33 @@ const goToChart = (row) => {
             strategy
         }
     })
+}
+
+const formatDuration = minutes => {
+
+    if (!minutes)
+        return "-"
+
+    const d =
+        Math.floor(
+            minutes / 1440
+        )
+
+    const h =
+        Math.floor(
+            (minutes % 1440) / 60
+        )
+
+    const m =
+        minutes % 60
+
+    if (d > 0)
+        return `${d}天 ${h}小时`
+
+    if (h > 0)
+        return `${h}小时 ${m}分`
+
+    return `${m}分`
 }
 
 watch(

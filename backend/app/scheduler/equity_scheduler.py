@@ -10,11 +10,7 @@ def record_history_job():
 
     try:
 
-        # 实时权益
-        PositionService.record_equity()
-
-        # 收益曲线
-        PositionService.record_profit()
+        PositionService.record_metrics()
 
     except Exception as e:
 
