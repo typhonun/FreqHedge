@@ -1,4 +1,5 @@
 import sys
+import traceback
 from pathlib import Path
 
 USER_DATA_DIR = Path(__file__).resolve().parents[1]
@@ -355,7 +356,7 @@ class DcaTpLong(IStrategy):
 
             'reset_needed': False,
 
-            'grid_anchor_price': 0,
+            'grid_anchor_price': 0.0,
 
             'grid_w': 0,
 
@@ -415,19 +416,19 @@ class DcaTpLong(IStrategy):
         self._set(
             trade,
             "grid_added_total_usdt",
-            0
+            0.0
         )
 
         self._set(
             trade,
             "grid_added_total_qty",
-            0
+            0.0
         )
 
         self._set(
             trade,
             "grid_reduced_total_usdt",
-            0
+            0.0
         )
 
         self._set(
@@ -449,10 +450,8 @@ class DcaTpLong(IStrategy):
     def _serial(self, v):
         if v is None:
             return None
-
         if isinstance(v, (pd.Timestamp, Timestamp, datetime)):
             return int(pd.Timestamp(v).timestamp())
-
         try:
             import numpy as np
             if isinstance(v, (np.floating, np.integer)):
@@ -461,15 +460,21 @@ class DcaTpLong(IStrategy):
                 return bool(v)
         except ImportError:
             pass
-
-        if isinstance(v, (int, float, bool)):
+        if isinstance(v, bool):
+            return bool(v)
+        if isinstance(v, (int, float)):
             return v
-
         if isinstance(v, str):
             s = v.strip()
             if s.lower() in ("", "null", "none", "nan", "na", "n/a"):
                 return None
-            return s
+            try:
+                f = float(s)
+                if f.is_integer():
+                    return int(f)
+                return f
+            except ValueError:
+                return s
         return str(v)
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
@@ -730,10 +735,13 @@ class DcaTpLong(IStrategy):
             return v
         return str(v)
 
-    def _get(self, trade: Trade, key: str, default: Any = None) -> Any:
+    def _get(self, trade, key, default=None):
         try:
             raw = trade.get_custom_data(key)
         except Exception:
+            logger.error(
+                f"_get 失败 key={key}\n{traceback.format_exc()}"
+            )
             raw = None
         val = self._clean_val(raw)
         return default if val is None else val
@@ -753,14 +761,9 @@ class DcaTpLong(IStrategy):
             return default
 
     def _get_int(self, trade, key, default=0):
+        value = self._get(trade, key, default)
 
-        value = self._get(
-            trade,
-            key,
-            default
-        )
-
-        logger.info(
+        logger.debug(
             f"_get_int "
             f"key={key} "
             f"value={value!r} "
@@ -771,22 +774,19 @@ class DcaTpLong(IStrategy):
             return default
 
         try:
-           return int(float(value))
-
-       except (TypeError, ValueError) as e:
-
+            f = float(value)
+            if pd.isna(f) or not (float('-inf') < f < float('inf')):
+                return default
+            return int(f)
+        except (TypeError, ValueError):
             logger.error(
                 f"_get_int转换失败 "
                 f"key={key} "
                 f"value={value!r} "
                 f"type={type(value).__name__} "
-               f"default={default} "
-               f"error={e}"
-           )
-           import traceback
-           logger.error(f"Traceback: {traceback.format_exc()}")
-
-           return default
+                f"default={default}"
+            )
+            return default
 
     def _cfg_int(self, cfg: dict, key: str, default: int) -> int:
         v = cfg.get(key, default)
@@ -810,24 +810,21 @@ class DcaTpLong(IStrategy):
             return default
 
     def _safe_int(self, value, default=0):
-        logger.info(
-            f"_safe_int value={value!r} "
-            f"type={type(value).__name__} "
-            f"default={default!r}"
-        )
-
         if value is None:
             return default
 
         try:
-            return int(value)
+            f = float(value)
+            if pd.isna(f) or not (float('-inf') < f < float('inf')):
+                return default
+            return int(f)
         except (TypeError, ValueError):
-            logger.error(
-                f"_safe_int转换失败 "
-                f"value={value!r} "
-                f"type={type(value).__name__} "
-                f"default={default!r}"
-            )
+            # logger.error(
+            #     f"_safe_int转换失败 "
+            #     f"value={value!r} "
+            #     f"type={type(value).__name__} "
+            #     f"default={default!r}"
+            # )
             return default
 
     def _index_candle_key(self, value) -> int | None:
@@ -872,16 +869,9 @@ class DcaTpLong(IStrategy):
             return default
 
     def _set(self, trade, key, value):
-
         value = self._serial(value)
+        old = self._get(trade, key, None)
 
-        old = self._get(
-            trade,
-            key,
-            None
-        )
-
-        # 数值变化过小不保存
         if isinstance(value, float) and isinstance(old, float):
             if abs(value - old) < 1e-8:
                 return
@@ -889,15 +879,29 @@ class DcaTpLong(IStrategy):
         if old == value:
             return
 
-        trade.set_custom_data(
-            key,
-            value
-        )
+        if key in ('grid_anchor_price', 'grid_upper', 'grid_lower'):
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                logger.error(f"_set 价格转换失败 key={key} value={value!r}")
+                return
+
+        try:
+            trade.set_custom_data(key, value)
+        except Exception:
+            logger.error(
+                f"_set 失败 key={key} value={value!r} type={type(value).__name__}\n"
+                f"{traceback.format_exc()}"
+            )
+            # 不再 raise，避免中断整个 grid_single
 
     def _collateral_total(self) -> float:
         try:
             return float(self.wallets.get_total('USDT'))
         except Exception:
+            # logger.error(
+            #     f"_collateral_total 失败\n{traceback.format_exc()}"
+            # )
             return 0.0
 
     def _qty_from_usdt(
@@ -1706,61 +1710,48 @@ class DcaTpLong(IStrategy):
 
     def grid_single(self, trade: Trade, last: dict, current_time: datetime, current_rate: float,
                     margin: float = None):
+
         cfg = self.get_runtime_config()
         grid_cfg = self._cfg(cfg, "grid", default={}) or {}
-       logger.info(f"[grid_single] Step 1: grid_cfg loaded")
-       if not bool(grid_cfg.get("enable", True)):
-           logger.info(f"[grid_single] Step 2: grid disabled, returning None")
-           return None
+        if not bool(grid_cfg.get("enable", True)):
+            return None
 
-       logger.info(f"[grid_single] Step 3: trying to convert current_rate to float")
-       try:
-           price = float(current_rate) if current_rate is not None else None
-       except Exception as e:
-           logger.error(f"[grid_single] Step 3 error: {e}")
-           price = None
+        try:
+            price = float(current_rate) if current_rate is not None else None
+        except Exception:
+            price = None
 
-       if price is None:
-           price = last.get('close', None)
-           logger.info(f"[grid_single] Step 4: price from last.close = {price}")
+        if price is None:
+            price = last.get('close', None)
 
-       if price is None:
-           logger.info(f"[grid_single] Step 5: price is None, returning None")
-           return None
+        if price is None:
+            return None
 
-       if getattr(current_time, 'tzinfo', None):
-           current_time = current_time.replace(tzinfo=None)
+        if getattr(current_time, 'tzinfo', None):
+            current_time = current_time.replace(tzinfo=None)
 
-       logger.info(f"[grid_single] Step 6: getting grid_anchor_price")
-       anchor = self._get_float(trade, 'grid_anchor_price', None)
-       logger.info(f"[grid_single] Step 7: anchor = {anchor}")
-       if anchor is None or anchor <= 0:
-           try:
-               anchor = float(trade.open_rate or 0.0)
-               logger.info(f"[grid_single] Step 8: anchor from trade.open_rate = {anchor}")
-           except Exception as e:
-               logger.error(f"[grid_single] Step 8 error: {e}")
-               anchor = None
-       if anchor is None or anchor <= 0:
-           logger.info(f"[grid_single] Step 9: anchor invalid, returning None")
-           return None
+        anchor = self._get_float(trade, 'grid_anchor_price', None)
+        if anchor is None or anchor <= 0:
+            try:
+                anchor = float(trade.open_rate or 0.0)
+            except Exception:
+                anchor = None
+        if anchor is None or anchor <= 0:
+            return None
 
-       # 网格阈值
-       logger.info(f"[grid_single] Step 10: getting grid thresholds")
-       grid_lower_pct = self._cfg_float(
-           grid_cfg,
-           "init_lower",
-           self._cfg_float(grid_cfg, "grid_lower", -2.0)
-       )
-       grid_upper_pct = self._cfg_float(
-           grid_cfg,
-           "init_upper",
-           self._cfg_float(grid_cfg, "grid_upper", 2.0)
-       )
-       logger.info(f"[grid_single] Step 11: grid_lower_pct={grid_lower_pct}, grid_upper_pct={grid_upper_pct}")
-       grid_lower = anchor * (1 + grid_lower_pct / 100.0)
-       grid_upper = anchor * (1 + grid_upper_pct / 100.0)
-       logger.info(f"[grid_single] Step 12: grid_lower={grid_lower}, grid_upper={grid_upper}")
+        # 网格阈值
+        grid_lower_pct = self._cfg_float(
+            grid_cfg,
+            "init_lower",
+            self._cfg_float(grid_cfg, "grid_lower", -2.0)
+        )
+        grid_upper_pct = self._cfg_float(
+            grid_cfg,
+            "init_upper",
+            self._cfg_float(grid_cfg, "grid_upper", 2.0)
+        )
+        grid_lower = anchor * (1 + grid_lower_pct / 100.0)
+        grid_upper = anchor * (1 + grid_upper_pct / 100.0)
 
         collateral = self._collateral_total()
         try:
@@ -1792,6 +1783,16 @@ class DcaTpLong(IStrategy):
         except Exception:
             lev = 1.0
         price_source = "market" if current_rate is not None else "candle_close"
+
+        # logger.info(
+        #     f"[{trade.pair}] grid_single 进入 "
+        #     f"anchor={anchor!r} "
+        #     f"grid_lower={grid_lower:.4f} "
+        #     f"grid_upper={grid_upper:.4f} "
+        #     f"price={price:.4f} "
+        #     f"w={w} max_w={max_w} "
+        #     f"last_grid_ts={last_grid_ts}"
+        # )
 
         if price <= grid_lower:
             if max_w > 0 and w >= max_w:
@@ -1908,51 +1909,52 @@ class DcaTpLong(IStrategy):
             return float(-sell_usdt), "grid_sell_20pct"
         return None
 
-    def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float,
-                              **kwargs) -> tuple[float, str] | None:
-       try:
-           return self._adjust_trade_position_impl(trade, current_time, current_rate, current_profit, **kwargs)
-       except Exception as e:
-           logger.error(f"[adjust_trade_position] Uncaught exception: {e}")
-           import traceback
-           logger.error(f"[adjust_trade_position] Traceback:\n{traceback.format_exc()}")
-           raise
+    def adjust_trade_position(self, trade, current_time, current_rate, current_profit, **kwargs):
+        try:
+            return self._adjust_trade_position_impl(
+                trade, current_time, current_rate, current_profit, **kwargs
+            )
+        except Exception:
+            # logger.error(
+            #     f"[{trade.pair}] adjust_trade_position 异常:\n"
+            #     f"{traceback.format_exc()}"
+            # )
+            return None
 
-    def _adjust_trade_position_impl(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float,
-                                    **kwargs) -> tuple[float, str] | None:
-       if trade.has_open_orders:
-           return None
+    def _adjust_trade_position_impl(self, trade, current_time, current_rate, current_profit, **kwargs):
+        if trade.has_open_orders:
+            return None
 
-       df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
-       if df.empty:
-           return None
-       last = df.iloc[-1]
+        df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
+        if df.empty:
+            return None
+        last = df.iloc[-1]
 
-       try:
-           margin = float(trade.stake_amount)
-       except Exception:
-           margin = 0.0
+        try:
+            margin = float(trade.stake_amount)
+        except Exception:
+            margin = 0.0
 
-       if current_time.tzinfo:
-           current_time = current_time.replace(tzinfo=None)
-       open_time = trade.open_date_utc
-       if getattr(open_time, 'tzinfo', None):
-           open_time = open_time.replace(tzinfo=None)
-       candle_ts = self._index_candle_key(df.index[-1])
-       if candle_ts is None:
-           return None
-       df_tf, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
-       if df_tf.empty:
-           return None
-       last30_ts = self._index_candle_key(df_tf.index[-1])
-       if last30_ts is None:
-           return None
-       if candle_ts != last30_ts:
-           return None
+        if current_time.tzinfo:
+            current_time = current_time.replace(tzinfo=None)
+        open_time = trade.open_date_utc
+        if getattr(open_time, 'tzinfo', None):
+            open_time = open_time.replace(tzinfo=None)
+        candle_ts = self._index_candle_key(df.index[-1])
+        if candle_ts is None:
+            return None
+        df_tf, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
+        if df_tf.empty:
+            return None
+        last30_ts = self._index_candle_key(df_tf.index[-1])
+        if last30_ts is None:
+            return None
+        if candle_ts != last30_ts:
+            return None
 
-       collateral = self._collateral_total()
-       if collateral <= 0:
-           return None
+        collateral = self._collateral_total()
+        if collateral <= 0:
+            return None
 
         # 1) 趋势加仓
         res = self.trend_add(trade, last, margin, collateral, current_time, current_profit)
