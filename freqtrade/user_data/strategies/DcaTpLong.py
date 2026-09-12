@@ -669,20 +669,6 @@ class DcaTpLong(IStrategy):
             "enter_tag"
         ] = "RSI_BB_MACD"
 
-        logger.info(f"entry_cfg={entry_cfg}")
-        logger.info(
-            f"conds={len(conds)}, "
-            f"rsi={rsi_enable}, "
-            f"bb={bb_enable}, "
-            f"macd={macd_enable}"
-        )
-        logger.info(
-            f"{metadata['pair']} "
-            f"RSI min={dataframe['rsi'].min()}, "
-            f"BB触发={(dataframe['close'] < dataframe['bb_lowerband']).sum()}, "
-            f"RSI触发={(dataframe['rsi'] < rsi_value).sum()}, "
-            f"MACD触发={(dataframe['macd_tf'] > dataframe['macdsig_tf']).sum()}"
-        )
         return dataframe
 
     def confirm_trade_entry(

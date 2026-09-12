@@ -132,7 +132,7 @@ class FreqtradeClient:
 
         return cls.post(
             url,
-            "/api/v1/startentry"
+            "/api/v1/reload_config"
         )
 
     # =========================
@@ -217,18 +217,8 @@ class FreqtradeClient:
     # =========================
 
     @classmethod
-    def force_enter(
-            cls,
-            side: str,
-            pair: str,
-            stakeamount: float
-    ):
-
-        base_url = (
-            LONG_URL
-            if side == "long"
-            else SHORT_URL
-        )
+    def force_enter(cls, side, pair, stakeamount):
+        base_url = LONG_URL if side == "long" else SHORT_URL
 
         payload = {
             "pair": pair,

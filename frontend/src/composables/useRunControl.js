@@ -75,11 +75,19 @@ export function useRunControl() {
         } catch {}
     }
 
+    const stopEntryLoading = ref(false)
+
     const updateStopEntry = async () => {
+
+        if (stopEntryLoading.value) {
+            return
+        }
+
+        stopEntryLoading.value = true
 
         try {
 
-            await post(
+            const { data } = await post(
                 "/control/stopentry",
                 {
                     long: stopLongEntry.value,
@@ -87,19 +95,29 @@ export function useRunControl() {
                 }
             )
 
-            await loadStopEntryStatus()
+            if (!data.success) {
 
-            ElMessage.success(
-                "状态已更新"
-            )
+                ElMessage.error(
+                    data.error || "更新失败"
+                )
+
+                await loadStopEntryStatus()
+
+                return
+            }
+
+            stopLongEntry.value = data.long
+            stopShortEntry.value = data.short
 
         } catch (e) {
 
+            ElMessage.error("更新失败")
+
             await loadStopEntryStatus()
 
-            ElMessage.error(
-                "更新失败"
-            )
+        } finally {
+
+            stopEntryLoading.value = false
         }
     }
 
@@ -236,6 +254,27 @@ export function useRunControl() {
                 "请选择交易对"
             )
 
+            return
+        }
+
+        // 判断是否已停止加仓
+        if (
+            forceSide.value === "long"
+            && stopLongEntry.value
+        ) {
+            ElMessage.warning(
+                "多头加仓已停止，请先恢复加仓后再开仓"
+            )
+            return
+        }
+
+        if (
+            forceSide.value === "short"
+            && stopShortEntry.value
+        ) {
+            ElMessage.warning(
+                "空头加仓已停止，请先恢复加仓后再开仓"
+            )
             return
         }
 

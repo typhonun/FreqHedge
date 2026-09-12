@@ -3,6 +3,7 @@ import time
 from app.core import runtime
 from app.services.position_service import PositionService
 from app.services.freqtrade_service import FreqtradeService
+from app.services.position_service import snapshot_cache
 
 
 class RiskService:
@@ -86,23 +87,43 @@ class RiskService:
             2
         )
 
+        print(
+            f"[Risk] calc "
+            f"current={current_profit}, "
+            f"start={start_profit}, "
+            f"float={floating_profit}, "
+            f"round={round_profit if 'round_profit' in dir() else None}"
+        )
+
     @classmethod
     def force_exit_all(cls):
-
+        snapshot_cache["time"] = 0
         positions = PositionService.get_all_positions()
-
         for pos in positions:
+            for attempt in range(3):
+                try:
+                    PositionService.force_exit(pos["trade_id"], pos["side"])
+                    break
+                except Exception as e:
+                    print(
+                        f"force_exit 失败 "
+                        f"trade_id={pos.get('trade_id')} "
+                        f"pair={pos.get('pair')} "
+                        f"attempt={attempt + 1} "
+                        f"error={e}"
+                    )
+                    time.sleep(1)
 
-            try:
-
-                PositionService.force_exit(
-                    pos["trade_id"],
-                    pos["side"]
-                )
-
-            except Exception as e:
-
-                print(e)
+    @classmethod
+    def wait_positions_closed(cls, timeout=60):
+        start = time.time()
+        while time.time() - start < timeout:
+            snapshot_cache["time"] = 0  # 强制刷新
+            positions = PositionService.get_all_positions()
+            if len(positions) == 0:
+                return True
+            time.sleep(2)
+        return False
 
     @classmethod
     def reset_round(cls):
@@ -116,85 +137,57 @@ class RiskService:
     @classmethod
     def check_risk(cls):
 
+        # 冷却：止盈/止损触发后 60 秒内不再检查
+        last_tp = runtime.ROUND_INFO.get("last_tp_time", 0)
+        if time.time() - last_tp < 60:
+            return
+
         cls.calc_round_profit()
 
         risk = runtime.GLOBAL_RISK
-
         profit = runtime.ROUND_INFO["round_profit"]
 
-        # TP
+        print(
+            f"[Risk] check "
+            f"profit={profit}, "
+            f"tp_enabled={risk['global_tp_enabled']}, "
+            f"tp_amount={risk['global_tp_amount']}, "
+            f"last_tp={runtime.ROUND_INFO.get('last_tp_time')}"
+        )
 
-        if (
-                risk["global_tp_enabled"]
-                and
-                profit >= risk["global_tp_amount"]
-        ):
-            print(
-                f"触发全局止盈 "
-                f"{profit:.2f} USDT"
-            )
+        if risk["global_tp_enabled"] and profit >= risk["global_tp_amount"]:
+            print(f"触发全局止盈 {profit:.2f} USDT")
+            runtime.ROUND_INFO["last_tp_time"] = time.time()
 
             cls.force_exit_all()
-
-            while True:
-
-                positions = \
-                    PositionService.get_all_positions()
-
-                if len(positions) == 0:
-                    break
-
-                time.sleep(2)
-
+            cls.wait_positions_closed(timeout=60)
             cls.reset_round()
-
             return
 
-        # SL
-
-        if (
-                risk["global_sl_enabled"]
-                and
-                profit <= -risk["global_sl_amount"]
-        ):
-            print(
-                f"触发全局止损 {profit:.2f} USDT"
-            )
+        if risk["global_sl_enabled"] and profit <= -risk["global_sl_amount"]:
+            print(f"触发全局止损 {profit:.2f} USDT")
+            runtime.ROUND_INFO["last_tp_time"] = time.time()
 
             cls.force_exit_all()
-
-            while True:
-
-                positions = \
-                    PositionService.get_all_positions()
-
-                if len(positions) == 0:
-                    break
-
-                time.sleep(2)
-
+            cls.wait_positions_closed(timeout=60)
             cls.reset_round()
+            return
 
     @classmethod
     def monitor(cls):
-
-        print(
-            "RiskService启动"
-        )
-
+        print("RiskService启动")
         cls.init_round()
-
         while True:
-
             try:
-
-                cls.check_risk()
-
-            except Exception as e:
-
+                risk = runtime.GLOBAL_RISK
                 print(
-                    "风险监控错误:",
-                    e
+                    f"[Risk] profit={runtime.ROUND_INFO.get('round_profit')}, "
+                    f"tp={risk.get('global_tp_enabled')}/{risk.get('global_tp_amount')}, "
+                    f"sl={risk.get('global_sl_enabled')}/{risk.get('global_sl_amount')}"
                 )
-
-            time.sleep(30)
+                cls.check_risk()
+            except Exception as e:
+                import traceback
+                print("风险监控错误:", e)
+                print(traceback.format_exc())
+            time.sleep(5)

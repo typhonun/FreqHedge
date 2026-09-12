@@ -181,29 +181,47 @@ class FreqtradeService:
     @classmethod
     def stop_entry(cls, data: dict):
 
-        if data.get("long"):
-            FreqtradeClient.stop_entry(LONG_URL)
-        else:
-            FreqtradeClient.start_entry(LONG_URL)
+        try:
 
-            state = FreqtradeClient.get_bot_state(LONG_URL)
+            # LONG
+            if data.get("long"):
 
-            if state == "PAUSED":
-                FreqtradeClient.start_bot(LONG_URL)
+                FreqtradeClient.stop_entry(LONG_URL)
 
-        if data.get("short"):
-            FreqtradeClient.stop_entry(SHORT_URL)
-        else:
-            FreqtradeClient.start_entry(SHORT_URL)
+                runtime.STOP_ENTRY["long"] = True
 
-            state = FreqtradeClient.get_bot_state(SHORT_URL)
+            else:
 
-            if state == "PAUSED":
-                FreqtradeClient.start_bot(SHORT_URL)
+                FreqtradeClient.start_entry(LONG_URL)
 
-        return {
-            "success": True
-        }
+                runtime.STOP_ENTRY["long"] = False
+
+            # SHORT
+            if data.get("short"):
+
+                FreqtradeClient.stop_entry(SHORT_URL)
+
+                runtime.STOP_ENTRY["short"] = True
+
+            else:
+
+                FreqtradeClient.start_entry(SHORT_URL)
+
+                runtime.STOP_ENTRY["short"] = False
+
+            return {
+                "success": True,
+                "long": runtime.STOP_ENTRY["long"],
+                "short": runtime.STOP_ENTRY["short"]
+            }
+
+        except Exception as e:
+
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
 
     @classmethod
     def reload_service(cls):
