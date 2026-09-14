@@ -162,6 +162,75 @@
         <el-card class="section-card">
             <template #header>
                 <div class="card-head">
+                    <span class="card-head__title">ROI止盈规则</span>
+                    <span class="card-head__meta">
+                        <el-text
+                            type="info"
+                            size="small">
+                            达到目标收益后分批止盈
+                        </el-text>
+                        <el-button
+                            size="small"
+                            type="success"
+                            plain
+                            @click="addRoi">
+                            新增规则
+                        </el-button>
+                    </span>
+                </div>
+            </template>
+
+            <el-alert
+                class="section-alert"
+                type="success"
+                :closable="false"
+                show-icon>
+                持仓达到指定时间后，收益率达到目标值触发 TP
+            </el-alert>
+
+            <div class="roi-list">
+
+                <div
+                    v-for="(roi,index) in config.tp.roi_levels || []"
+                    :key="index"
+                    class="roi-row">
+
+                    <span class="roi-index">
+                        {{ index + 1 }}
+                    </span>
+
+                    <el-input-number
+                        v-model="roi.minutes"
+                        class="roi-input"
+                        controls-position="right"
+                        :min="0"
+                        size="small"
+                        placeholder="分钟"/>
+
+                    <el-input-number
+                        v-model="roi.roi"
+                        class="roi-input"
+                        controls-position="right"
+                        size="small"
+                        placeholder="收益%"/>
+
+                    <el-button
+                        class="roi-delete"
+                        type="danger"
+                        link
+                        size="small"
+                        @click="removeRoi(index)">
+                        ✕
+                    </el-button>
+
+                </div>
+
+            </div>
+        </el-card>
+
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
                     <span class="card-head__title">开仓信号</span>
                     <span class="card-head__meta">
                         <el-text
@@ -236,75 +305,6 @@
             </div>
         </el-card>
 
-        <el-card class="section-card">
-            <template #header>
-                <div class="card-head">
-                    <span class="card-head__title">ROI止盈规则</span>
-                    <span class="card-head__meta">
-                        <el-text
-                            type="info"
-                            size="small">
-                            达到目标收益后分批止盈
-                        </el-text>
-                        <el-button
-                            size="small"
-                            type="success"
-                            plain
-                            @click="addRoi">
-                            新增规则
-                        </el-button>
-                    </span>
-                </div>
-            </template>
-
-            <el-alert
-                class="section-alert"
-                type="success"
-                :closable="false"
-                show-icon>
-                持仓达到指定时间后，收益率达到目标值触发 TP
-            </el-alert>
-
-            <div class="roi-list">
-
-                <div
-                    v-for="(roi,index) in config.tp.roi_levels || []"
-                    :key="index"
-                    class="roi-row">
-
-                    <span class="roi-index">
-                        {{ index + 1 }}
-                    </span>
-
-                    <el-input-number
-                        v-model="roi.minutes"
-                        class="roi-input"
-                        controls-position="right"
-                        :min="0"
-                        size="small"
-                        placeholder="分钟"/>
-
-                    <el-input-number
-                        v-model="roi.roi"
-                        class="roi-input"
-                        controls-position="right"
-                        size="small"
-                        placeholder="收益%"/>
-
-                    <el-button
-                        class="roi-delete"
-                        type="danger"
-                        link
-                        size="small"
-                        @click="removeRoi(index)">
-                        ✕
-                    </el-button>
-
-                </div>
-
-            </div>
-        </el-card>
-
         <el-row
             class="panel-grid"
             :gutter="12">
@@ -334,16 +334,21 @@
                         class="compact-form"
                         label-width="128px"
                         size="small">
+                        <el-form-item label="自动补仓">
+                            <el-switch
+                                v-model="config.tp.rebuy_enable"
+                                @change="onRebuyChange"
+                            />
+                        </el-form-item>
                         <el-form-item label="减仓比例%">
                             <el-input-number
                                 v-model="config.tp.reduce_percent"
                                 class="compact-input-number"
                                 controls-position="right"
                                 :min="0"
-                                :max="100" />
-                        </el-form-item>
-                        <el-form-item label="自动补仓">
-                            <el-switch v-model="config.tp.rebuy_enable" />
+                                :max="100"
+                                :disabled="!config.tp.rebuy_enable"
+                            />
                         </el-form-item>
                         <el-form-item label="目标仓位占总资金%">
                             <el-input-number
@@ -833,13 +838,13 @@
                         size="small"
                     >
                         <el-row :gutter="12">
-                            <el-col :span="12">
+                            <el-col :span="24">
                                 <el-form-item label="启用趋势加仓">
                                     <el-switch v-model="config.trend_add.enable" />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="24">
                                 <el-form-item label="最大次数">
                                     <el-input-number
                                         v-model="config.trend_add.max_count"
@@ -848,7 +853,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="24">
                                 <el-form-item label="加仓比例%">
                                     <el-input-number
                                         v-model="config.trend_add.amount_percent"
@@ -858,7 +863,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
                                 <el-form-item label="条件模式">
                                     <el-select
                                         v-model="config.trend_add.condition"
@@ -991,7 +996,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
                                 <el-form-item label="冷却时间">
                                     <el-input-number
                                         v-model="config.grid.cooldown_minutes"
@@ -1002,7 +1007,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
                                 <el-form-item label="网格下沿%">
                                     <el-input-number
                                         v-model="config.grid.grid_lower"
@@ -1012,7 +1017,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
                                 <el-form-item label="网格上沿%">
                                     <el-input-number
                                         v-model="config.grid.grid_upper"
@@ -1022,7 +1027,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
                                 <el-form-item label="加仓占总资金%">
                                     <el-input-number
                                         v-model="config.grid.buy_percent"
@@ -1034,7 +1039,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
 
                                 <el-form-item label="订单规模">
                                     <el-input-number
@@ -1047,7 +1052,7 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="12">
+                            <el-col :span="18">
                                 <el-form-item label="减仓占总资金%">
                                     <el-input-number
                                         v-model="config.grid.sell_percent"
@@ -1293,6 +1298,24 @@ const syncKdjReduce = () => {
         config.trend_add.kdj_reduce.enable = false
     }
 }
+
+const onRebuyChange = (val) => {
+
+    if (!props.config?.tp) {
+        return
+    }
+
+    if (val) {
+        // 开启自动补仓，恢复默认减仓比例
+        if (!props.config.tp.reduce_percent || props.config.tp.reduce_percent === 100) {
+            props.config.tp.reduce_percent = 30
+        }
+    } else {
+        // 关闭自动补仓，强制 100%
+        props.config.tp.reduce_percent = 100
+    }
+}
+
 </script>
 
 <style scoped>
@@ -1526,4 +1549,5 @@ const syncKdjReduce = () => {
         grid-template-columns:28px 1fr;
     }
 }
+
 </style>

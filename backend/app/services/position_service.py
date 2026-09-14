@@ -590,51 +590,44 @@ class PositionService:
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
-        long_positions = (
-            PositionService._extract_trades(
-                snapshot["long_status"]
-            )
-        )
+        long_positions = PositionService._extract_trades(snapshot["long_status"])
+        short_positions = PositionService._extract_trades(snapshot["short_status"])
 
-        short_positions = (
-            PositionService._extract_trades(
-                snapshot["short_status"]
-            )
-        )
+        long_float = 0.0
+        short_float = 0.0
 
-        long_float = sum(
-            float(
-                trade.get(
-                    "profit_abs",
-                    0
-                ) or 0
-            )
-            for trade in long_positions
-        )
+        for trade in long_positions:
+            profit = trade.get("profit_abs")
 
-        short_float = sum(
-            float(
-                trade.get(
-                    "profit_abs",
-                    0
-                ) or 0
-            )
-            for trade in short_positions
-        )
+            if profit is None:
+                try:
+                    open_rate = float(trade.get("open_rate", 0) or 0)
+                    current_rate = float(trade.get("current_rate", 0) or 0)
+                    amount = abs(float(trade.get("amount", 0) or 0))
+                    profit = (current_rate - open_rate) * amount
+                except Exception:
+                    profit = 0.0
+
+            long_float += float(profit or 0)
+
+        for trade in short_positions:
+            profit = trade.get("profit_abs")
+
+            if profit is None:
+                try:
+                    open_rate = float(trade.get("open_rate", 0) or 0)
+                    current_rate = float(trade.get("current_rate", 0) or 0)
+                    amount = abs(float(trade.get("amount", 0) or 0))
+                    profit = (open_rate - current_rate) * amount
+                except Exception:
+                    profit = 0.0
+
+            short_float += float(profit or 0)
 
         return {
-
-            "long_float":
-                round(long_float, 2),
-
-            "short_float":
-                round(short_float, 2),
-
-            "total_float":
-                round(
-                    long_float + short_float,
-                    2
-                )
+            "long_float": round(long_float, 2),
+            "short_float": round(short_float, 2),
+            "total_float": round(long_float + short_float, 2)
         }
 
     # =========================================================

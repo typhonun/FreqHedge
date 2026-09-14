@@ -89,10 +89,10 @@ class RiskService:
 
         print(
             f"[Risk] calc "
-            f"current={current_profit}, "
-            f"start={start_profit}, "
-            f"float={floating_profit}, "
-            f"round={round_profit if 'round_profit' in dir() else None}"
+            f"当前已平仓累计利润={current_profit}, "
+            f"本轮开始时已平仓累计利润={start_profit}, "
+            f"当前浮动利润={floating_profit}, "
+            f"本轮新增利润={round_profit if 'round_profit' in dir() else None}"
         )
 
     @classmethod

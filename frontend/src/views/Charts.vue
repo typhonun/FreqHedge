@@ -537,6 +537,28 @@ const loadChart = async () => {
 
                 break
 
+                case "stop_loss":
+
+                    config={
+
+                        position: "aboveBar",
+
+                        color: "#f44336",
+
+                        shape: "arrowDown",
+
+                        text: `止损平仓 ${e.price}`,
+
+                        title:
+                            `价格:${e.price}
+                            数量:${e.amount}`,
+
+                        size: 2
+
+                    }
+
+                break
+
             }
 
             let markerTime;

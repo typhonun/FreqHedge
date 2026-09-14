@@ -2,6 +2,8 @@ import sys
 import traceback
 from pathlib import Path
 
+import numpy as np
+
 USER_DATA_DIR = Path(__file__).resolve().parents[1]
 if str(USER_DATA_DIR) not in sys.path:
     sys.path.insert(0, str(USER_DATA_DIR))
@@ -26,12 +28,17 @@ logger = logging.getLogger(__name__)
 
 
 class DcaTpLong(IStrategy):
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stop_loss_logged = set()
+
     timeframe = '30m'
     can_short = False
-    use_exit_signal = False
+    use_exit_signal = True
     trailing_stop = False
     position_adjustment_enable = True
-    use_custom_stoploss = True
+    use_custom_stoploss = False
 
     def get_runtime_config(self):
 
@@ -181,22 +188,6 @@ class DcaTpLong(IStrategy):
             current_time,
             **kwargs
     ):
-
-        # logger.info(
-        #     f"""
-        # ========== ORDER FILLED ==========
-        # pair={pair}
-        # trade_id={trade.id}
-        # side={getattr(order, 'side', None)}
-        # ft_order_side={getattr(order, 'ft_order_side', None)}
-        # ft_order_reason={getattr(order, 'ft_order_reason', None)}
-        # ft_order_tag={getattr(order, 'ft_order_tag', None)}
-        # amount={getattr(order, 'amount', None)}
-        # average={getattr(order, 'average', None)}
-        # status={getattr(order, 'status', None)}
-        # ==================================
-        # """
-        # )
 
         entry_price = float(
             order.average
@@ -594,95 +585,103 @@ class DcaTpLong(IStrategy):
 
         return dataframe
 
-    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    def populate_entry_trend(self, dataframe, metadata):
 
         cfg = self.get_runtime_config()
-        entry_cfg = self._cfg(
-            cfg,
-            "entry",
-            default={}
-        ) or {}
+        entry_cfg = self._cfg(cfg, "entry", default={}) or {}
 
-        rsi_cfg = self._cfg(
-            entry_cfg,
-            "rsi",
-            default={}
-        ) or {}
-
-        bb_cfg = self._cfg(
-            entry_cfg,
-            "bb",
-            default={}
-        ) or {}
-
-        macd_cfg = self._cfg(
-            entry_cfg,
-            "macd",
-            default={}
-        ) or {}
+        rsi_cfg = self._cfg(entry_cfg, "rsi", default={}) or {}
+        bb_cfg = self._cfg(entry_cfg, "bb", default={}) or {}
+        macd_cfg = self._cfg(entry_cfg, "macd", default={}) or {}
 
         rsi_enable = bool(rsi_cfg.get("enable", True))
         bb_enable = bool(bb_cfg.get("enable", True))
         macd_enable = bool(macd_cfg.get("enable", True))
         rsi_value = float(rsi_cfg.get("value", 35) or 35)
 
-        conds = []
+        cond_map = {}
 
         if bb_enable:
-            conds.append(
-                dataframe['close']
-                <
-                dataframe['bb_lowerband']
-            )
+            cond_map["BB"] = dataframe['close'] < dataframe['bb_lowerband']
 
         if rsi_enable:
-            conds.append(
-                dataframe['rsi']
-                <
-                rsi_value
-            )
+            cond_map["RSI"] = dataframe['rsi'] < rsi_value
 
         if macd_enable:
-            conds.append(
-                dataframe['macd_tf']
-                >
-                dataframe['macdsig_tf']
-            )
-        if conds:
+            cond_map["MACD"] = dataframe['macd_tf'] > dataframe['macdsig_tf']
 
-            long_cond = conds[0]
-
-            for cond in conds[1:]:
-                long_cond &= cond
-
+        if cond_map:
+            long_cond = None
+            for cond in cond_map.values():
+                long_cond = cond if long_cond is None else (long_cond & cond)
         else:
+            long_cond = pd.Series(False, index=dataframe.index)
 
-            long_cond = pd.Series(
-                False,
-                index=dataframe.index
-            )
+        names = list(cond_map.keys())
+        tag_matrix = np.column_stack([
+            cond.values.astype(bool)
+            for cond in cond_map.values()
+        ]) if cond_map else np.zeros((len(dataframe), 0), dtype=bool)
 
-        # 这里必须先赋值
+        enter_tags = [
+            "_".join([names[i] for i, v in enumerate(row) if v]) or "NONE"
+            for row in tag_matrix
+        ]
+        enter_tags = pd.Series(enter_tags, index=dataframe.index)
+
         dataframe["enter_long"] = long_cond.astype(int)
-        dataframe.loc[
-            long_cond,
-            "enter_tag"
-        ] = "RSI_BB_MACD"
+        dataframe.loc[long_cond, "enter_tag"] = enter_tags[long_cond]
 
         return dataframe
 
-    def confirm_trade_entry(
-            self,
-            pair,
-            order_type,
-            amount,
-            rate,
-            time_in_force,
-            current_time,
-            entry_tag,
-            side,
-            **kwargs
-    ):
+    def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
+                            current_time, entry_tag, side, **kwargs):
+
+        try:
+            lev = float(self.leverage(pair) or 1.0)
+        except Exception:
+            lev = 1.0
+
+        try:
+            notional = float(amount) * float(rate)
+        except Exception:
+            notional = 0.0
+
+        try:
+            stake_amount = notional / lev
+        except Exception:
+            stake_amount = 0.0
+
+        # 取当前 dataframe 的最后一根 K 线
+        rsi_value = None
+        macd_value = None
+        macdsig_value = None
+        bb_lower_value = None
+        close_value = None
+
+        try:
+            df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                rsi_value = float(last.get("rsi")) if last.get("rsi") is not None else None
+                macd_value = float(last.get("macd_tf")) if last.get("macd_tf") is not None else None
+                macdsig_value = float(last.get("macdsig_tf")) if last.get("macdsig_tf") is not None else None
+                bb_lower_value = float(last.get("bb_lowerband")) if last.get("bb_lowerband") is not None else None
+                close_value = float(last.get("close")) if last.get("close") is not None else None
+        except Exception as e:
+            logger.warning(f"[{pair}] confirm_trade_entry 读取指标失败: {e}")
+
+        logger.info(
+            f"[{pair}] {GREEN} 开仓信号触发 {RESET}"
+            f"entry_tag={entry_tag} "
+            f"当前价={rate:.4f} "
+            f"保证金={stake_amount:.4f} USDT "
+            f"RSI={rsi_value} "
+            # f"MACD={macd_value} "
+            # f"MACD_SIG={macdsig_value} "
+            # f"BB_LOWER={bb_lower_value} "
+            # f"CLOSE={close_value}"
+        )
 
         self._record_chart_marker(
             event_type="signal",
@@ -690,7 +689,7 @@ class DcaTpLong(IStrategy):
             trade_id=0,
             side="long",
             price=rate,
-            amount=amount,
+            amount=stake_amount,
             current_time=current_time,
             message=f"入场信号 {entry_tag}"
         )
@@ -805,12 +804,6 @@ class DcaTpLong(IStrategy):
                 return default
             return int(f)
         except (TypeError, ValueError):
-            # logger.error(
-            #     f"_safe_int转换失败 "
-            #     f"value={value!r} "
-            #     f"type={type(value).__name__} "
-            #     f"default={default!r}"
-            # )
             return default
 
     def _index_candle_key(self, value) -> int | None:
@@ -879,15 +872,11 @@ class DcaTpLong(IStrategy):
                 f"_set 失败 key={key} value={value!r} type={type(value).__name__}\n"
                 f"{traceback.format_exc()}"
             )
-            # 不再 raise，避免中断整个 grid_single
 
     def _collateral_total(self) -> float:
         try:
             return float(self.wallets.get_total('USDT'))
         except Exception:
-            # logger.error(
-            #     f"_collateral_total 失败\n{traceback.format_exc()}"
-            # )
             return 0.0
 
     def _qty_from_usdt(
@@ -1658,7 +1647,7 @@ class DcaTpLong(IStrategy):
                 f"DCA次数={u}, "
                 f"{tp_reason}, "
                 f"当前收益={account_profit * 100:.2f}%, "
-                f"{YELLOW}保证金={margin:.2f} USDT, "
+                f"{YELLOW}保证金={margin:.2f} {RESET} USDT, "
                 f"当前价={last.get('close'):.4f}, "
                 f"减仓={sell_usdt_capped:.4f} USDT"
             )
@@ -1666,16 +1655,22 @@ class DcaTpLong(IStrategy):
             return float(-sell_usdt_capped), "tp_afterDCA_sell_keep_target"
 
         # -- 浮盈 TP 减仓 --
-        try:
-            reduce_percent = float(
-                tp_cfg.get(
-                    "reduce_percent",
-                    30
-                )
-            )
+        rebuy_enable = bool(tp_cfg.get("rebuy_enable", True))
 
-        except Exception:
-            reduce_percent = 30
+        if rebuy_enable:
+            try:
+                reduce_percent = float(
+                    tp_cfg.get(
+                        "reduce_percent",
+                        30
+                    )
+                )
+            except Exception:
+                reduce_percent = 30
+        else:
+            # 不补仓时，一次性全部平掉
+            reduce_percent = 100.0
+
         sell_amt = -(reduce_percent / 100.0) * margin  # 浮盈止盈减仓数量
         self._set(trade, 'dca_done', False)
         self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
@@ -1769,16 +1764,6 @@ class DcaTpLong(IStrategy):
         except Exception:
             lev = 1.0
         price_source = "market" if current_rate is not None else "candle_close"
-
-        # logger.info(
-        #     f"[{trade.pair}] grid_single 进入 "
-        #     f"anchor={anchor!r} "
-        #     f"grid_lower={grid_lower:.4f} "
-        #     f"grid_upper={grid_upper:.4f} "
-        #     f"price={price:.4f} "
-        #     f"w={w} max_w={max_w} "
-        #     f"last_grid_ts={last_grid_ts}"
-        # )
 
         if price <= grid_lower:
             if max_w > 0 and w >= max_w:
@@ -1901,10 +1886,6 @@ class DcaTpLong(IStrategy):
                 trade, current_time, current_rate, current_profit, **kwargs
             )
         except Exception:
-            # logger.error(
-            #     f"[{trade.pair}] adjust_trade_position 异常:\n"
-            #     f"{traceback.format_exc()}"
-            # )
             return None
 
     def _adjust_trade_position_impl(self, trade, current_time, current_rate, current_profit, **kwargs):
@@ -1968,20 +1949,40 @@ class DcaTpLong(IStrategy):
             return res
         return None
 
-    def custom_stoploss(self, *args, **kwargs) -> float | None:
-        trade = kwargs.get("trade")
-        if trade is None and len(args) > 0:
-            trade = args[0]
-        if trade is None:
-            return None
-
+    def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
         cfg = self.get_runtime_config()
         sl_cfg = self._cfg(cfg, "sl", default={}) or {}
+
         if not bool(sl_cfg.get("enable", True)):
-            return -0.99
+            return None
 
         try:
-            stoploss = float(sl_cfg.get("stoploss", -9) or -9)
+            stoploss_roi = float(sl_cfg.get("stoploss", -50) or -50) / 100.0
         except Exception:
-            stoploss = -9.0
-        return stoploss / 100.0
+            stoploss_roi = -0.5
+
+        if current_profit <= stoploss_roi:
+            if trade.id not in self._stop_loss_logged:
+                self._stop_loss_logged.add(trade.id)
+                logger.info(
+                    f"[{pair}] {RED}触发ROI止损{RESET} "
+                    f"收益率={current_profit * 100:.2f}% "
+                    f"持仓价={trade.open_rate:.4f} "
+                    f"开仓价={current_rate:.4f}"
+                )
+                self._record_chart_marker(
+                    event_type="stop_loss",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="long",
+                    price=current_rate,
+                    amount=abs(float(trade.amount or 0)),
+                    current_time=current_time,
+                    message="ROI止损"
+                )
+            return "stop_loss"
+
+        return None
+
+    def custom_stoploss(self, *args, **kwargs) -> float | None:
+        return None
