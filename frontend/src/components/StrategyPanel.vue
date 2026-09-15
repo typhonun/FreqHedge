@@ -79,7 +79,7 @@
 
                     <span v-else class="empty-placeholder">
                     </span>
-                
+
                 </el-descriptions-item>
 
                 <el-descriptions-item
@@ -157,414 +157,6 @@
                     </div>
                 </div>
             </el-alert>
-        </el-card>
-
-        <el-card class="section-card">
-            <template #header>
-                <div class="card-head">
-                    <span class="card-head__title">ROI止盈规则</span>
-                    <span class="card-head__meta">
-                        <el-text
-                            type="info"
-                            size="small">
-                            达到目标收益后分批止盈
-                        </el-text>
-                        <el-button
-                            size="small"
-                            type="success"
-                            plain
-                            @click="addRoi">
-                            新增规则
-                        </el-button>
-                    </span>
-                </div>
-            </template>
-
-            <el-alert
-                class="section-alert"
-                type="success"
-                :closable="false"
-                show-icon>
-                持仓达到指定时间后，收益率达到目标值触发 TP
-            </el-alert>
-
-            <div class="roi-list">
-
-                <div
-                    v-for="(roi,index) in config.tp.roi_levels || []"
-                    :key="index"
-                    class="roi-row">
-
-                    <span class="roi-index">
-                        {{ index + 1 }}
-                    </span>
-
-                    <el-input-number
-                        v-model="roi.minutes"
-                        class="roi-input"
-                        controls-position="right"
-                        :min="0"
-                        size="small"
-                        placeholder="分钟"/>
-
-                    <el-input-number
-                        v-model="roi.roi"
-                        class="roi-input"
-                        controls-position="right"
-                        size="small"
-                        placeholder="收益%"/>
-
-                    <el-button
-                        class="roi-delete"
-                        type="danger"
-                        link
-                        size="small"
-                        @click="removeRoi(index)">
-                        ✕
-                    </el-button>
-
-                </div>
-
-            </div>
-        </el-card>
-
-        <el-card class="section-card">
-            <template #header>
-                <div class="card-head">
-                    <span class="card-head__title">开仓信号</span>
-                    <span class="card-head__meta">
-                        <el-text
-                            type="info"
-                            size="small">
-                            主开仓以 BB + RSI 为准
-                        </el-text>
-                    </span>
-                </div>
-            </template>
-
-            <div class="entry-grid">
-                <section class="signal-card">
-                    <div class="signal-head">
-                        <div>
-                            <div class="signal-name">
-                                RSI
-                            </div>
-                            <div class="signal-subtitle">
-                                RSI低位允许入场
-                            </div>
-                        </div>
-                        <el-switch
-                            :model-value="config.entry.rsi.enable"
-                            @change="val=>changeEntrySignal('rsi',val)"
-                        />
-                    </div>
-                </section>
-                <el-form
-                    class="compact-form"
-                    label-width="54px"
-                    size="small">
-                    <el-input-number
-                        v-model="config.entry.rsi.value"
-                        :disabled="!config.entry.rsi.enable"
-                        :min="1"
-                        :max="100"
-                    />
-                </el-form>
-
-                <section class="signal-card">
-                    <div class="signal-head">
-                        <div>
-                            <div class="signal-name">MACD</div>
-                            <div class="signal-subtitle">
-                                趋势与动能共振确认
-                            </div>
-                        </div>
-                        <el-switch
-                            :model-value="config.entry.macd.enable"
-                            @change="val=>changeEntrySignal('macd',val)"
-                        />
-                    </div>
-                </section>
-
-                <section class="signal-card">
-                    <div class="signal-head">
-                        <div>
-                            <div class="signal-name">
-                                Bollinger
-                            </div>
-                            <div class="signal-subtitle">
-                                价格触及下轨时允许入场
-                            </div>
-                        </div>
-                        <el-switch
-                            :model-value="config.entry.bb.enable"
-                            @change="val=>changeEntrySignal('bb',val)"
-                        />
-                    </div>
-                </section>
-            </div>
-        </el-card>
-
-        <el-row
-            class="panel-grid"
-            :gutter="12">
-            <el-col :span="12">
-                <el-card class="section-card">
-                    <template #header>
-                        <div class="card-head">
-                            <span class="card-head__title">TP动作</span>
-                            <span class="card-head__meta">
-                                <el-text
-                                    type="info"
-                                    size="small">
-                                    减仓后自动补回目标仓位
-                                </el-text>
-                            </span>
-                        </div>
-                    </template>
-
-                    <el-alert
-                        class="section-alert"
-                        type="info"
-                        :closable="false">
-                        达到 ROI 后减仓，并自动补回目标仓位
-                    </el-alert>
-
-                    <el-form
-                        class="compact-form"
-                        label-width="128px"
-                        size="small">
-                        <el-form-item label="自动补仓">
-                            <el-switch
-                                v-model="config.tp.rebuy_enable"
-                                @change="onRebuyChange"
-                            />
-                        </el-form-item>
-                        <el-form-item label="减仓比例%">
-                            <el-input-number
-                                v-model="config.tp.reduce_percent"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0"
-                                :max="100"
-                                :disabled="!config.tp.rebuy_enable"
-                            />
-                        </el-form-item>
-                        <el-form-item label="目标仓位占总资金%">
-                            <el-input-number
-                                v-model="config.tp.target_wallet_percent"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0"
-                                :max="100" />
-                        </el-form-item>
-                    </el-form>
-                </el-card>
-            </el-col>
-            <el-col :span="12">
-                <el-card class="section-card">
-                    <template #header>
-                        <div class="card-head">
-                            <span class="card-head__title">止损配置</span>
-                            <span class="card-head__meta">
-                                <el-text
-                                    type="info"
-                                    size="small">
-                                    达到设定亏损后强制平仓
-                                </el-text>
-                            </span>
-                        </div>
-                    </template>
-
-                    <el-alert
-                        class="section-alert"
-                        type="warning"
-                        :closable="false">
-                        达到设定亏损比例后强制平仓
-                    </el-alert>
-
-                    <el-form
-                        class="compact-form"
-                        label-width="102px"
-                        size="small">
-                        <el-form-item label="启用止损">
-                            <el-switch v-model="config.sl.enable" />
-                        </el-form-item>
-                        <el-form-item label="止损百分比">
-                            <el-input-number
-                                v-model="config.sl.stoploss"
-                                class="compact-input-number"
-                                controls-position="right" />
-                        </el-form-item>
-                    </el-form>
-                </el-card>
-            </el-col>
-        </el-row>
-
-        <el-card class="section-card">
-            <template #header>
-                <div class="card-head">
-                    <span class="card-head__title">DCA配置</span>
-                    <span class="card-head__meta">
-                        <el-text
-                            type="info"
-                            size="small"
-                        >
-                            回撤满足条件时分层补仓
-                        </el-text>
-                    </span>
-                </div>
-            </template>
-
-            <el-alert
-                class="section-alert"
-                type="warning"
-                :closable="false"
-                show-icon
-            >
-                回撤达到阈值且满足 RSI 或 KDJ 条件时加仓
-            </el-alert>
-
-            <el-form
-                class="compact-form dca-top-form"
-                label-width="110px"
-                size="small"
-            >
-                <el-row :gutter="12">
-                    <el-col :span="12">
-                        <el-form-item label="启用DCA">
-                            <el-switch v-model="config.dca.enable" />
-                        </el-form-item>
-                    </el-col>
-
-                    <el-col :span="12">
-                        <el-form-item label="最大加仓次数">
-                            <el-input-number
-                                v-model="config.dca.max_count"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="1"
-                            />
-                        </el-form-item>
-                    </el-col>
-
-                    <el-col :span="12">
-                        <el-form-item label="DCA冷却时间">
-                            <el-input-number
-                                v-model="config.dca.cooldown_minutes"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0"
-                            />
-                        </el-form-item>
-                    </el-col>
-
-                    <el-col :span="12">
-
-                        <el-form-item label="订单规模倍率">
-
-                            <el-input-number
-
-                                v-model="config.dca.amount_multiplier"
-
-                                :min="0.10"
-
-                                :max="10"
-
-                                :step="0.10"
-
-                            />
-
-                        </el-form-item>
-
-                        <el-form-item label="价格下跌步骤%">
-
-                            <el-input-number
-
-                                v-model="config.dca.price_offset"
-
-                                :min="0.1"
-
-                                :max="20"
-
-                                :step="0.1"
-
-                            />
-
-                        </el-form-item>
-
-                        <el-form-item label="价格偏差">
-
-                            <el-input-number
-
-                                v-model="config.dca.price_multiplier"
-
-                                :min="0.1"
-
-                                :max="10"
-
-                                :step="0.1"
-
-                            />
-
-                        </el-form-item>
-
-                    </el-col>
-
-                    <el-col :span="12">
-                        <el-form-item label="条件模式">
-                            <el-select
-                                v-model="config.dca.condition"
-                                class="full-width-control"
-                            >
-                                <el-option
-                                    label="RSI或J满足"
-                                    value="or"
-                                />
-
-                                <el-option
-                                    label="RSI且J满足"
-                                    value="and"
-                                />
-                            </el-select>
-                        </el-form-item>
-                    </el-col>
-                </el-row>
-            </el-form>
-            <el-table
-                :data="config.dca.levels"
-                border
-                size="small"
-            >
-
-                <el-table-column label="加仓金额USDT">
-                    <template #default="{row}">
-                        <el-input-number
-                            v-model="row.amount"
-                            :min="1"
-                            :step="10"
-                        />
-                    </template>
-                </el-table-column>
-
-                <el-table-column
-                    :label="config.side==='long'?'RSI <':'RSI >'"
-                >
-                    <template #default="{row}">
-                        <el-input-number
-                            v-model="row.rsi_limit"
-                        />
-                    </template>
-                </el-table-column>
-
-                <el-table-column label="J值">
-                    <template #default="{row}">
-                        <el-input-number
-                            v-model="row.j_limit"
-                        />
-                    </template>
-                </el-table-column>
-            </el-table>
         </el-card>
 
         <el-card class="section-card">
@@ -798,6 +390,554 @@
             </el-row>
         </el-card>
 
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">ROI止盈规则</span>
+                    <span class="card-head__meta">
+                        <el-text
+                            type="info"
+                            size="small">
+                            达到目标收益后分批止盈
+                        </el-text>
+                        <el-button
+                            size="small"
+                            type="success"
+                            plain
+                            @click="addRoi">
+                            新增规则
+                        </el-button>
+                    </span>
+                </div>
+            </template>
+
+            <el-alert
+                class="section-alert"
+                type="success"
+                :closable="false"
+                show-icon>
+                持仓达到指定时间后，收益率达到目标值触发 TP
+            </el-alert>
+
+            <div class="roi-list">
+
+                <div
+                    v-for="(roi,index) in config.tp.roi_levels || []"
+                    :key="index"
+                    class="roi-row">
+
+                    <span class="roi-index">
+                        {{ index + 1 }}
+                    </span>
+
+                    <el-input-number
+                        v-model="roi.minutes"
+                        class="roi-input"
+                        controls-position="right"
+                        :min="0"
+                        size="small"
+                        placeholder="分钟"/>
+
+                    <el-input-number
+                        v-model="roi.roi"
+                        class="roi-input"
+                        controls-position="right"
+                        size="small"
+                        placeholder="收益%"/>
+
+                    <el-button
+                        class="roi-delete"
+                        type="danger"
+                        link
+                        size="small"
+                        @click="removeRoi(index)">
+                        ✕
+                    </el-button>
+
+                </div>
+
+            </div>
+        </el-card>
+
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">开仓信号</span>
+                    <span class="card-head__meta">
+                        <el-text
+                            type="info"
+                            size="small">
+                            主开仓以 BB + RSI 为准
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+            <div class="entry-grid">
+                <section class="signal-card">
+                    <div class="signal-head">
+                        <div>
+                            <div class="signal-name">
+                                RSI
+                            </div>
+                            <div class="signal-subtitle">
+                                RSI低位允许入场
+                            </div>
+                        </div>
+                        <el-switch
+                            :model-value="config.entry.rsi.enable"
+                            @change="val=>changeEntrySignal('rsi',val)"
+                        />
+                    </div>
+                </section>
+                <el-form
+                    class="compact-form"
+                    label-width="54px"
+                    size="small">
+                    <el-input-number
+                        v-model="config.entry.rsi.value"
+                        :disabled="!config.entry.rsi.enable"
+                        :min="1"
+                        :max="100"
+                    />
+                </el-form>
+
+                <section class="signal-card">
+                    <div class="signal-head">
+                        <div>
+                            <div class="signal-name">MACD</div>
+                            <div class="signal-subtitle">
+                                趋势与动能共振确认
+                            </div>
+                        </div>
+                        <el-switch
+                            :model-value="config.entry.macd.enable"
+                            @change="val=>changeEntrySignal('macd',val)"
+                        />
+                    </div>
+                </section>
+
+                <section class="signal-card">
+                    <div class="signal-head">
+                        <div>
+                            <div class="signal-name">
+                                Bollinger
+                            </div>
+                            <div class="signal-subtitle">
+                                价格触及下轨时允许入场
+                            </div>
+                        </div>
+                        <el-switch
+                            :model-value="config.entry.bb.enable"
+                            @change="val=>changeEntrySignal('bb',val)"
+                        />
+                    </div>
+                </section>
+            </div>
+        </el-card>
+
+        <el-row
+            class="panel-grid"
+            :gutter="12">
+            <el-col :span="12">
+                <el-card class="section-card">
+                    <template #header>
+                        <div class="card-head">
+                            <span class="card-head__title">TP止盈</span>
+                            <span class="card-head__meta">
+                                <el-text
+                                    type="info"
+                                    size="small">
+                                    减仓后自动补回目标仓位
+                                </el-text>
+                            </span>
+                        </div>
+                    </template>
+
+                    <el-alert
+                        class="section-alert"
+                        type="info"
+                        :closable="false">
+                        达到 ROI 后减仓，并自动补回目标仓位
+                    </el-alert>
+
+                    <el-form
+                        class="compact-form"
+                        label-width="128px"
+                        size="small">
+                        <el-form-item label="自动补仓">
+                            <el-switch
+                                v-model="config.tp.rebuy_enable"
+                                @change="onRebuyChange"
+                            />
+                        </el-form-item>
+                        <el-form-item label="减仓比例%">
+                            <el-input-number
+                                v-model="config.tp.reduce_percent"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0"
+                                :max="100"
+                                :disabled="!config.tp.rebuy_enable"
+                            />
+                        </el-form-item>
+                        <el-form-item label="目标仓位占总资金%">
+                            <el-input-number
+                                v-model="config.tp.target_wallet_percent"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0"
+                                :max="100" />
+                        </el-form-item>
+                    </el-form>
+                </el-card>
+            </el-col>
+            <el-col :span="12">
+                <el-card class="section-card">
+                    <template #header>
+                        <div class="card-head">
+                            <span class="card-head__title">止损配置</span>
+                            <span class="card-head__meta">
+                                <el-text
+                                    type="info"
+                                    size="small">
+                                    达到设定亏损后强制平仓
+                                </el-text>
+                            </span>
+                        </div>
+                    </template>
+
+                    <el-alert
+                        class="section-alert"
+                        type="warning"
+                        :closable="false">
+                        达到设定亏损比例后强制平仓
+                    </el-alert>
+
+                    <el-form
+                        class="compact-form"
+                        label-width="102px"
+                        size="small">
+                        <el-form-item label="启用止损">
+                            <el-switch v-model="config.sl.enable" />
+                        </el-form-item>
+                        <el-form-item label="止损百分比">
+                            <el-input-number
+                                v-model="config.sl.stoploss"
+                                class="compact-input-number"
+                                controls-position="right" />
+                        </el-form-item>
+                    </el-form>
+                </el-card>
+            </el-col>
+        </el-row>
+
+        <el-card class="section-card">
+
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">DCA配置</span>
+                    <span class="card-head__meta">
+                        <el-text type="info" size="small">
+                            回撤满足条件时分层补仓
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+            <el-alert
+                class="section-alert"
+                type="warning"
+                :closable="false"
+                show-icon
+            >
+                回撤达到阈值且满足 RSI 或 KDJ 条件时加仓
+            </el-alert>
+
+            <el-form
+                class="compact-form dca-top-form"
+                label-width="108px"
+                size="small"
+            >
+                <el-row :gutter="12">
+
+                    <el-col :span="8">
+                        <el-form-item label="启用DCA">
+                            <el-switch v-model="config.dca.enable" />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="金额模式">
+                            <el-select
+                                v-model="config.dca.amount_mode"
+                                class="full-width-control"
+                            >
+                                <el-option label="自动倍率" value="auto" />
+                                <el-option label="手动分层" value="manual" />
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="条件模式">
+                            <el-select
+                                v-model="config.dca.condition"
+                                class="full-width-control"
+                            >
+                                <el-option label="仅 RSI" value="rsi" />
+                                <el-option label="仅 J" value="j" />
+                                <el-option label="RSI 或 J" value="or" />
+                                <el-option label="RSI 且 J" value="and" />
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="最大加仓次数">
+                            <el-input-number
+                                v-model="config.dca.max_count"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="1"
+                            />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="DCA冷却时间">
+                            <el-input-number
+                                v-model="config.dca.cooldown_minutes"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0"
+                            />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="价格下跌步骤%">
+                            <el-input-number
+                                v-model="config.dca.price_offset"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0.1"
+                                :max="20"
+                                :step="0.1"
+                            />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="价格偏差">
+                            <el-input-number
+                                v-model="config.dca.price_multiplier"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0.1"
+                                :max="10"
+                                :step="0.1"
+                            />
+                        </el-form-item>
+                    </el-col>
+
+                    <!-- 自动模式字段 -->
+                    <template v-if="config.dca.amount_mode === 'auto'">
+
+                        <el-col :span="8">
+                            <el-form-item label="首次加仓%">
+                                <el-input-number
+                                    v-model="config.dca.base_percent"
+                                    class="compact-input-number"
+                                    controls-position="right"
+                                    :min="0.1"
+                                    :max="100"
+                                    :step="0.1"
+                                />
+                            </el-form-item>
+                        </el-col>
+
+                        <el-col :span="8">
+                            <el-form-item label="订单规模倍率">
+                                <el-input-number
+                                    v-model="config.dca.amount_multiplier"
+                                    class="compact-input-number"
+                                    controls-position="right"
+                                    :min="0.1"
+                                    :max="10"
+                                    :step="0.1"
+                                />
+                            </el-form-item>
+                        </el-col>
+
+                    </template>
+
+                </el-row>
+            </el-form>
+
+            <!-- 手动模式：levels 卡片 -->
+        <div class="dca-levels">
+
+            <div
+                v-for="(level, index) in config.dca.levels"
+                :key="index"
+                class="dca-level-row"
+            >
+
+                <div class="dca-level-index">
+                    {{ index + 1 }}
+                </div>
+
+                <el-form
+                    class="dca-level-form"
+                    label-width="110px"
+                    size="small"
+                >
+
+                    <!-- 手动模式才显示金额 -->
+                    <el-form-item
+                        v-if="config.dca.amount_mode === 'manual'"
+                        label="加仓金额USDT"
+                    >
+                        <el-input-number
+                            v-model="level.amount"
+                            class="compact-input-number"
+                            controls-position="right"
+                            :min="1"
+                            :step="10"
+                        />
+                    </el-form-item>
+
+                    <el-form-item :label="config.side === 'long' ? 'RSI <' : 'RSI >'">
+                        <el-input-number
+                            v-model="level.rsi_limit"
+                            class="compact-input-number"
+                            controls-position="right"
+                        />
+                    </el-form-item>
+
+                    <el-form-item label="J值">
+                        <el-input-number
+                            v-model="level.j_limit"
+                            class="compact-input-number"
+                            controls-position="right"
+                        />
+                    </el-form-item>
+
+                </el-form>
+
+                <el-button
+                    class="dca-level-delete"
+                    type="danger"
+                    link
+                    size="small"
+                    :disabled="config.dca.levels.length <= 1"
+                    @click="removeDca(index)"
+                >
+                    ✕
+                </el-button>
+
+            </div>
+
+            <el-button
+                class="dca-add-btn"
+                type="success"
+                plain
+                size="small"
+                @click="addDca"
+            >
+                + 新增一层
+            </el-button>
+
+        </div>
+
+        </el-card>
+
+                <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">
+                        浮亏止盈
+                    </span>
+
+                    <span class="card-head__meta">
+                        <el-text
+                            type="info"
+                            size="small"
+                        >
+                            DCA后达到收益目标，自动减仓保留仓位
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+
+            <el-form
+                class="compact-form"
+                label-width="118px"
+                size="small"
+            >
+
+                <el-row :gutter="12">
+
+
+                    <!-- 总开关 -->
+                    <el-col :span="12">
+
+                        <el-form-item label="启用">
+
+                            <el-switch
+                                v-model="config.loss_tp.enable"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+
+
+                    <!-- DCA快速止盈 -->
+                    <el-col :span="12">
+
+                        <el-form-item label="DCA止盈目标收益率%">
+
+                            <el-input-number
+                                v-model="config.loss_tp.dca_tp_profit"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0"
+                                :max="100"
+                                :step="0.1"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+
+
+
+                    <!-- 保留仓位 -->
+                    <el-col :span="12">
+
+                        <el-form-item label="保留仓位%">
+
+                            <el-input-number
+                                v-model="config.loss_tp.target_wallet_percent"
+                                class="compact-input-number"
+                                controls-position="right"
+                                :min="0"
+                                :max="100"
+                                :step="1"
+                            />
+
+                        </el-form-item>
+
+                    </el-col>
+                </el-row>
+            </el-form>
+
+        </el-card>
+
         <el-row
             class="panel-grid"
             :gutter="12"
@@ -841,15 +981,6 @@
                             <el-col :span="24">
                                 <el-form-item label="启用趋势加仓">
                                     <el-switch v-model="config.trend_add.enable" />
-                                </el-form-item>
-                            </el-col>
-
-                            <el-col :span="24">
-                                <el-form-item label="最大次数">
-                                    <el-input-number
-                                        v-model="config.trend_add.max_count"
-                                        :min="1"
-                                    />
                                 </el-form-item>
                             </el-col>
 
@@ -997,6 +1128,17 @@
                             </el-col>
 
                             <el-col :span="18">
+                                <el-form-item label="最大加仓次数">
+                                    <el-input-number
+                                        v-model="config.grid.max_count"
+                                        class="compact-input-number"
+                                        controls-position="right"
+                                        :min="1"
+                                    />
+                                </el-form-item>
+                            </el-col>
+
+                            <el-col :span="18">
                                 <el-form-item label="冷却时间">
                                     <el-input-number
                                         v-model="config.grid.cooldown_minutes"
@@ -1040,19 +1182,6 @@
                             </el-col>
 
                             <el-col :span="18">
-
-                                <el-form-item label="订单规模">
-                                    <el-input-number
-                                        v-model="config.grid.order_scale"
-                                        class="compact-input-number"
-                                        controls-position="right"
-                                        :min="0.1"
-                                        :step="0.1"
-                                    />
-                                </el-form-item>
-                            </el-col>
-
-                            <el-col :span="18">
                                 <el-form-item label="减仓占总资金%">
                                     <el-input-number
                                         v-model="config.grid.sell_percent"
@@ -1063,96 +1192,25 @@
                                     />
                                 </el-form-item>
                             </el-col>
+
+                            <el-col :span="18">
+
+                                <el-form-item label="订单规模倍率">
+                                    <el-input-number
+                                        v-model="config.grid.order_scale"
+                                        class="compact-input-number"
+                                        controls-position="right"
+                                        :min="0.1"
+                                        :step="0.1"
+                                    />
+                                </el-form-item>
+                            </el-col>
+
                         </el-row>
                     </el-form>
                 </el-card>
             </el-col>
         </el-row>
-
-        <el-card class="section-card">
-            <template #header>
-                <div class="card-head">
-                    <span class="card-head__title">
-                        浮亏止盈
-                    </span>
-
-                    <span class="card-head__meta">
-                        <el-text
-                            type="info"
-                            size="small"
-                        >
-                            DCA后达到收益目标，自动减仓保留仓位
-                        </el-text>
-                    </span>
-                </div>
-            </template>
-
-
-            <el-form
-                class="compact-form"
-                label-width="118px"
-                size="small"
-            >
-
-                <el-row :gutter="12">
-
-
-                    <!-- 总开关 -->
-                    <el-col :span="12">
-
-                        <el-form-item label="启用">
-
-                            <el-switch
-                                v-model="config.loss_tp.enable"
-                            />
-
-                        </el-form-item>
-
-                    </el-col>
-
-
-
-                    <!-- DCA快速止盈 -->
-                    <el-col :span="12">
-
-                        <el-form-item label="DCA止盈收益%">
-
-                            <el-input-number
-                                v-model="config.loss_tp.dca_tp_profit"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0"
-                                :max="20"
-                                :step="0.1"
-                            />
-
-                        </el-form-item>
-
-                    </el-col>
-
-
-
-                    <!-- 保留仓位 -->
-                    <el-col :span="12">
-
-                        <el-form-item label="保留仓位%">
-
-                            <el-input-number
-                                v-model="config.loss_tp.target_wallet_percent"
-                                class="compact-input-number"
-                                controls-position="right"
-                                :min="0"
-                                :max="100"
-                                :step="1"
-                            />
-
-                        </el-form-item>
-
-                    </el-col>
-                </el-row>
-            </el-form>
-
-        </el-card>
 
         <div class="save-bar">
             <el-button
@@ -1259,14 +1317,14 @@ const addDca = () => {
             drawdown: -5,
             rsi_limit: 20,
             j_limit: 0,
-            amount: 1
+            amount: 10
         })
     } else {
         props.config.dca.levels.push({
             drawdown: -5,
             rsi_limit: 80,
             j_limit: 100,
-            amount: 1
+            amount: 10
         })
     }
 }
@@ -1548,6 +1606,82 @@ const onRebuyChange = (val) => {
     .roi-row{
         grid-template-columns:28px 1fr;
     }
+}
+/* DCA 顶部表单：3 列布局 */
+.dca-top-form :deep(.el-form-item) {
+    margin-bottom: 10px;
+}
+
+.dca-top-form :deep(.el-form-item__label) {
+    line-height: 28px;
+    font-size: 13px;
+    color: var(--el-text-color-regular);
+}
+
+.dca-top-form :deep(.el-form-item__content) {
+    line-height: 28px;
+}
+
+/* 手动分层容器 */
+.dca-levels {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+/* 每一层 */
+.dca-level-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border: 1px solid #ebeef5;
+    border-radius: 8px;
+    background: #fafafa;
+}
+
+.dca-level-index {
+    width: 22px;
+    text-align: center;
+    font-weight: 700;
+    font-size: 13px;
+    color: #909399;
+    flex: none;
+}
+
+/* 每层表单：3 列 */
+.dca-level-form {
+    flex: 1;
+    display: flex;
+    gap: 8px 12px;
+}
+
+.dca-level-form :deep(.el-form-item) {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 0;
+}
+
+.dca-level-form :deep(.el-form-item__label) {
+    line-height: 28px;
+    font-size: 13px;
+}
+
+.dca-level-form :deep(.el-form-item__content) {
+    line-height: 28px;
+}
+
+/* 删除按钮 */
+.dca-level-delete {
+    width: 20px;
+    padding: 0;
+    flex: none;
+}
+
+/* 新增按钮 */
+.dca-add-btn {
+    align-self: flex-start;
 }
 
 </style>

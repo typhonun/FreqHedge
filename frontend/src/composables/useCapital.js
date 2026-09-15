@@ -17,14 +17,24 @@ export function useCapital() {
     const loadConfig = async () => {
         const res = await axios.get(`${API}/control/config`)
 
-        longConfig.value = res.data.long
-        shortConfig.value = res.data.short
+        const longData = res.data.long || {}
+        const shortData = res.data.short || {}
 
-        longWhitelist.value = res.data.long.pair_whitelist.join("\n")
-        longBlacklist.value = res.data.long.pair_blacklist.join("\n")
+        longConfig.value = {
+            leverage: 10,
+            ...longData
+        }
 
-        shortWhitelist.value = res.data.short.pair_whitelist.join("\n")
-        shortBlacklist.value = res.data.short.pair_blacklist.join("\n")
+        shortConfig.value = {
+            leverage: 10,
+            ...shortData
+        }
+
+        longWhitelist.value = (longData.pair_whitelist || []).join("\n")
+        longBlacklist.value = (longData.pair_blacklist || []).join("\n")
+
+        shortWhitelist.value = (shortData.pair_whitelist || []).join("\n")
+        shortBlacklist.value = (shortData.pair_blacklist || []).join("\n")
     }
 
     const saveConfig = async (side) => {

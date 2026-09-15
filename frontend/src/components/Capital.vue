@@ -34,7 +34,7 @@
 
                     <el-col :span="12">
 
-                        <el-form-item label="下单金额">
+                        <el-form-item label="开仓金额">
 
                             <el-input-number
                                 v-model="longConfig.stake_amount"
@@ -73,6 +73,18 @@
 
                         </el-form-item>
 
+                    </el-col>
+
+                    <el-col :span="12">
+                        <el-form-item label="持仓杠杆">
+                            <el-input-number
+                                v-model="longConfig.leverage"
+                                style="width:100%"
+                                :min="1"
+                                :max="125"
+                                :step="1"
+                            />
+                        </el-form-item>
                     </el-col>
 
                 </el-row>
@@ -152,7 +164,7 @@
 
                     <el-col :span="12">
 
-                        <el-form-item label="下单金额">
+                        <el-form-item label="开仓金额">
 
                             <el-input-number
                                 v-model="shortConfig.stake_amount"
@@ -191,6 +203,18 @@
 
                         </el-form-item>
 
+                    </el-col>
+
+                    <el-col :span="12">
+                        <el-form-item label="持仓杠杆">
+                            <el-input-number
+                                v-model="shortConfig.leverage"
+                                style="width:100%"
+                                :min="1"
+                                :max="125"
+                                :step="1"
+                            />
+                        </el-form-item>
                     </el-col>
 
                 </el-row>

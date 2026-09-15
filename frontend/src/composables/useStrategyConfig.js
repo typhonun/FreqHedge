@@ -178,21 +178,19 @@ const buildTradeInfo = (side, config) => {
 
 
 
+        dcaSignal: (() => {
+            if (!config.dca?.enable) return null
 
-        dcaSignal:
+            const d = config.dca
+            const mode = d.amount_mode || "auto"
 
-            config.dca?.enable
+            if (mode === "auto") {
+                return `最多 ${d.max_count} 次，自动模式 基础 ${d.base_percent}% × ${d.amount_multiplier}^n，
+                价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
+            }
 
-                ?
-
-                `最多 ${config.dca.max_count} 次，
-                 订单规模倍率 ${config.dca.amount_multiplier}，
-                 价格下跌步骤 ${config.dca.price_offset}%，
-                 价格偏差 ${config.dca.amount_multiplier}`
-
-                :
-
-                null,
+            return `最多 ${d.max_count} 次，手动分层 ${d.levels?.length || 0} 层，价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
+        })(),
 
 
         gridSignal:
@@ -231,8 +229,6 @@ const defaultLongConfig = () => ({
     side: "long",
 
     timeframe:"30m",
-
-    leverage:10,
 
     entry:{
 
@@ -311,8 +307,6 @@ const defaultLongConfig = () => ({
 
         enable:false,
 
-        max_count:3,
-
         amount_percent:0.5,
 
         condition:"and",
@@ -333,43 +327,39 @@ const defaultLongConfig = () => ({
     },
 
     dca: {
+        enable: true,
+        max_count: 7,
+        condition: "or",
+        cooldown_minutes: 60,
 
-        enable:true,
+        // 新增：金额模式，"auto" 或 "manual"
+        amount_mode: "auto",
 
-        max_count:7,
+        // 自动模式用
+        base_percent: 2,
+        amount_multiplier: 1.5,
 
-        condition:"or",
+        // 价格触发
+        price_offset: 1.0,
+        price_multiplier: 1.5,
 
-        cooldown_minutes:60,
-
-
-        // 第一次DCA价格距离均价
-        price_offset:1.0,
-
-
-        // 每层价格偏差倍率
-        price_multiplier:1.5,
-
-
-        // 每层订单金额倍率
-        amount_multiplier:1.5,
-
-
-        levels:[
+        // 手动模式用
+        levels: [
             {
-                amount:100,
-                rsi_limit:25,
-                j_limit:10
+                amount: 100,
+                rsi_limit: 25,
+                j_limit: 10
             }
         ]
     },
     loss_tp:{
         enable:true,
-        dca_tp_profit:0.3,
+        dca_tp_profit:3,
         target_wallet_percent:5
     },
     grid: {
         enable: true,
+        max_count: 5,
         grid_lower: -2,
         grid_upper: 2,
         buy_percent: 2,
@@ -461,8 +451,6 @@ const defaultShortConfig = () => ({
 
         enable:false,
 
-        max_count:3,
-
         amount_percent:0.5,
 
         condition:"and",
@@ -483,33 +471,28 @@ const defaultShortConfig = () => ({
     },
 
     dca: {
+        enable: true,
+        max_count: 7,
+        condition: "or",
+        cooldown_minutes: 60,
 
-        enable:true,
+        // 新增：金额模式，"auto" 或 "manual"
+        amount_mode: "auto",
 
-        max_count:7,
+        // 自动模式用
+        base_percent: 2,
+        amount_multiplier: 1.5,
 
-        condition:"or",
+        // 价格触发
+        price_offset: 1.0,
+        price_multiplier: 1.5,
 
-        cooldown_minutes:60,
-
-
-        // 第一次DCA价格距离均价
-        price_offset:1.0,
-
-
-        // 每层价格偏差倍率
-        price_multiplier:1.5,
-
-
-        // 每层订单金额倍率
-        amount_multiplier:1.5,
-
-
-        levels:[
+        // 手动模式用
+        levels: [
             {
-                amount:100,
-                rsi_limit:25,
-                j_limit:10
+                amount: 100,
+                rsi_limit: 25,
+                j_limit: 10
             }
         ]
     },
@@ -520,13 +503,14 @@ const defaultShortConfig = () => ({
 
         trigger_rebound:1,
 
-        dca_tp_profit:0.3,
+        dca_tp_profit:3,
 
         target_wallet_percent:5
     },
 
     grid: {
         enable: true,
+        max_count: 5,
         grid_lower: -2,
         grid_upper: 2,
         buy_percent: 2,
@@ -579,39 +563,43 @@ const shortTradeInfo = computed(()=>{
 
 })
 
+const normalizeDca = (config) => {
+    if (!config || !config.dca) return config
+
+    if (!config.dca.amount_mode) {
+        config.dca.amount_mode = "auto"
+    }
+
+    if (config.dca.base_percent == null) {
+        config.dca.base_percent = 2
+    }
+
+    if (!config.dca.amount_multiplier) {
+        config.dca.amount_multiplier = 1.5
+    }
+
+    return config
+}
+
 const loadConfig = async () => {
 
-    const res =
-        await axios.get(
-            `${API}/strategy`
-        )
+    const res = await axios.get(`${API}/strategy`)
 
-
-    longConfig.value = merge(
-        defaultLongConfig(),
-        res.data.long
+    longConfig.value = normalizeDca(
+        merge(defaultLongConfig(), res.data.long)
     )
 
-
-    shortConfig.value = merge(
-        defaultShortConfig(),
-        res.data.short
+    shortConfig.value = normalizeDca(
+        merge(defaultShortConfig(), res.data.short)
     )
 
+    savedLongConfig.value = JSON.parse(
+        JSON.stringify(longConfig.value)
+    )
 
-    // 同步保存状态
-
-    savedLongConfig.value =
-        JSON.parse(
-            JSON.stringify(longConfig.value)
-        )
-
-
-    savedShortConfig.value =
-        JSON.parse(
-            JSON.stringify(shortConfig.value)
-        )
-
+    savedShortConfig.value = JSON.parse(
+        JSON.stringify(shortConfig.value)
+    )
 }
 
     const saveConfig = async(

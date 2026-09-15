@@ -29,16 +29,44 @@ logger = logging.getLogger(__name__)
 
 class DcaTpLong(IStrategy):
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._stop_loss_logged = set()
-
     timeframe = '30m'
     can_short = False
     use_exit_signal = True
     trailing_stop = False
     position_adjustment_enable = True
     use_custom_stoploss = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stop_loss_logged = set()
+
+    def bot_start(self, **kwargs) -> None:
+        """策略启动时打印一次配置概览"""
+
+        ft_cfg = self.config or {}
+
+        dry_run_wallet = ft_cfg.get("dry_run_wallet", 0)
+        stake_amount = ft_cfg.get("stake_amount", 0)
+        max_open_trades = ft_cfg.get("max_open_trades", 0)
+        tradable_balance_ratio = ft_cfg.get("tradable_balance_ratio", 0)
+        leverage = ft_cfg.get("leverage", 1)
+
+        exchange_cfg = ft_cfg.get("exchange", {}) or {}
+        pair_whitelist = exchange_cfg.get("pair_whitelist", []) or []
+        pair_blacklist = exchange_cfg.get("pair_blacklist", []) or []
+
+        logger.info(
+            "\n"
+            f"==================== 策略配置概览 ====================\n"
+            f"初始资金          : {dry_run_wallet} USDT\n"
+            f"开仓金额          : {stake_amount} USDT\n"
+            f"最大持仓          : {max_open_trades}\n"
+            f"资金利用率        : {tradable_balance_ratio}\n"
+            f"持仓杠杆          : {leverage}x\n"
+            f"白名单            : {', '.join(pair_whitelist) if pair_whitelist else '(空)'}\n"
+            f"黑名单            : {', '.join(pair_blacklist) if pair_blacklist else '(空)'}\n"
+            f"======================================================"
+        )
 
     def get_runtime_config(self):
 
@@ -98,54 +126,45 @@ class DcaTpLong(IStrategy):
         return None, 0
 
     def leverage(self, pair, **kwargs):
-
         try:
-            cfg = self.get_runtime_config()
+            # 1) 优先读 Freqtrade 加载的 config（顶层 leverage）
+            ft_cfg = self.config or {}
+            ft_leverage = ft_cfg.get("leverage", None)
+            if ft_leverage is not None:
+                try:
+                    return float(ft_leverage)
+                except (TypeError, ValueError):
+                    pass
 
-            return float(
-                self._cfg(
-                    cfg,
-                    "strategy",
-                    "leverage",
-                    default=10
-                )
-            )
+            # 2) 再读 ConfigManager
+            cfg = self.get_runtime_config()
+            top_level = self._cfg(cfg, "leverage", default=None)
+            if top_level is not None:
+                try:
+                    return float(top_level)
+                except (TypeError, ValueError):
+                    pass
+
+            nested = self._cfg(cfg, "strategy", "leverage", default=None)
+            if nested is not None:
+                try:
+                    return float(nested)
+                except (TypeError, ValueError):
+                    pass
+
+            return 10.0
 
         except Exception:
             return 10.0
 
     def _available_stake(self):
-
         try:
-            free = self.wallets.get_free(
-                "USDT"
-            )
-
+            free = self.wallets.get_free("USDT")
+            if free is None:
+                return 0.0
             return float(free)
-
         except Exception:
-            return 0
-
-    def _latest_candle_time(self, dataframe: DataFrame):
-        if dataframe.empty:
-            return None
-
-        candle_time = None
-        if isinstance(dataframe.index, pd.DatetimeIndex):
-            candle_time = dataframe.index[-1]
-        elif "date" in dataframe.columns:
-            candle_time = dataframe.iloc[-1].get("date")
-
-        if candle_time is None:
-            return None
-
-        ts = pd.Timestamp(candle_time)
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        else:
-            ts = ts.tz_convert("UTC")
-
-        return ts.to_pydatetime()
+            return 0.0
 
     def _record_chart_marker(
             self,
@@ -677,10 +696,6 @@ class DcaTpLong(IStrategy):
             f"当前价={rate:.4f} "
             f"保证金={stake_amount:.4f} USDT "
             f"RSI={rsi_value} "
-            # f"MACD={macd_value} "
-            # f"MACD_SIG={macdsig_value} "
-            # f"BB_LOWER={bb_lower_value} "
-            # f"CLOSE={close_value}"
         )
 
         self._record_chart_marker(
@@ -748,13 +763,6 @@ class DcaTpLong(IStrategy):
     def _get_int(self, trade, key, default=0):
         value = self._get(trade, key, default)
 
-        logger.debug(
-            f"_get_int "
-            f"key={key} "
-            f"value={value!r} "
-            f"type={type(value).__name__}"
-        )
-
         if value is None:
             return default
 
@@ -764,13 +772,6 @@ class DcaTpLong(IStrategy):
                 return default
             return int(f)
         except (TypeError, ValueError):
-            logger.error(
-                f"_get_int转换失败 "
-                f"key={key} "
-                f"value={value!r} "
-                f"type={type(value).__name__} "
-                f"default={default}"
-            )
             return default
 
     def _cfg_int(self, cfg: dict, key: str, default: int) -> int:
@@ -873,6 +874,28 @@ class DcaTpLong(IStrategy):
                 f"{traceback.format_exc()}"
             )
 
+    def _get_candle_ts(self, obj):
+        candle_key = None
+
+        if isinstance(obj, pd.DataFrame):
+            if 'date' in obj.columns:
+                candle_key = self._index_candle_key(obj['date'].iloc[-1])
+            if candle_key in (None, 0):
+                candle_key = self._index_candle_key(obj.index[-1])
+
+        elif isinstance(obj, pd.Series):
+            if 'date' in obj.index:
+                candle_key = self._index_candle_key(obj.get('date'))
+            if candle_key in (None, 0):
+                candle_key = self._index_candle_key(obj.name)
+
+        else:
+            return None
+
+        if candle_key in (None, 0):
+            return None
+        return candle_key
+
     def _collateral_total(self) -> float:
         try:
             return float(self.wallets.get_total('USDT'))
@@ -942,20 +965,9 @@ class DcaTpLong(IStrategy):
             add = 0.0
         self._set(trade, key, prev + add)
 
-    def _record_add(self, trade: Trade, key: str, value: float) -> None:
-        prev = self._get_float(trade, key, 0.0)
-        try:
-            add = float(value)
-            if pd.isna(add) or not (float('-inf') < add < float('inf')):
-                add = 0.0
-        except Exception:
-            add = 0.0
-        self._set(trade, key, prev + add)
+    def trend_add(self, trade, last, margin, collateral, current_time, current_profit, candle=None):
 
-    def trend_add(self, trade: Trade, last: dict, margin: float, collateral: float, current_time: datetime,
-                  current_profit: float):
         cfg = self.get_runtime_config()
-        self._get_int(trade, "dca_count", 0)
         trend_cfg = self._cfg(
             cfg,
             "trend_add",
@@ -1010,9 +1022,15 @@ class DcaTpLong(IStrategy):
             "condition",
             "and"
         )
-        candle = self._index_candle_key(last.name)
-        if candle is None:
-            return None
+
+        if candle in (None, 0):
+            candle = self._get_candle_ts(last)
+            if candle in (None, 0):
+                logger.warning(
+                    f"[{trade.pair}] trend_add return: candle 无效, "
+                    f"last.name={last.name!r}, last.date={last.get('date')!r}"
+                )
+                return None
 
         last_trend = self._get_int(
             trade,
@@ -1022,12 +1040,12 @@ class DcaTpLong(IStrategy):
 
         if candle == last_trend:
             return None
+
         if not trend_enable:
             return None
 
         level = self._get_int(trade, 'trend_level', 0)
         reset_needed = self._get_bool(trade, 'reset_needed', False)
-        max_count = self._cfg_int(trend_cfg, "max_count", 3)
         ema_fast = self._cfg_int(ema_cfg, "fast", 9)
         ema_mid = self._cfg_int(ema_cfg, "mid", 21)
         ema_slow = self._cfg_int(ema_cfg, "slow", 99)
@@ -1060,11 +1078,7 @@ class DcaTpLong(IStrategy):
 
         # KDJ
 
-        if (
-                kdj_reduce_enable
-                and
-                kdj_cfg.get("enable", True)
-        ):
+        if bool(trend_cfg.get("kdj_enable", True)):
             trend_conditions.append(
 
                 last.get('k_tf', 0)
@@ -1096,13 +1110,35 @@ class DcaTpLong(IStrategy):
 
         else:
             is_bullish_trend = all(trend_conditions)
+
         price = last.get('close', None)
+        # logger.info(
+        #     f"[{trade.pair}] candle data:\n"
+        #     f"{last.to_dict()}"
+        # )
+        # logger.info(
+        #     f"""
+        # [{trade.pair}] TREND DEBUG
+        #
+        # macd_tf={last.get('macd_tf')}
+        # macdsig_tf={last.get('macdsig_tf')}
+        #
+        # k_tf={last.get('k_tf')}
+        # d_tf={last.get('d_tf')}
+        #
+        # ema9_tf={last.get('ema9_tf')}
+        # ema21_tf={last.get('ema21_tf')}
+        # ema99_tf={last.get('ema99_tf')}
+        #
+        # columns={list(last.index)}
+        # """
+        # )
 
         def _add_trend_total_usdt(x):
             self._record_add_usdt(trade, 'trend_total_added_usdt', x)
 
         if (
-                level < max_count
+                level == 0
                 and not reset_needed
                 and price is not None
                 and is_bullish_trend
@@ -1172,34 +1208,20 @@ class DcaTpLong(IStrategy):
                     <
                     last.get('d_tf', 0)
             ):
-                total_trend_usdt = self._get_float(trade, 'trend_total_added_usdt', 0.0) or 0.0
                 reduce_percent = float(
-                    kdj_reduce_cfg.get(
-                        "reduce_percent",
-                        100
-                    )
+                    kdj_reduce_cfg.get("reduce_percent", 50)
                 )
 
                 sell_usdt = min(
-                    total_trend_usdt *
-                    reduce_percent / 100,
-
+                    collateral * (reduce_percent / 100),
                     margin
                 )
                 amt = -float(sell_usdt)
-                remain_trend_usdt = (
-                        total_trend_usdt - sell_usdt
-                )
 
-                self._set(
-                    trade,
-                    'trend_total_added_usdt',
-                    max(remain_trend_usdt, 0)
-                )
                 self._set(trade, 'trend_level', 0)
                 self._set(trade, 'kdj_reduced', True)
 
-                logger.info(f"[{trade.pair}] {RED}[KDJ 减仓]{RESET}, "
+                logger.info(f"[{trade.pair}] {RED}[KDJ 减仓 {reduce_percent:.1f}%]{RESET}, "
                             f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
                             f"减仓={abs(amt):.4f} USDT")
                 return float(amt), 'kdj_reduce_by_trend_added'
@@ -1210,11 +1232,11 @@ class DcaTpLong(IStrategy):
         if not bool(dca_cfg.get("enable", True)):
             return None
 
-        last_idx = df.index[-1]
-        candle_key = self._index_candle_key(last_idx)
+        candle_key = self._get_candle_ts(df)
         if candle_key is None:
             return None
         candle_ts = pd.Timestamp(candle_key, unit='s').tz_localize(None).floor('min')
+
         last_rsi = df['rsi'].iat[-1] if 'rsi' in df.columns else None
         last_j = df['j_tf'].iat[-1] if 'j_tf' in df.columns else None
 
@@ -1291,13 +1313,25 @@ class DcaTpLong(IStrategy):
             j_limit = float(level_cfg.get("j_limit", 0) or 0)
         except Exception:
             j_limit = 0.0
+
         cond_mode = str(dca_cfg.get("condition", "or")).lower()
         cond_j = (last_j is not None and last_j < j_limit)
         cond_rsi = (last_rsi is not None and last_rsi < rsi_limit)
-        if cond_mode == "and":
+
+        if cond_mode == "rsi":
+            triggered_cond = cond_rsi
+            triggered_label = f"RSI<{rsi_limit:g}"
+
+        elif cond_mode == "j":
+            triggered_cond = cond_j
+            triggered_label = f"J<{j_limit:g}"
+
+        elif cond_mode == "and":
             triggered_cond = cond_j and cond_rsi
             triggered_label = f"J<{j_limit:g} & RSI<{rsi_limit:g}"
+
         else:
+            # 默认 or
             triggered_cond = cond_j or cond_rsi
             triggered_label = f"J<{j_limit:g} 或 RSI<{rsi_limit:g}"
 
@@ -1320,56 +1354,49 @@ class DcaTpLong(IStrategy):
             available = self._available_stake()
 
             if available <= 0:
-                logger.info(
-                    f"{trade.pair} 无可用资金"
-                )
+                logger.info(f"{trade.pair} 无可用资金")
                 return None
-            collateral = self._collateral_total()
+
             try:
                 margin = float(trade.stake_amount)
             except Exception:
                 margin = 0.0
 
-            base_amount = float(
-                level_cfg.get(
-                    "amount",
-                    100
+            amount_mode = str(dca_cfg.get("amount_mode", "auto")).lower()
+            collateral = self._collateral_total()
+
+            if amount_mode == "auto":
+                base_percent = float(dca_cfg.get("base_percent", 2) or 2)
+                amount_multiplier = float(dca_cfg.get("amount_multiplier", 1.0) or 1.0)
+
+                base_amount = collateral * (base_percent / 100.0)
+                buy_amt = base_amount * (amount_multiplier ** u)
+                actual_pct = base_percent * (amount_multiplier ** u)
+
+                amount_text = (
+                    f"模式：自动, "
                 )
-            )
-            amount_multiplier = float(
-                dca_cfg.get(
-                    "amount_multiplier",
-                    1.0
+            else:
+                base_amount = float(level_cfg.get("amount", 100) or 100)
+                buy_amt = base_amount
+                amount_multiplier = 1.0
+                actual_pct = (buy_amt / collateral * 100) if collateral > 0 else 0.0
+                amount_text = (
+                    f"模式：手动, 本层金额={base_amount}"
                 )
-            )
-            buy_amt = (
-                    base_amount *
-                    (
-                            amount_multiplier ** u
-                    )
-            )
+
             try:
                 prev_qty = abs(trade.amount)
             except Exception:
                 prev_qty = 0.0
 
             lev = float(self.leverage(trade.pair))
-
-            added_qty = self._qty_from_usdt(
-                buy_amt,
-                candle_close,
-                lev
-            )
+            added_qty = self._qty_from_usdt(buy_amt, candle_close, lev)
 
             prev_value = prev_qty * avg_entry
-
             added_value = added_qty * candle_close
 
-            new_avg_entry = (
-                                    prev_value + added_value
-                            ) / (
-                                    prev_qty + added_qty
-                            )
+            new_avg_entry = (prev_value + added_value) / (prev_qty + added_qty)
 
             self._set(trade, 'dca_count', u + 1)
             self._set(trade, 'dca_done', True)
@@ -1377,10 +1404,24 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'last_dca_time', self._safe_int(current_time.timestamp()))
             self._set(trade, 'tp_count', 0)
 
+            # 触发时的 RSI / J 实际值
+            try:
+                rsi_val_text = f"{float(last_rsi):.2f}" if last_rsi is not None else "None"
+            except Exception:
+                rsi_val_text = "None"
+
+            try:
+                j_val_text = f"{float(last_j):.2f}" if last_j is not None else "None"
+            except Exception:
+                j_val_text = "None"
+
             logger.info(
-                f"[{trade.pair}] {RED}[浮亏 DCA 加仓 ]{RESET}, u=({u}->{u + 1}), "
-                f"价格下跌步骤={effective_percent:.2f}%, 价格偏差={price_multiplier}, 加仓金额={buy_amt:.2f} USDT, 订单规模乘数={amount_multiplier}, "
-                f"触发条件={triggered_label}, 触发价={threshold:.4f}, 收盘价={candle_close:.4f}, "
+                f"[{trade.pair}] {RED}[浮亏 DCA 加仓 {actual_pct:.2f}% {RESET}"
+                f"订单规模倍率：{amount_multiplier ** u:.2f})], u=({u}->{u + 1}), "
+                f"{amount_text}, "
+                f"触发条件={triggered_label}, "
+                f"RSI={rsi_val_text}, J={j_val_text}, "
+                f"触发价={threshold:.4f}, 收盘价={candle_close:.4f}, "
                 f"{YELLOW}保证金={margin:.4f}{RESET}, 加仓={buy_amt:.4f} USDT, 新均价={new_avg_entry:.4f}"
             )
             return float(buy_amt), f"dca_u={u + 1}"
@@ -1402,10 +1443,6 @@ class DcaTpLong(IStrategy):
         except Exception:
             lev = 1.0
 
-        try:
-            current_qty = float(trade.amount)
-        except Exception:
-            current_qty = 0.0
         try:
             current_qty = abs(float(trade.amount))
         except Exception:
@@ -1535,7 +1572,7 @@ class DcaTpLong(IStrategy):
                     float(
                         dca_tp_cfg.get(
                             "dca_tp_profit",
-                            0.8
+                            3
                         )
                     )
                     / 100
@@ -1638,7 +1675,7 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
 
             tp_reason = (
-                f"DCA快速止盈目标="
+                f"DCA止盈目标收益率="
                 f"{dca_tp_profit * 100:.2f}%"
             )
 
@@ -1842,8 +1879,8 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'grid_w', self._safe_int(new_w))
 
             logger.info(
-                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% "
-                f"(倍率x{scale_factor:.2f})]{RESET}, 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
+                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% {RESET}"
+                f"(订单规模倍率：{scale_factor:.2f})], 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
             )
@@ -1873,7 +1910,7 @@ class DcaTpLong(IStrategy):
             self._set(trade, 'grid_w', self._safe_int(new_w))
 
             logger.info(
-                f"[{trade.pair}] {RED}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
+                f"[{trade.pair}] {GREEN}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
                 f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
                 f"下次网格 加仓价={next_buy:.4f}, 减仓价={next_sell:.4f}"
             )
@@ -1886,9 +1923,11 @@ class DcaTpLong(IStrategy):
                 trade, current_time, current_rate, current_profit, **kwargs
             )
         except Exception:
+            logger.exception(f"[{trade.pair}] adjust_trade_position 异常")
             return None
 
     def _adjust_trade_position_impl(self, trade, current_time, current_rate, current_profit, **kwargs):
+
         if trade.has_open_orders:
             return None
 
@@ -1904,27 +1943,18 @@ class DcaTpLong(IStrategy):
 
         if current_time.tzinfo:
             current_time = current_time.replace(tzinfo=None)
-        open_time = trade.open_date_utc
-        if getattr(open_time, 'tzinfo', None):
-            open_time = open_time.replace(tzinfo=None)
-        candle_ts = self._index_candle_key(df.index[-1])
-        if candle_ts is None:
-            return None
-        df_tf, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
-        if df_tf.empty:
-            return None
-        last30_ts = self._index_candle_key(df_tf.index[-1])
-        if last30_ts is None:
-            return None
-        if candle_ts != last30_ts:
-            return None
 
         collateral = self._collateral_total()
         if collateral <= 0:
             return None
 
+        candle_ts = self._get_candle_ts(df)
+        if candle_ts is None:
+            logger.warning(f"[{trade.pair}] 无法获取有效 candle_ts，跳过")
+            return None
+
         # 1) 趋势加仓
-        res = self.trend_add(trade, last, margin, collateral, current_time, current_profit)
+        res = self.trend_add(trade, last, margin, collateral, current_time, current_profit, candle_ts)
         if res:
             return res
 

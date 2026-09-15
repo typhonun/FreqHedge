@@ -73,6 +73,9 @@ class ConfigService:
                         0.9
                     ) * 100,
 
+                "leverage":
+                    long_cfg.get("leverage", 10),
+
                 "pair_whitelist":
                     long_cfg.get("exchange", {}).get("pair_whitelist", []),
 
@@ -108,6 +111,9 @@ class ConfigService:
                         0.9
                     ) * 100,
 
+                "leverage":
+                    short_cfg.get("leverage", 10),
+
                 "pair_whitelist":
                     short_cfg["exchange"].get(
                         "pair_whitelist",
@@ -137,6 +143,10 @@ class ConfigService:
         cfg["dry_run_wallet"] = data.get("dry_run_wallet")
         cfg["max_open_trades"] = data.get("max_open_trades")
         cfg["tradable_balance_ratio"] = data.get("max_usage", 90) / 100
+
+        # 持仓杠杆
+        if "leverage" in data:
+            cfg["leverage"] = data["leverage"]
 
         # ✅ 防止 exchange 不存在
         exchange = cfg.setdefault("exchange", {})

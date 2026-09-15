@@ -1,5 +1,8 @@
 import sys
+import traceback
 from pathlib import Path
+
+import numpy as np
 
 USER_DATA_DIR = Path(__file__).resolve().parents[1]
 if str(USER_DATA_DIR) not in sys.path:
@@ -13,6 +16,7 @@ import pandas as pd
 from typing import Any, Optional
 import talib.abstract as ta
 from datetime import datetime
+from event_logger import record_event
 import logging
 
 RED = "\033[31m"
@@ -24,18 +28,51 @@ logger = logging.getLogger(__name__)
 
 
 class DcaTpShort(IStrategy):
+
     timeframe = '30m'
-    stoploss = -9
     can_short = True
-    can_long = False
-    use_exit_signal = False
+    use_exit_signal = True
     trailing_stop = False
     position_adjustment_enable = True
-    use_custom_stoploss = True
+    use_custom_stoploss = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._stop_loss_logged = set()
+
+    def bot_start(self, **kwargs) -> None:
+        """策略启动时打印一次配置概览"""
+
+        ft_cfg = self.config or {}
+
+        dry_run_wallet = ft_cfg.get("dry_run_wallet", 0)
+        stake_amount = ft_cfg.get("stake_amount", 0)
+        max_open_trades = ft_cfg.get("max_open_trades", 0)
+        tradable_balance_ratio = ft_cfg.get("tradable_balance_ratio", 0)
+        leverage = ft_cfg.get("leverage", 1)
+
+        exchange_cfg = ft_cfg.get("exchange", {}) or {}
+        pair_whitelist = exchange_cfg.get("pair_whitelist", []) or []
+        pair_blacklist = exchange_cfg.get("pair_blacklist", []) or []
+
+        logger.info(
+            "\n"
+            f"==================== 策略配置概览 ====================\n"
+            f"初始资金          : {dry_run_wallet} USDT\n"
+            f"开仓金额          : {stake_amount} USDT\n"
+            f"最大持仓          : {max_open_trades}\n"
+            f"资金利用率        : {tradable_balance_ratio}\n"
+            f"持仓杠杆          : {leverage}x\n"
+            f"白名单            : {', '.join(pair_whitelist) if pair_whitelist else '(空)'}\n"
+            f"黑名单            : {', '.join(pair_blacklist) if pair_blacklist else '(空)'}\n"
+            f"======================================================"
+        )
 
     def get_runtime_config(self):
 
-        return ConfigManager.get("short")
+        cfg = ConfigManager.get("short")
+
+        return cfg
 
     def _cfg(self, cfg: dict, *keys, default=None):
         cur = cfg
@@ -47,60 +84,366 @@ class DcaTpShort(IStrategy):
             cur = cur[key]
         return default if cur is None else cur
 
-    def _roi_target(self, cfg: dict, elapsed: float) -> tuple[float, int]:
-        levels = self._cfg(cfg, "tp", "roi_levels", default=[]) or []
+    def _roi_target(self, cfg: dict, elapsed: float):
+
+        levels = self._cfg(
+            cfg,
+            "tp",
+            "roi_levels",
+            default=[]
+        ) or []
+
         parsed = []
+
         for level in levels:
             if not isinstance(level, dict):
                 continue
+
             try:
-                minutes = int(level.get("minutes", 0))
+                minutes = self._cfg_int(level, "minutes", 0)
                 roi = float(level.get("roi", 0))
             except Exception:
                 continue
-            parsed.append((minutes, roi / 100.0))
 
-        parsed.sort(key=lambda item: item[0], reverse=True)
+            parsed.append(
+                (
+                    minutes,
+                    roi / 100
+                )
+            )
+
+        parsed.sort(
+            key=lambda x: x[0],
+            reverse=True
+        )
+
         for minutes, roi in parsed:
+
             if elapsed >= minutes:
                 return roi, minutes
-        return 0.0, 0
 
-    minimal_roi = {"0": 999.0}
+        return None, 0
 
-    def leverage(self, pair: str, **kwargs) -> float:
-        return 10
+    def leverage(self, pair, **kwargs):
+        try:
+            cfg = self.get_runtime_config()
 
-    def on_trade_open(self, trade: Trade, **kwargs) -> None:
+            # 1) 优先读顶层 leverage（和 config_long.json 对齐）
+            top_level = self._cfg(cfg, "leverage", default=None)
+            if top_level is not None:
+                try:
+                    return float(top_level)
+                except (TypeError, ValueError):
+                    pass
+
+            # 2) 再读 strategy.leverage
+            nested = self._cfg(cfg, "strategy", "leverage", default=None)
+            if nested is not None:
+                try:
+                    return float(nested)
+                except (TypeError, ValueError):
+                    pass
+
+            # 3) 默认
+            return 10.0
+
+        except Exception:
+            return 10.0
+
+    def _available_stake(self):
+        try:
+            free = self.wallets.get_free("USDT")
+            if free is None:
+                return 0.0
+            return float(free)
+        except Exception:
+            return 0.0
+
+    def _record_chart_marker(
+            self,
+            *,
+            event_type: str,
+            pair: str,
+            trade_id: int,
+            side: str,
+            price,
+            amount,
+            current_time,
+            message: str
+    ) -> None:
+        if current_time is None or price is None:
+            return
+
+        try:
+            price = float(price)
+            amount = float(amount)
+        except Exception:
+            return
+
+        record_event(
+            strategy=self.__class__.__name__,
+            pair=pair,
+            trade_id=trade_id,
+            event_type=event_type,
+            side=side,
+            price=price,
+            amount=amount,
+            message=message,
+            current_time=current_time
+        )
+
+    def order_filled(
+            self,
+            pair,
+            trade,
+            order,
+            current_time,
+            **kwargs
+    ):
+
+        entry_price = float(
+            order.average
+            or trade.open_rate
+        )
+
+        reason = str(
+            getattr(order, "ft_order_reason", None)
+            or getattr(order, "ft_order_tag", None)
+            or ""
+        ).lower()
+
+        if order.ft_order_side == "sell":
+
+            if reason.startswith("trend_add"):
+
+                self._record_chart_marker(
+                    event_type="trend_add",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="趋势加仓成交"
+                )
+
+            elif reason.startswith("grid_add"):
+
+                self._record_chart_marker(
+                    event_type="grid_add",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="网格加仓成交"
+                )
+
+            elif reason.startswith("dca"):
+
+                self._record_chart_marker(
+                    event_type="dca",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="DCA加仓成交"
+                )
+
+        elif order.ft_order_side == "buy":
+
+            if reason == "kdj_reduce_by_trend_added":
+                self._record_chart_marker(
+                    event_type="kdj_reduce",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="KDJ减仓成交"
+                )
+
+            elif reason.startswith("tp_afterDCA"):
+                self._record_chart_marker(
+                    event_type="tp",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="DCA止盈"
+                )
+
+            elif reason.startswith("tp_"):
+
+                self._record_chart_marker(
+                    event_type="tp",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="普通止盈"
+                )
+
+            elif reason.startswith("grid_sell"):
+
+                self._record_chart_marker(
+                    event_type="grid_sell",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=entry_price,
+                    amount=order.amount,
+                    current_time=current_time,
+                    message="网格减仓成交"
+                )
+
+        # =========================
+        # 初始化只执行一次
+        # =========================
+
+        if self._get_bool(
+                trade,
+                "initialized",
+                False
+        ):
+            return
+
+        cfg = self.get_runtime_config()
+
+        grid_cfg = self._cfg(
+            cfg,
+            "grid",
+            default={}
+        )
+
+        upper_pct = self._cfg_float(
+            grid_cfg,
+            "init_upper",
+            self._cfg_float(grid_cfg, "grid_upper", 2.0)
+        )
+
+        lower_pct = self._cfg_float(
+            grid_cfg,
+            "init_lower",
+            self._cfg_float(grid_cfg, "grid_lower", -2.0)
+        )
+
         flags = {
-            'dca_count': 0, 'tp_count': 0, 'dca_done': False,
-            'last_dca_candle': None, 'last_dca_time': None,
-            'need_resell': False, 'last_tp_time': None,
+
+            'dca_count': 0,
+
+            'tp_count': 0,
+
+            'dca_done': False,
+
+            'last_dca_candle': None,
+
+            'last_dca_time': None,
+
+            'need_rebuy': False,
+
+            'last_tp_time': None,
+
             'trend_level': 0,
+
+            'last_trend_candle': None,
+
             'reset_needed': False,
-            'loss_tp_armed': False,
-            'loss_tp_min_profit': 0.0,
+
+            'grid_anchor_price': 0.0,
+
+            'grid_w': 0,
+
         }
 
         for k, v in flags.items():
-            self._set(trade, k, v)
-        self._set(trade, 'dynamic_avg_entry', float(trade.open_rate or 0.0))
-        base_avg = float(trade.open_rate or 0.0)
-        self._set(trade, 'grid_upper', float(base_avg * 1.02))
-        self._set(trade, 'grid_lower', float(base_avg * 0.98))
-        self._set(trade, 'last_grid_action_time', None)
-        self._set(trade, 'grid_count', 0)
-        self._set(trade, 'grid_added_total_usdt', 0.0)
-        self._set(trade, 'grid_added_total_qty', 0.0)
-        self._set(trade, 'grid_reduced_total_usdt', 0.0)
+            self._set(
+                trade,
+                k,
+                v
+            )
+
+        entry_price = float(
+
+            getattr(
+                order,
+                "average",
+                None
+            )
+
+            or trade.open_rate
+
+            or 0
+
+        )
+
+        # 做空：上沿为加仓触发价，下沿为减仓触发价
+        self._set(
+            trade,
+            "grid_upper",
+            entry_price * (1 + upper_pct / 100)
+        )
+
+        self._set(
+            trade,
+            "grid_lower",
+            entry_price * (1 + lower_pct / 100)
+        )
+
+        self._set(
+            trade,
+            "grid_count",
+            0
+        )
+
+        self._set(
+            trade,
+            "grid_added_total_usdt",
+            0.0
+        )
+
+        self._set(
+            trade,
+            "grid_added_total_qty",
+            0.0
+        )
+
+        self._set(
+            trade,
+            "grid_reduced_total_usdt",
+            0.0
+        )
+
+        self._set(
+            trade,
+            "initialized",
+            True
+        )
+
+        tag = getattr(order, 'ft_order_tag', '') or ''
+
+        if tag.startswith("tp_") and order.side == "buy":
+            tp_cfg = self.get_runtime_config().get("tp", {})
+            if bool(tp_cfg.get("rebuy_enable", True)):
+                self._set(
+                    trade,
+                    'need_rebuy',
+                    True
+                )
 
     def _serial(self, v):
         if v is None:
             return None
-
         if isinstance(v, (pd.Timestamp, Timestamp, datetime)):
             return int(pd.Timestamp(v).timestamp())
-
         try:
             import numpy as np
             if isinstance(v, (np.floating, np.integer)):
@@ -109,31 +452,64 @@ class DcaTpShort(IStrategy):
                 return bool(v)
         except ImportError:
             pass
-
-        if isinstance(v, (int, float, bool)):
+        if isinstance(v, bool):
+            return bool(v)
+        if isinstance(v, (int, float)):
             return v
-
         if isinstance(v, str):
             s = v.strip()
             if s.lower() in ("", "null", "none", "nan", "na", "n/a"):
                 return None
-            return s
+            try:
+                f = float(s)
+                if f.is_integer():
+                    return int(f)
+                return f
+            except ValueError:
+                return s
         return str(v)
 
     def populate_indicators(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         cfg = self.get_runtime_config()
-        entry_cfg = self._cfg(cfg, "entry", default={}) or {}
-        rsi_cfg = self._cfg(entry_cfg, "rsi", default={}) or {}
-        bb_cfg = self._cfg(entry_cfg, "bb", default={}) or {}
-        macd_cfg = self._cfg(entry_cfg, "macd", default={}) or {}
-        volume_cfg = self._cfg(entry_cfg, "volume", default={}) or {}
+        indicator_cfg = self._cfg(
+            cfg,
+            "indicator",
+            default={}
+        ) or {}
 
-        rsi_period = int(rsi_cfg.get("period", 14) or 14)
-        bb_period = int(bb_cfg.get("period", 20) or 20)
-        bb_std = float(bb_cfg.get("std", 2) or 2)
-        macd_fast = int(macd_cfg.get("fast", 12) or 12)
-        macd_slow = int(macd_cfg.get("slow", 26) or 26)
-        macd_signal = int(macd_cfg.get("signal", 9) or 9)
+        rsi_cfg = self._cfg(
+            indicator_cfg,
+            "rsi",
+            default={}
+        ) or {}
+
+        bb_cfg = self._cfg(
+            indicator_cfg,
+            "bb",
+            default={}
+        ) or {}
+
+        macd_cfg = self._cfg(
+            indicator_cfg,
+            "macd",
+            default={}
+        ) or {}
+
+        kdj_cfg = self._cfg(
+            indicator_cfg,
+            "kdj",
+            default={}
+        ) or {}
+
+        ema_cfg = self._cfg(
+            indicator_cfg,
+            "ema",
+            default={}
+        ) or {}
+
+        rsi_period = self._cfg_int(rsi_cfg, "period", 14)
+        bb_period = self._cfg_int(bb_cfg, "period", 20)
+        bb_std = float(bb_cfg.get("std", 2))
 
         upper, mid, lower = ta.BBANDS(
             dataframe['close'],
@@ -145,71 +521,167 @@ class DcaTpShort(IStrategy):
         dataframe['bb_midband'] = mid
         dataframe['bb_lowerband'] = lower
         dataframe['rsi'] = ta.RSI(dataframe['close'], timeperiod=rsi_period)
-        dataframe['volume_sma_20'] = ta.SMA(dataframe['volume'], timeperiod=20)
 
-        df30 = self.dp.get_pair_dataframe(metadata['pair'], '30m')
+        df_tf = dataframe.copy()
 
-        if not df30.empty:
+        if not df_tf.empty:
+
             macd, macdsignal, macdhist = ta.MACD(
-                df30['close'],
-                fastperiod=macd_fast,
-                slowperiod=macd_slow,
-                signalperiod=macd_signal
+                df_tf['close'],
+
+                fastperiod=self._cfg_int(macd_cfg, "fast", 12),
+                slowperiod=self._cfg_int(macd_cfg, "slow", 26),
+                signalperiod=self._cfg_int(macd_cfg, "signal", 9)
             )
-            # KDJ
-            k, d = ta.STOCH(df30['high'], df30['low'], df30['close'],
-                            fastk_period=5, slowk_period=3, slowk_matype=0,
-                            slowd_period=3, slowd_matype=0)
+
+            k, d = ta.STOCH(
+                df_tf['high'],
+                df_tf['low'],
+                df_tf['close'],
+
+                fastk_period=self._cfg_int(kdj_cfg, "fastk", 5),
+                slowk_period=self._cfg_int(kdj_cfg, "slowk", 3),
+                slowd_period=self._cfg_int(kdj_cfg, "slowd", 3)
+            )
+
             j = 3 * k - 2 * d
-            # EMA
-            ema9 = ta.EMA(df30['close'], timeperiod=9)
-            ema21 = ta.EMA(df30['close'], timeperiod=21)
-            ema99 = ta.EMA(df30['close'], timeperiod=99)
-            adx = ta.ADX(df30['high'], df30['low'], df30['close'])
+
+            ema_fast = self._cfg_int(ema_cfg, "fast", 9)
+            ema_mid = self._cfg_int(ema_cfg, "mid", 21)
+            ema_slow = self._cfg_int(ema_cfg, "slow", 99)
 
             series_map = {
-                'macd_30': macd, 'macdsig_30': macdsignal, 'macdhist_30': macdhist,
-                'k_30': k, 'd_30': d, 'j_30': j,
-                'ema9_30': ema9, 'ema21_30': ema21, 'ema99_30': ema99,
-                'adx_30': adx
+                'macd_tf': macd,
+                'macdsig_tf': macdsignal,
+                'macdhist_tf': macdhist,
+                'k_tf': k,
+                'd_tf': d,
+                'j_tf': j,
+                f'ema{ema_fast}_tf': ta.EMA(
+                    df_tf['close'],
+                    timeperiod=ema_fast
+                ),
+                f'ema{ema_mid}_tf': ta.EMA(
+                    df_tf['close'],
+                    timeperiod=ema_mid
+                ),
+                f'ema{ema_slow}_tf': ta.EMA(
+                    df_tf['close'],
+                    timeperiod=ema_slow
+                )
             }
             for name, series in series_map.items():
-                dataframe[name] = pd.Series(series, index=df30.index).reindex(dataframe.index).ffill()
+                dataframe[name] = pd.Series(
+                    series,
+                    index=df_tf.index
+                )
+
         return dataframe
 
-    def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+    def populate_entry_trend(self, dataframe, metadata):
+
         cfg = self.get_runtime_config()
         entry_cfg = self._cfg(cfg, "entry", default={}) or {}
+
         rsi_cfg = self._cfg(entry_cfg, "rsi", default={}) or {}
         bb_cfg = self._cfg(entry_cfg, "bb", default={}) or {}
-        volume_cfg = self._cfg(entry_cfg, "volume", default={}) or {}
+        macd_cfg = self._cfg(entry_cfg, "macd", default={}) or {}
 
         rsi_enable = bool(rsi_cfg.get("enable", True))
         bb_enable = bool(bb_cfg.get("enable", True))
-        volume_enable = bool(volume_cfg.get("enable", True))
+        macd_enable = bool(macd_cfg.get("enable", True))
         rsi_value = float(rsi_cfg.get("value", 65) or 65)
 
-        conds = []
-        if bb_enable and 'bb_upperband' in dataframe.columns:
-            conds.append(dataframe['close'] > dataframe['bb_upperband'])
-        if rsi_enable and 'rsi' in dataframe.columns:
-            conds.append(dataframe['rsi'] > rsi_value)
-        if volume_enable and 'volume_sma_20' in dataframe.columns:
-            conds.append(dataframe['volume'] > dataframe['volume_sma_20'])
+        cond_map = {}
 
-        if conds:
-            short_cond = conds[0]
-            for cond in conds[1:]:
-                short_cond = short_cond & cond
+        # 做空：价格触及上轨
+        if bb_enable:
+            cond_map["BB"] = dataframe['close'] > dataframe['bb_upperband']
+
+        # 做空：RSI 高位
+        if rsi_enable:
+            cond_map["RSI"] = dataframe['rsi'] > rsi_value
+
+        # 做空：MACD 死叉
+        if macd_enable:
+            cond_map["MACD"] = dataframe['macd_tf'] < dataframe['macdsig_tf']
+
+        if cond_map:
+            short_cond = None
+            for cond in cond_map.values():
+                short_cond = cond if short_cond is None else (short_cond & cond)
         else:
             short_cond = pd.Series(False, index=dataframe.index)
 
-        dataframe['enter_short'] = short_cond.astype(int)
+        names = list(cond_map.keys())
+        tag_matrix = np.column_stack([
+            cond.values.astype(bool)
+            for cond in cond_map.values()
+        ]) if cond_map else np.zeros((len(dataframe), 0), dtype=bool)
+
+        enter_tags = [
+            "_".join([names[i] for i, v in enumerate(row) if v]) or "NONE"
+            for row in tag_matrix
+        ]
+        enter_tags = pd.Series(enter_tags, index=dataframe.index)
+
+        dataframe["enter_short"] = short_cond.astype(int)
+        dataframe.loc[short_cond, "enter_tag"] = enter_tags[short_cond]
+
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
         dataframe['exit_short'] = 0
         return dataframe
+
+    def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
+                            current_time, entry_tag, side, **kwargs):
+
+        try:
+            lev = float(self.leverage(pair) or 1.0)
+        except Exception:
+            lev = 1.0
+
+        try:
+            notional = float(amount) * float(rate)
+        except Exception:
+            notional = 0.0
+
+        try:
+            stake_amount = notional / lev
+        except Exception:
+            stake_amount = 0.0
+
+        rsi_value = None
+
+        try:
+            df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                rsi_value = float(last.get("rsi")) if last.get("rsi") is not None else None
+        except Exception as e:
+            logger.warning(f"[{pair}] confirm_trade_entry 读取指标失败: {e}")
+
+        logger.info(
+            f"[{pair}] {RED} 开空信号触发 {RESET}"
+            f"entry_tag={entry_tag} "
+            f"当前价={rate:.4f} "
+            f"保证金={stake_amount:.4f} USDT "
+            f"RSI={rsi_value} "
+        )
+
+        self._record_chart_marker(
+            event_type="signal",
+            pair=pair,
+            trade_id=0,
+            side="short",
+            price=rate,
+            amount=stake_amount,
+            current_time=current_time,
+            message=f"开空信号 {entry_tag}"
+        )
+
+        return True
 
     def _clean_val(self, v: Any) -> Optional[Any]:
         if v is None:
@@ -231,10 +703,13 @@ class DcaTpShort(IStrategy):
             return v
         return str(v)
 
-    def _get(self, trade: Trade, key: str, default: Any = None) -> Any:
+    def _get(self, trade, key, default=None):
         try:
             raw = trade.get_custom_data(key)
         except Exception:
+            logger.error(
+                f"_get 失败 key={key}\n{traceback.format_exc()}"
+            )
             raw = None
         val = self._clean_val(raw)
         return default if val is None else val
@@ -253,16 +728,75 @@ class DcaTpShort(IStrategy):
         except Exception:
             return default
 
-    def _get_int(self, trade: Trade, key: str, default: int = 0) -> int:
-        v = self._get(trade, key, None)
-        if v is None:
+    def _get_int(self, trade, key, default=0):
+        value = self._get(trade, key, default)
+
+        if value is None:
             return default
+
+        try:
+            f = float(value)
+            if pd.isna(f) or not (float('-inf') < f < float('inf')):
+                return default
+            return int(f)
+        except (TypeError, ValueError):
+            return default
+
+    def _cfg_int(self, cfg: dict, key: str, default: int) -> int:
+        v = cfg.get(key, default)
         if isinstance(v, bool):
             return int(v)
         try:
             return int(float(v))
         except Exception:
             return default
+
+    def _cfg_float(self, cfg: dict, key: str, default: float) -> float:
+        v = cfg.get(key, default)
+        if isinstance(v, bool):
+            return 1.0 if v else 0.0
+        try:
+            f = float(v)
+            if not (float('-inf') < f < float('inf')) or pd.isna(f):
+                return default
+            return f
+        except Exception:
+            return default
+
+    def _safe_int(self, value, default=0):
+        if value is None:
+            return default
+
+        try:
+            f = float(value)
+            if pd.isna(f) or not (float('-inf') < f < float('inf')):
+                return default
+            return int(f)
+        except (TypeError, ValueError):
+            return default
+
+    def _index_candle_key(self, value) -> int | None:
+        if value is None:
+            return None
+        try:
+            ts = pd.Timestamp(value)
+        except Exception:
+            try:
+                ts = pd.Timestamp(float(value), unit='s')
+            except Exception:
+                return None
+        try:
+            ts = ts.tz_localize(None)
+        except Exception:
+            pass
+        try:
+            ts = ts.floor('min')
+        except Exception:
+            pass
+        try:
+            return int(ts.timestamp())
+        except Exception:
+            return None
 
     def _get_bool(self, trade: Trade, key: str, default: bool = False) -> bool:
         v = self._get(trade, key, None)
@@ -282,8 +816,53 @@ class DcaTpShort(IStrategy):
         except Exception:
             return default
 
-    def _set(self, trade: Trade, key: str, value: Any) -> None:
-        trade.set_custom_data(key, self._serial(value))
+    def _set(self, trade, key, value):
+        value = self._serial(value)
+        old = self._get(trade, key, None)
+
+        if isinstance(value, float) and isinstance(old, float):
+            if abs(value - old) < 1e-8:
+                return
+
+        if old == value:
+            return
+
+        if key in ('grid_anchor_price', 'grid_upper', 'grid_lower'):
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                logger.error(f"_set 价格转换失败 key={key} value={value!r}")
+                return
+
+        try:
+            trade.set_custom_data(key, value)
+        except Exception:
+            logger.error(
+                f"_set 失败 key={key} value={value!r} type={type(value).__name__}\n"
+                f"{traceback.format_exc()}"
+            )
+
+    def _get_candle_ts(self, obj):
+        candle_key = None
+
+        if isinstance(obj, pd.DataFrame):
+            if 'date' in obj.columns:
+                candle_key = self._index_candle_key(obj['date'].iloc[-1])
+            if candle_key in (None, 0):
+                candle_key = self._index_candle_key(obj.index[-1])
+
+        elif isinstance(obj, pd.Series):
+            if 'date' in obj.index:
+                candle_key = self._index_candle_key(obj.get('date'))
+            if candle_key in (None, 0):
+                candle_key = self._index_candle_key(obj.name)
+
+        else:
+            return None
+
+        if candle_key in (None, 0):
+            return None
+        return candle_key
 
     def _collateral_total(self) -> float:
         try:
@@ -291,11 +870,17 @@ class DcaTpShort(IStrategy):
         except Exception:
             return 0.0
 
-    def _qty_from_usdt(self, usdt: float, price: float, lev: float) -> float:
-        try:
-            return (usdt * float(lev)) / float(price) if price and lev else 0.0
-        except Exception:
-            return 0.0
+    def _qty_from_usdt(
+            self,
+            usdt,
+            price,
+            lev=None
+    ):
+
+        if lev and lev > 0:
+            return usdt * lev / price
+
+        return usdt / price
 
     def _record_add_usdt(self, trade: Trade, key: str, usdt: float) -> None:
         prev = self._get_float(trade, key, 0.0)
@@ -317,92 +902,234 @@ class DcaTpShort(IStrategy):
             add = 0.0
         self._set(trade, key, prev + add)
 
-    def _record_add(self, trade: Trade, key: str, value: float) -> None:
-        prev = self._get_float(trade, key, 0.0)
-        try:
-            add = float(value)
-            if pd.isna(add) or not (float('-inf') < add < float('inf')):
-                add = 0.0
-        except Exception:
-            add = 0.0
-        self._set(trade, key, prev + add)
+    # ============================================================
+    # 趋势加仓（做空）
+    # ============================================================
 
-    def trend_add(self, trade: Trade, last: dict, margin: float, collateral: float, current_time: datetime,
-                  current_profit: float):
+    def trend_add(self, trade, last, margin, collateral, current_time, current_profit, candle=None):
+
         cfg = self.get_runtime_config()
-        trend_cfg = self._cfg(cfg, "trend_add", default={}) or {}
-        entry_cfg = self._cfg(cfg, "entry", default={}) or {}
-        macd_cfg = self._cfg(entry_cfg, "macd", default={}) or {}
-        if not bool(trend_cfg.get("enable", True)) or not bool(macd_cfg.get("enable", True)):
+        trend_cfg = self._cfg(
+            cfg,
+            "trend_add",
+            default={}
+        ) or {}
+
+        trend_enable = bool(
+            trend_cfg.get("enable", True)
+        )
+
+        kdj_reduce_cfg = trend_cfg.get(
+            "kdj_reduce",
+            {}
+        ) or {}
+
+        kdj_reduce_enable = bool(
+            kdj_reduce_cfg.get(
+                "enable",
+                True
+            )
+        )
+
+        indicator_cfg = self._cfg(
+            cfg,
+            "indicator",
+            default={}
+        ) or {}
+
+        ema_cfg = self._cfg(
+            indicator_cfg,
+            "ema",
+            default={}
+        ) or {}
+
+        condition_mode = trend_cfg.get(
+            "condition",
+            "and"
+        )
+
+        if candle in (None, 0):
+            candle = self._get_candle_ts(last)
+            if candle in (None, 0):
+                logger.warning(
+                    f"[{trade.pair}] trend_add return: candle 无效, "
+                    f"last.name={last.name!r}, last.date={last.get('date')!r}"
+                )
+                return None
+
+        last_trend = self._get_int(
+            trade,
+            'last_trend_candle',
+            0
+        )
+
+        if candle == last_trend:
+            return None
+
+        if not trend_enable:
             return None
 
         level = self._get_int(trade, 'trend_level', 0)
         reset_needed = self._get_bool(trade, 'reset_needed', False)
-        u = self._get_int(trade, 'dca_count', 0)
-        levels = trend_cfg.get("levels") or []
-        level_cfg = levels[min(level, len(levels) - 1)] if levels else {}
-        max_count = max(1, int(trend_cfg.get("max_count", 3) or 3))
+        ema_fast = self._cfg_int(ema_cfg, "fast", 9)
+        ema_mid = self._cfg_int(ema_cfg, "mid", 21)
+        ema_slow = self._cfg_int(ema_cfg, "slow", 99)
         try:
-            profit_threshold = float(level_cfg.get("profit", 2) or 2) / 100.0
-        except Exception:
-            profit_threshold = 0.02
-        try:
-            rsi_threshold = float(level_cfg.get("rsi", 40) or 40)
-        except Exception:
-            rsi_threshold = 40.0
-        try:
-            amount_pct = float(level_cfg.get("amount", 0.5) or 0.5) / 100.0
+            amount_pct = float(
+                trend_cfg.get(
+                    "amount_percent",
+                    0.5
+                )
+            ) / 100
+
         except Exception:
             amount_pct = 0.005
 
-        is_bearish_trend = (
-                last.get('macd_30', 0) < last.get('macdsig_30', 0) and
-                last.get('k_30', 0) < last.get('d_30', 0) and
-                last.get('adx_30', 0) > 25 and
-                last.get('ema9_30', 0) < last.get('ema21_30', 0) < last.get('ema99_30', 0)
-        )
+        trend_conditions = []
+
+        # 做空：MACD 死叉
+        if bool(
+                trend_cfg.get(
+                    "macd_enable",
+                    True
+                )
+        ):
+            trend_conditions.append(
+                last.get('macd_tf', 0)
+                <
+                last.get('macdsig_tf', 0)
+            )
+
+        # 做空：KDJ 死叉
+        if bool(trend_cfg.get("kdj_enable", True)):
+            trend_conditions.append(
+                last.get('k_tf', 0)
+                <
+                last.get('d_tf', 0)
+            )
+
+        # 做空：EMA 空头排列
+        if bool(
+                trend_cfg.get(
+                    "ema_enable",
+                    True
+                )
+        ):
+            trend_conditions.append(
+                last.get(f'ema{ema_fast}_tf', 0)
+                <
+                last.get(f'ema{ema_mid}_tf', 0)
+                <
+                last.get(f'ema{ema_slow}_tf', 0)
+            )
+
+        if not trend_conditions:
+            is_bearish_trend = False
+
+        elif condition_mode == "or":
+            is_bearish_trend = any(trend_conditions)
+
+        else:
+            is_bearish_trend = all(trend_conditions)
+
         price = last.get('close', None)
 
         def _add_trend_total_usdt(x):
             self._record_add_usdt(trade, 'trend_total_added_usdt', x)
 
         if (
-                level < max_count
-                and u == 0
-                and (not reset_needed)
+                level == 0
+                and not reset_needed
                 and price is not None
                 and is_bearish_trend
-                and current_profit >= profit_threshold
-                and float(last.get("rsi", 0) or 0) <= rsi_threshold
         ):
-            self._set(trade, 'trend_level', level + 1)
             self._set(trade, 'kdj_reduced', False)
-            add_amt = collateral * amount_pct  # 趋势加仓
-            _add_trend_total_usdt(abs(add_amt))
+            amt = min(
+                collateral * amount_pct,
+                self._available_stake() * 0.8
+            )
+            _add_trend_total_usdt(abs(amt))
+            self._set(
+                trade,
+                'trend_level',
+                level + 1
+            )
+            self._set(
+                trade,
+                'last_trend_candle',
+                candle
+            )
+            avg_price = float(trade.open_rate)
 
-            avg_price = getattr(trade, 'open_rate', None)
-            if avg_price is None:
-                avg_price = 0.0
+            old_qty = abs(float(trade.amount))
 
-            logger.info(f"[{trade.pair}] {GREEN}[空头趋势加仓 {amount_pct * 100:.1f}%]{RESET}, "
-                        f"{YELLOW} 保证金={margin:.2f}{RESET}, 当前价={price:.4f}, "
-                        f"加仓={abs(add_amt):.4f} USDT, 新均价={avg_price:.4f}")
-            return float(add_amt), 'trend_add20_bear'
+            lev = float(self.leverage(trade.pair))
 
-        if level > 0:
-            kdj_reduced = self._get_bool(trade, 'kdj_reduced', False)
-            if (not kdj_reduced) and last.get('k_30', 0) > last.get('d_30', 0):
-                total_trend_usdt = self._get_float(trade, 'trend_total_added_usdt', 0.0) or 0.0
-                buy_usdt = min(total_trend_usdt, margin)
-                amt = float(buy_usdt)
-                self._set(trade, 'trend_total_added_usdt', 0.0)
+            add_qty = self._qty_from_usdt(
+                amt,
+                price,
+                lev
+            )
+
+            old_avg = avg_price
+
+            new_avg = old_avg
+
+            if old_qty + add_qty > 0:
+                new_avg = (
+                                  old_qty * old_avg +
+                                  add_qty * price
+                          ) / (
+                                  old_qty + add_qty
+                          )
+
+            logger.info(f"[{trade.pair}] {RED}[空头趋势加仓 {amount_pct * 100:.1f}%]{RESET}, "
+                        f"{YELLOW} 保证金={margin:.2f}{RESET}, "f"当前价={price:.4f}, "
+                        f"加仓={abs(amt):.4f} USDT, 新均价={new_avg:.4f}")
+
+            return float(amt), 'trend_add20_bear'
+
+        if (
+                trend_enable
+                and level > 0
+                and kdj_reduce_enable
+        ):
+
+            kdj_reduced = self._get_bool(
+                trade,
+                'kdj_reduced',
+                False
+            )
+
+            # 做空：KDJ 金叉时减仓
+            if (
+                    not kdj_reduced
+                    and
+                    last.get('k_tf', 0)
+                    >
+                    last.get('d_tf', 0)
+            ):
+                reduce_percent = float(
+                    kdj_reduce_cfg.get("reduce_percent", 50)
+                )
+
+                sell_usdt = min(
+                    collateral * (reduce_percent / 100),
+                    margin
+                )
+                amt = -float(sell_usdt)
+
                 self._set(trade, 'trend_level', 0)
                 self._set(trade, 'kdj_reduced', True)
 
-                logger.info(f"[{trade.pair}] {RED}[KDJ 减仓]{RESET}, "
+                logger.info(f"[{trade.pair}] {GREEN}[KDJ 减仓 {reduce_percent:.1f}%]{RESET}, "
                             f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
                             f"减仓={abs(amt):.4f} USDT")
-                return float(-amt), 'kdj_reduce_by_trend_added'
+                return float(amt), 'kdj_reduce_by_trend_added'
+
+    # ============================================================
+    # DCA 加仓（做空）
+    # ============================================================
 
     def dca_add(self, trade: Trade, df: DataFrame, last: dict, current_time: datetime, current_rate: float):
         cfg = self.get_runtime_config()
@@ -410,18 +1137,21 @@ class DcaTpShort(IStrategy):
         if not bool(dca_cfg.get("enable", True)):
             return None
 
-        last_idx = df.index[-1]
-        candle_ts = pd.Timestamp(last_idx).tz_localize(None).floor('min')
+        candle_key = self._get_candle_ts(df)
+        if candle_key is None:
+            return None
+        candle_ts = pd.Timestamp(candle_key, unit='s').tz_localize(None).floor('min')
+
         last_rsi = df['rsi'].iat[-1] if 'rsi' in df.columns else None
-        last_j = df['j_30'].iat[-1] if 'j_30' in df.columns else None
+        last_j = df['j_tf'].iat[-1] if 'j_tf' in df.columns else None
 
         u = self._get_int(trade, 'dca_count', 0)
         levels = dca_cfg.get("levels") or []
         level_cfg = levels[min(u, len(levels) - 1)] if levels else {}
-        max_dca = int(dca_cfg.get("max_count", 7) or 7)
-        cooldown_minutes = int(dca_cfg.get("cooldown_minutes", 60) or 60)
+        max_dca = self._cfg_int(dca_cfg, "max_count", 7)
+        cooldown_minutes = self._cfg_int(dca_cfg, "cooldown_minutes", 60)
         last_dca = self._get_int(trade, 'last_dca_candle', 0)
-        last_dca_ts = Timestamp(int(last_dca), unit='s') if last_dca else None
+        last_dca_ts = Timestamp(self._safe_int(last_dca), unit='s') if last_dca else None
         if last_dca_ts is None or last_dca_ts != candle_ts:
             self._set(trade, 'dca_done', False)
         dca_done = self._get_bool(trade, 'dca_done', False)
@@ -430,7 +1160,7 @@ class DcaTpShort(IStrategy):
         last_dca_time = self._get_int(trade, 'last_dca_time', 0)
         if last_dca_time:
             try:
-                last_dca_dt = datetime.fromtimestamp(int(last_dca_time))
+                last_dca_dt = datetime.fromtimestamp(self._safe_int(last_dca_time))
                 if (current_time - last_dca_dt).total_seconds() < 60 * cooldown_minutes:
                     within_dca_cooldown = True
             except Exception:
@@ -440,19 +1170,41 @@ class DcaTpShort(IStrategy):
             logger.debug(f"[{trade.pair}] 已达 DCA 次数上限 u={u}，跳过浮亏 DCA")
             return None
 
-        avg_entry = self._get_float(trade, 'dynamic_avg_entry', float(trade.open_rate or 0.0)) or float(
-            trade.open_rate or 0.0)
-        try:
-            lev = float(self.leverage(trade.pair) or 1.0)
-        except Exception:
-            lev = 1.0
+        avg_entry = float(trade.open_rate)
 
-        try:
-            drawdown = abs(float(level_cfg.get("drawdown", -3) or -3))
-        except Exception:
-            drawdown = 3.0
+        base_offset = float(
+            dca_cfg.get(
+                "price_offset",
+                1.0
+            )
+        )
 
-        threshold = avg_entry * (1 + drawdown / 100.0)  # dca 阈值
+        price_multiplier = float(
+            dca_cfg.get(
+                "price_multiplier",
+                1.0
+            )
+        )
+
+        u = self._get_int(
+            trade,
+            'dca_count',
+            0
+        )
+
+        effective_percent = (
+                base_offset *
+                (
+                        price_multiplier ** u
+                )
+        )
+
+        # 做空：价格上涨时加仓
+        threshold = avg_entry * (
+                1 +
+                effective_percent / 100
+        )
+
         try:
             rsi_limit = float(level_cfg.get("rsi_limit", 80) or 80)
         except Exception:
@@ -461,12 +1213,24 @@ class DcaTpShort(IStrategy):
             j_limit = float(level_cfg.get("j_limit", 100) or 100)
         except Exception:
             j_limit = 100.0
+
         cond_mode = str(dca_cfg.get("condition", "or")).lower()
+        # 做空：J 高位、RSI 高位
         cond_j = (last_j is not None and last_j > j_limit)
         cond_rsi = (last_rsi is not None and last_rsi > rsi_limit)
-        if cond_mode == "and":
+
+        if cond_mode == "rsi":
+            triggered_cond = cond_rsi
+            triggered_label = f"RSI>{rsi_limit:g}"
+
+        elif cond_mode == "j":
+            triggered_cond = cond_j
+            triggered_label = f"J>{j_limit:g}"
+
+        elif cond_mode == "and":
             triggered_cond = cond_j and cond_rsi
             triggered_label = f"J>{j_limit:g} & RSI>{rsi_limit:g}"
+
         else:
             triggered_cond = cond_j or cond_rsi
             triggered_label = f"J>{j_limit:g} 或 RSI>{rsi_limit:g}"
@@ -477,7 +1241,7 @@ class DcaTpShort(IStrategy):
             candle_close = None
 
         logger.debug(
-            f"[{trade.pair}] DCA(check for short): u={u}, avg_entry={avg_entry:.8f}, threshold={threshold:.8f}, candle_close={candle_close}, triggered_cond={triggered_cond}")
+            f"[{trade.pair}] DCA check: u={u}, avg_entry={avg_entry:.8f}, threshold={threshold:.8f}, candle_close={candle_close}, triggered_cond={triggered_cond}")
 
         if within_dca_cooldown:
             logger.debug(f"[{trade.pair}] 浮亏 DCA 冷却中")
@@ -486,47 +1250,92 @@ class DcaTpShort(IStrategy):
             logger.debug(f"[{trade.pair}] 本根 K 已执行 DCA，跳过")
             return None
 
+        # 做空：价格 >= 阈值 时加仓
         if (candle_close is not None) and triggered_cond and (candle_close >= threshold):
-            collateral = self._collateral_total()
+            available = self._available_stake()
+
+            if available <= 0:
+                logger.info(f"{trade.pair} 无可用资金")
+                return None
+
             try:
                 margin = float(trade.stake_amount)
             except Exception:
                 margin = 0.0
 
-            try:
-                dca_pct = float(level_cfg.get("amount", 1) or 1) / 100.0
-            except Exception:
-                dca_pct = 0.01
-            sell_amt = collateral * dca_pct
+            amount_mode = str(dca_cfg.get("amount_mode", "auto")).lower()
+            collateral = self._collateral_total()
+
+            if amount_mode == "auto":
+                base_percent = float(dca_cfg.get("base_percent", 2) or 2)
+                amount_multiplier = float(dca_cfg.get("amount_multiplier", 1.0) or 1.0)
+
+                base_amount = collateral * (base_percent / 100.0)
+                buy_amt = base_amount * (amount_multiplier ** u)
+                actual_pct = base_percent * (amount_multiplier ** u)
+
+                amount_text = (
+                    f"模式：自动, "
+                )
+            else:
+                base_amount = float(level_cfg.get("amount", 100) or 100)
+                buy_amt = base_amount
+                amount_multiplier = 1.0
+                actual_pct = (buy_amt / collateral * 100) if collateral > 0 else 0.0
+                amount_text = (
+                    f"模式：手动, 本层金额={base_amount}"
+                )
+
             try:
                 prev_qty = abs(trade.amount)
             except Exception:
                 prev_qty = 0.0
-            prev_cost = prev_qty * avg_entry
-            added_qty = self._qty_from_usdt(sell_amt, candle_close, lev)
-            new_avg_entry = avg_entry
-            if (prev_qty + added_qty) > 0:
-                new_avg_entry = (prev_cost + sell_amt * lev) / (prev_qty + added_qty)
+
+            lev = float(self.leverage(trade.pair))
+            added_qty = self._qty_from_usdt(buy_amt, candle_close, lev)
+
+            prev_value = prev_qty * avg_entry
+            added_value = added_qty * candle_close
+
+            new_avg_entry = (prev_value + added_value) / (prev_qty + added_qty)
 
             self._set(trade, 'dca_count', u + 1)
             self._set(trade, 'dca_done', True)
-            self._set(trade, 'last_dca_candle', int(candle_ts.timestamp()))
-            self._set(trade, 'last_dca_time', int(current_time.timestamp()))
+            self._set(trade, 'last_dca_candle', self._safe_int(candle_ts.timestamp()))
+            self._set(trade, 'last_dca_time', self._safe_int(current_time.timestamp()))
             self._set(trade, 'tp_count', 0)
-            self._set(trade, 'dynamic_avg_entry', float(new_avg_entry))
+
+            try:
+                rsi_val_text = f"{float(last_rsi):.2f}" if last_rsi is not None else "None"
+            except Exception:
+                rsi_val_text = "None"
+
+            try:
+                j_val_text = f"{float(last_j):.2f}" if last_j is not None else "None"
+            except Exception:
+                j_val_text = "None"
 
             logger.info(
-                f"[{trade.pair}] {RED}[浮亏 DCA 加仓 {dca_pct * 100:.1f}%]{RESET}, u=({u}->{u + 1}), "
-                f"触发条件={triggered_label}, 触发价={threshold:.4f}, 收盘价={candle_close:.4f}, "
-                f"{YELLOW}保证金={margin:.4f}{RESET}, 加仓={sell_amt:.4f} USDT, 新均价={new_avg_entry:.4f}"
+                f"[{trade.pair}] {RED}[浮亏 DCA 加仓 {actual_pct:.2f}% {RESET}"
+                f"订单规模倍率：{amount_multiplier ** u:.2f})], u=({u}->{u + 1}), "
+                f"{amount_text}, "
+                f"触发条件={triggered_label}, "
+                f"RSI={rsi_val_text}, J={j_val_text}, "
+                f"触发价={threshold:.4f}, 收盘价={candle_close:.4f}, "
+                f"{YELLOW}保证金={margin:.4f}{RESET}, 加仓={buy_amt:.4f} USDT, 新均价={new_avg_entry:.4f}"
             )
-            return float(sell_amt), f"dca_u={u + 1}"
+            return float(buy_amt), f"dca_u={u + 1}"
+        return None
 
-    def profit_resell(self, trade: Trade, last: dict, collateral: float):
+    # ============================================================
+    # 浮盈加仓（做空）
+    # ============================================================
+
+    def profit_rebuy(self, trade: Trade, last: dict, collateral: float):
         cfg = self.get_runtime_config()
         tp_cfg = self._cfg(cfg, "tp", default={}) or {}
-        need_resell = self._get_bool(trade, 'need_resell', False)
-        if not need_resell or not bool(tp_cfg.get("rebuy_enable", True)):
+        need_rebuy = self._get_bool(trade, 'need_rebuy', False)
+        if not need_rebuy or not bool(tp_cfg.get("rebuy_enable", True)):
             return None
 
         price = last.get('close', None)
@@ -539,93 +1348,154 @@ class DcaTpShort(IStrategy):
             lev = 1.0
 
         try:
-            current_qty = float(trade.amount)
+            current_qty = abs(float(trade.amount))
         except Exception:
             current_qty = 0.0
 
-        current_value = (current_qty * price) / lev if price and lev else 0.0
+        current_value = (
+                current_qty * price / lev
+        ) if price else 0.0
+
         try:
             target_wallet_percent = float(tp_cfg.get("target_wallet_percent", 5) or 5)
         except Exception:
             target_wallet_percent = 5.0
         target_value = collateral * (target_wallet_percent / 100.0)
-        sell_amt = target_value - current_value
+        buy_amt = target_value - current_value
 
-        if sell_amt <= 0:
-            self._set(trade, 'need_resell', False)
+        if buy_amt <= 0:
             return None
 
         n = self._get_int(trade, 'tp_count', 0)
-
-        self._set(trade, 'need_resell', False)
+        self._set(trade, 'need_rebuy', False)
         self._set(trade, 'dca_done', False)
         self._set(trade, 'tp_count', n + 1)
 
-        avg_price = getattr(trade, 'open_rate', None)
-        if avg_price is None:
-            avg_price = 0.0
-
-        added_qty = (sell_amt * lev) / price if price and lev else 0.0
-        prev_cost = current_qty * avg_price
-        new_avg = avg_price
-        if (current_qty + added_qty) > 0:
-            new_avg = (prev_cost + sell_amt * lev) / (current_qty + added_qty)
-
+        avg_price = float(trade.open_rate or 0.0)
+        added_qty = (
+                buy_amt / price
+        ) if price else 0
+        if current_qty <= 0:
+            new_avg = price
+        else:
+            new_avg = (
+                              current_qty * avg_price +
+                              added_qty * price
+                      ) / (
+                              current_qty + added_qty
+                      )
         logger.info(
-            f"[{trade.pair}] {GREEN}[浮盈加仓至 {target_wallet_percent:.0f}%]{RESET}, "
-            f"n=({n}->{n + 1}), 当前价={price:.4f}, "
-            f"{YELLOW}保证金={current_value:.4f}{RESET}, "
-            f"加仓={sell_amt:.4f} USDT, 新均价={new_avg:.4f}"
+            f"[{trade.pair}] {RED}[浮盈加仓至 {target_wallet_percent:.0f}%]{RESET}, n=({n}->{n + 1}), 当前价={price:.4f}, "
+            f"{YELLOW}保证金={current_value:.4f}{RESET}, 加仓={buy_amt:.4f} USDT, 新均价={new_avg:.4f}"
+        )
+        return (
+            float(buy_amt),
+            f"rebuy_to_{target_wallet_percent:.0f}pct"
         )
 
-        return float(sell_amt), "add_to_5pct"
+    # ============================================================
+    # TP 止盈（做空）
+    # ============================================================
 
-    def tp_reduce(self, trade: Trade, last: dict, current_profit: float, margin: float, current_rate: float,
-                  current_time: datetime):
+    def tp_reduce(
+            self,
+            trade: Trade,
+            last: dict,
+            current_profit: float,
+            margin: float,
+            current_rate: float,
+            current_time: datetime
+    ):
+
         cfg = self.get_runtime_config()
+
         tp_cfg = self._cfg(cfg, "tp", default={}) or {}
-        loss_tp_cfg = self._cfg(cfg, "loss_tp", default={}) or {}
+        dca_tp_cfg = self._cfg(
+            cfg,
+            "loss_tp",
+            default={}
+        ) or {}
+
         if not bool(tp_cfg.get("enable", True)):
             return None
 
-        last_tp = self._get_int(trade, 'last_tp_time', None)
-        if last_tp is not None:
-            base_time = datetime.fromtimestamp(int(last_tp))
-        else:
-            base_time = trade.open_date_utc
-            if getattr(base_time, 'tzinfo', None):
-                base_time = base_time.replace(tzinfo=None)
-        elapsed = (current_time - base_time).total_seconds() / 60
-        roi_target, roi_minutes = self._roi_target(cfg, elapsed)
-        u = self._get_int(trade, 'dca_count', 0)
-        loss_enabled = bool(loss_tp_cfg.get("enable", True))
-        loss_tp_ready = False
-        if u > 0 and loss_enabled:
-            try:
-                trigger_loss = float(loss_tp_cfg.get("trigger_loss", -10) or -10) / 100.0
-            except Exception:
-                trigger_loss = -0.10
-            try:
-                trigger_rebound = float(loss_tp_cfg.get("trigger_rebound", 2) or 2) / 100.0
-            except Exception:
-                trigger_rebound = 0.02
-            armed = self._get_bool(trade, 'loss_tp_armed', False)
-            if current_profit <= trigger_loss:
-                self._set(trade, 'loss_tp_armed', True)
-                self._set(trade, 'loss_tp_min_profit', float(current_profit))
-                return None
-            if armed:
-                min_profit = self._get_float(trade, 'loss_tp_min_profit', current_profit)
-                if current_profit < min_profit:
-                    self._set(trade, 'loss_tp_min_profit', float(current_profit))
-                    return None
-                if current_profit < trigger_rebound:
-                    return None
-                self._set(trade, 'loss_tp_armed', False)
-                loss_tp_ready = True
+        account_profit = float(current_profit)
 
-        if current_profit < roi_target and not loss_tp_ready:
-            return None
+        last_tp = self._get_int(
+            trade,
+            'last_tp_time',
+            None
+        )
+
+        if last_tp is not None:
+
+            base_time = datetime.fromtimestamp(
+                self._safe_int(last_tp)
+            )
+
+        else:
+
+            base_time = trade.open_date_utc
+
+            if getattr(base_time, 'tzinfo', None):
+                base_time = base_time.replace(
+                    tzinfo=None
+                )
+
+        elapsed = (
+                          current_time - base_time
+                  ).total_seconds() / 60
+
+        roi_target, roi_minutes = self._roi_target(
+            cfg,
+            elapsed
+        )
+
+        roi_text = (
+            f"{roi_target * 100:.2f}%({roi_minutes}min)"
+            if roi_target is not None
+            else "None"
+        )
+
+        u = self._get_int(
+            trade,
+            'dca_count',
+            0
+        )
+
+        try:
+            dca_tp_profit = (
+                    float(
+                        dca_tp_cfg.get(
+                            "dca_tp_profit",
+                            3
+                        )
+                    )
+                    / 100
+            )
+
+        except Exception:
+            dca_tp_profit = 0.008
+
+        dca_tp_ready = False
+
+        if u > 0:
+
+            if account_profit >= dca_tp_profit:
+                dca_tp_ready = True
+
+        if u > 0:
+
+            if not dca_tp_ready:
+                return None
+
+        else:
+
+            if roi_target is None:
+                return None
+
+            if account_profit < roi_target:
+                return None
 
         # -- 浮亏 DCA 止盈 --
         if u > 0:
@@ -633,8 +1503,8 @@ class DcaTpShort(IStrategy):
                 current_qty = float(trade.amount)
             except Exception:
                 current_qty = 0.0
-            current_qty_abs = abs(current_qty)
 
+            current_qty_abs = abs(current_qty)
             try:
                 price = float(current_rate) if current_rate is not None else None
             except Exception:
@@ -657,65 +1527,96 @@ class DcaTpShort(IStrategy):
                 target_wallet_percent = 5.0
             target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
             target_qty = (target_usdt * lev) / price
-            buy_qty = max(0.0, current_qty_abs - target_qty)
+            sell_qty = max(0.0, current_qty_abs - target_qty)
 
-            if buy_qty <= 0:
+            if sell_qty <= 0:
                 need_add_usdt = max(0.0, target_usdt - margin_val)
                 if need_add_usdt > 0:
                     self._set(trade, 'dca_count', 0)
                     self._set(trade, 'dca_done', False)
-                    self._set(trade, 'last_tp_time', int(current_time.timestamp()))
+                    self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
 
                     logger.info(
-                        f"[{trade.pair}] {GREEN}[当前仓位过小，浮亏DCA止盈加仓至 {target_wallet_percent:.0f}%]{RESET}, "
+                        f"[{trade.pair}] {RED}[当前仓位过小，浮亏DCA止盈加仓至 {target_wallet_percent:.0f}%]{RESET}, "
                         f"保证金={margin_val:.4f}, 加仓={need_add_usdt:.4f} USDT"
                     )
-                    return float(need_add_usdt), "tp_afterDCA_resell_to_target"
+                    return float(need_add_usdt), "tp_afterDCA_rebuy_to_target"
                 return None
 
             try:
-                buy_usdt = (buy_qty * price) / lev if lev and price else 0.0
+                sell_usdt = (sell_qty * price) / lev if lev and price else 0.0
             except Exception:
-                buy_usdt = 0.0
-            buy_usdt_capped = min(buy_usdt, max(0.0, margin_val))
+                sell_usdt = 0.0
 
-            if buy_usdt_capped <= 0:
+            sell_usdt_capped = min(sell_usdt, max(0.0, margin_val))
+
+            if sell_usdt_capped <= 0:
                 logger.warning(
-                    f"[{trade.pair}] [浮亏 DCA 止盈跳过] 计算到的 buy_usdt={buy_usdt_capped:.6f} 无效或被保证金限制, 跳过")
+                    f"[{trade.pair}] [浮亏 DCA 止盈跳过] 计算到的 sell_usdt={sell_usdt_capped:.6f} 无效或被保证金限制, 跳过")
                 return None
 
             self._set(trade, 'dca_count', 0)
             self._set(trade, 'dca_done', False)
-            self._set(trade, 'last_tp_time', int(current_time.timestamp()))
+            self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
+
+            tp_reason = (
+                f"DCA止盈目标收益率="
+                f"{dca_tp_profit * 100:.2f}%"
+            )
 
             logger.info(
-                f"[{trade.pair}] {GREEN}[浮亏止盈减仓至 {target_wallet_percent:.0f}%]{RESET}, "
-                f"持仓时间={roi_minutes}min, 目标收益率={roi_target * 100:.0f}%, 当前收益率={current_profit * 100:.2f}%, "
-                f"{YELLOW}保证金={margin:.4f} USDT, 当前价={last.get('close'):.4f}, "
-                f"减仓={buy_usdt_capped:.4f} USDT"
+                f"[{trade.pair}] {RED}[浮亏止盈减仓至 {target_wallet_percent:.0f}%]{RESET}, "
+                f"DCA次数={u}, "
+                f"{tp_reason}, "
+                f"当前收益={account_profit * 100:.2f}%, "
+                f"{YELLOW}保证金={margin:.2f} {RESET} USDT, "
+                f"当前价={last.get('close'):.4f}, "
+                f"减仓={sell_usdt_capped:.4f} USDT"
             )
-            return float(-buy_usdt_capped), "tp_afterDCA_reduce_keep_target"
+
+            return float(-sell_usdt_capped), "tp_afterDCA_sell_keep_target"
 
         # -- 浮盈 TP 减仓 --
-        try:
-            reduce_percent = float(tp_cfg.get("reduce_percent", 30) or 30)
-        except Exception:
-            reduce_percent = 30.0
-        buy_amt = (reduce_percent / 100.0) * margin
+        rebuy_enable = bool(tp_cfg.get("rebuy_enable", True))
+
+        if rebuy_enable:
+            try:
+                reduce_percent = float(
+                    tp_cfg.get(
+                        "reduce_percent",
+                        30
+                    )
+                )
+            except Exception:
+                reduce_percent = 30
+        else:
+            reduce_percent = 100.0
+
+        sell_amt = -(reduce_percent / 100.0) * margin
         self._set(trade, 'dca_done', False)
-        self._set(trade, 'last_tp_time', int(current_time.timestamp()))
+        self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
         self._set(trade, 'last_tp_margin', float(margin))
-        self._set(trade, 'need_resell', bool(tp_cfg.get("rebuy_enable", True)))
+        self._set(trade, 'need_rebuy', bool(tp_cfg.get("rebuy_enable", True)))
 
-        logger.info(f"[{trade.pair}] {GREEN}[浮盈分批减仓 {reduce_percent:.0f}%]{RESET}, "
-                    f"持仓时间>{roi_minutes}min, 目标收益率={roi_target * 100:.0f}%, 当前收益率={current_profit * 100:.2f}%, "
-                    f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
-                    f"减仓={abs(buy_amt):.4f}")
-        return float(-buy_amt), "tp30"
+        logger.info(
+            f"[{trade.pair}] {RED}[浮盈减仓 {reduce_percent:.0f}%]{RESET}, "
+            f"持仓时间={elapsed:.0f}min, "
+            f"ROI目标={roi_text}, "
+            f"当前收益率={account_profit * 100:.2f}%, "
+            f"{YELLOW}保证金={margin:.2f}{RESET}, "
+            f"当前价={last.get('close'):.4f}, "
+            f"减仓={abs(sell_amt):.4f}"
+        )
+        tp_tag = f"tp_{reduce_percent}"
+        return float(sell_amt), tp_tag
 
-    # -- 网格 --
+    # ============================================================
+    # 网格（做空）
+    # ============================================================
+
     def grid_single(self, trade: Trade, last: dict, current_time: datetime, current_rate: float,
                     margin: float = None):
+
         cfg = self.get_runtime_config()
         grid_cfg = self._cfg(cfg, "grid", default={}) or {}
         if not bool(grid_cfg.get("enable", True)):
@@ -738,26 +1639,22 @@ class DcaTpShort(IStrategy):
         anchor = self._get_float(trade, 'grid_anchor_price', None)
         if anchor is None or anchor <= 0:
             try:
-                anchor = self._get_float(trade, 'dynamic_avg_entry', None)
-            except Exception:
-                anchor = None
-        if anchor is None or anchor <= 0:
-            try:
                 anchor = float(trade.open_rate or 0.0)
             except Exception:
                 anchor = None
         if anchor is None or anchor <= 0:
             return None
 
-        # 网格阈值
-        try:
-            grid_lower_pct = float(grid_cfg.get("grid_lower", -2) or -2)
-        except Exception:
-            grid_lower_pct = -2.0
-        try:
-            grid_upper_pct = float(grid_cfg.get("grid_upper", 2) or 2)
-        except Exception:
-            grid_upper_pct = 2.0
+        grid_lower_pct = self._cfg_float(
+            grid_cfg,
+            "init_lower",
+            self._cfg_float(grid_cfg, "grid_lower", -2.0)
+        )
+        grid_upper_pct = self._cfg_float(
+            grid_cfg,
+            "init_upper",
+            self._cfg_float(grid_cfg, "grid_upper", 2.0)
+        )
         grid_lower = anchor * (1 + grid_lower_pct / 100.0)
         grid_upper = anchor * (1 + grid_upper_pct / 100.0)
 
@@ -772,16 +1669,17 @@ class DcaTpShort(IStrategy):
         last_grid_ts = self._get_int(trade, 'last_grid_action_time', None)
         if last_grid_ts is not None:
             try:
-                last_dt = datetime.fromtimestamp(int(last_grid_ts))
-                cooldown_minutes = int(grid_cfg.get("cooldown_minutes", 30) or 30)
+                last_dt = datetime.fromtimestamp(self._safe_int(last_grid_ts))
+                cooldown_minutes = self._cfg_int(grid_cfg, "cooldown_minutes", 30)
                 if (current_time - last_dt).total_seconds() < 60 * cooldown_minutes:
                     logger.debug(f"[{trade.pair}] 网格冷却中（{cooldown_minutes}min），上次动作 ts={last_grid_ts}")
                     return None
             except Exception:
                 pass
 
-        m = int(self._get_int(trade, 'grid_m', 0))
-        max_m = 5  # 网格加仓次数上限
+        w = self._get_int(trade, 'grid_w', 0)
+
+        max_w = self._cfg_int(grid_cfg, "max_count", 5)
 
         try:
             lev = float(self.leverage(trade.pair) or 1.0)
@@ -789,26 +1687,40 @@ class DcaTpShort(IStrategy):
                 lev = 1.0
         except Exception:
             lev = 1.0
+        price_source = "market" if current_rate is not None else "candle_close"
 
+        # 做空：价格 >= grid_upper 时加仓
         if price >= grid_upper:
-            if max_m > 0 and m >= max_m:
-                logger.debug(f"[{trade.pair}] 网格加仓达到上限 m={m} >= {max_m}，跳过")
+            if max_w > 0 and w >= max_w:
+                logger.debug(f"[{trade.pair}] 网格加仓达到上限 w={w} >= {max_w}，跳过")
                 return None
 
-            self._get_int(trade, 'dca_count', 0)
-            # 动态网格加仓数量
-            try:
-                sell_percent = float(grid_cfg.get("sell_percent", 2) or 2)
-            except Exception:
-                sell_percent = 2.0
-            grid_frac = max(0.01, (sell_percent / 100.0) - 0.002 * m)
+            buy_percent = self._cfg_float(grid_cfg, "buy_percent", 2.0)
 
-            add_usdt = collateral * grid_frac
+            order_scale = self._cfg_float(grid_cfg, "order_scale", 1.0)
 
-            if add_usdt <= 0:
+            if order_scale <= 0:
+                order_scale = 1.0
+
+            scale_factor = order_scale ** w
+
+            grid_frac = (
+                                buy_percent / 100.0
+                        ) * scale_factor
+
+            grid_frac = max(
+                0.01,
+                grid_frac
+            )
+
+            buy_usdt = min(
+                collateral * grid_frac,
+                self._available_stake() * 0.8
+            )
+            if buy_usdt <= 0:
                 return None
 
-            added_qty = self._qty_from_usdt(add_usdt, price, lev)
+            added_qty = self._qty_from_usdt(buy_usdt, price, lev)
             if added_qty <= 0:
                 logger.debug(f"[{trade.pair}] 计算到的加仓基础数量为0或无效，跳过")
                 return None
@@ -817,75 +1729,82 @@ class DcaTpShort(IStrategy):
                 prev_qty = abs(trade.amount)
             except Exception:
                 prev_qty = 0.0
-            prev_base_qty = abs(prev_qty)
-
-            prev_avg = self._get_float(trade, 'dynamic_avg_entry', float(trade.open_rate or 0.0)) or float(
-                trade.open_rate or 0.0)
-            prev_cost = prev_base_qty * prev_avg
+            prev_avg = float(trade.open_rate or 0.0)
+            prev_cost = prev_qty * prev_avg
 
             new_avg = prev_avg
-            if (prev_base_qty + added_qty) > 0:
-                new_avg = (prev_cost + added_qty * price) / (prev_base_qty + added_qty)
+            if (prev_qty + added_qty) > 0:
+                new_avg = (prev_cost + buy_usdt * lev) / (prev_qty + added_qty)
 
-            new_m = min(m + 1, max_m) if max_m > 0 else m + 1
+            new_w = min(w + 1, max_w) if max_w > 0 else w + 1
             new_anchor = float(price)
-            # 下次网格价格
             next_buy = new_anchor * (1 + grid_lower_pct / 100.0)
             next_sell = new_anchor * (1 + grid_upper_pct / 100.0)
 
-            self._set(trade, 'dynamic_avg_entry', float(new_avg))
             self._set(trade, 'grid_anchor_price', float(new_anchor))
             self._set(trade, 'grid_upper', float(next_sell))
             self._set(trade, 'grid_lower', float(next_buy))
-            self._set(trade, 'last_grid_action_time', int(current_time.timestamp()))
-            self._record_add_usdt(trade, 'grid_added_total_usdt', add_usdt)
+            self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
+            self._record_add_usdt(trade, 'grid_added_total_usdt', buy_usdt)
             self._record_add_qty(trade, 'grid_added_total_qty', added_qty)
-            self._set(trade, 'grid_count', int(self._get_int(trade, 'grid_count', 0) + 1))
-            self._set(trade, 'grid_m', int(new_m))
+            self._set(trade, 'grid_count', self._safe_int(self._get_int(trade, 'grid_count', 0) + 1))
+            self._set(trade, 'grid_w', self._safe_int(new_w))
 
             logger.info(
-                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.1f}%]{RESET}, 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
-                f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={add_usdt:.4f} USDT, 新均价={new_avg:.4f}, m={new_m}, "
-                f"下次网格 减仓价={next_buy:.4f}, 加仓价={next_sell:.4f}"
+                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% {RESET}"
+                f"(订单规模倍率：{scale_factor:.2f})], 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
+                f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
+                f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
             )
-            return float(add_usdt), f"grid_add_{grid_frac:.3f}"
+            return float(buy_usdt), f"grid_add_{grid_frac:.3f}"
 
+        # 做空：价格 <= grid_lower 时减仓
         if price <= grid_lower:
-            try:
-                buy_percent = float(grid_cfg.get("buy_percent", 2) or 2)
-            except Exception:
-                buy_percent = 2.0
-            grid_reduce_frac = max(0.01, buy_percent / 100.0)
-            buy_usdt = collateral * grid_reduce_frac
-            buy_usdt = min(buy_usdt, cur_margin) if cur_margin > 0 else buy_usdt
+            sell_percent = self._cfg_float(grid_cfg, "sell_percent", 2.0)
+            grid_sell_frac = max(0.01, sell_percent / 100.0)
+            sell_usdt = collateral * grid_sell_frac
+            sell_usdt = min(sell_usdt, cur_margin)
 
-            if buy_usdt <= 0:
-                logger.debug(f"[{trade.pair}] 网格减仓触发，但当前保证金不足")
+            if sell_usdt <= 0:
+                logger.debug(f"[{trade.pair}] 网格减仓触发，保证金不足，跳过")
                 return None
 
-            new_m = max(0, m - 1)
+            new_w = max(0, w - 1)
             new_anchor = float(price)
             next_buy = new_anchor * (1 + grid_lower_pct / 100.0)
             next_sell = new_anchor * (1 + grid_upper_pct / 100.0)
 
-            self._record_add_usdt(trade, 'grid_reduced_total_usdt', float(buy_usdt))
+            self._record_add_usdt(trade, 'grid_reduced_total_usdt', float(sell_usdt))
             self._set(trade, 'grid_anchor_price', float(new_anchor))
             self._set(trade, 'grid_upper', float(next_sell))
             self._set(trade, 'grid_lower', float(next_buy))
-            self._set(trade, 'last_grid_action_time', int(current_time.timestamp()))
-            self._set(trade, 'grid_count', int(self._get_int(trade, 'grid_count', 0) + 1))
-            self._set(trade, 'grid_m', int(new_m))
+            self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
+            self._set(trade, 'grid_count', self._safe_int(self._get_int(trade, 'grid_count', 0) + 1))
+            self._set(trade, 'grid_w', self._safe_int(new_w))
 
             logger.info(
-                f"[{trade.pair}] {RED}[网格减仓 {grid_reduce_frac * 100:.1f}%]{RESET}, 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
-                f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={buy_usdt:.4f} USDT, w={new_m}, "
-                f"下次网格 减仓价={next_buy:.4f}, 加仓价={next_sell:.4f}"
+                f"[{trade.pair}] {GREEN}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
+                f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
+                f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
             )
-            return float(-buy_usdt), "grid_reduce_2pct"
+            return float(-sell_usdt), "grid_sell_20pct"
         return None
 
-    def adjust_trade_position(self, trade: Trade, current_time: datetime, current_rate: float, current_profit: float,
-                              **kwargs) -> tuple[float, str] | None:
+    # ============================================================
+    # 主调度
+    # ============================================================
+
+    def adjust_trade_position(self, trade, current_time, current_rate, current_profit, **kwargs):
+        try:
+            return self._adjust_trade_position_impl(
+                trade, current_time, current_rate, current_profit, **kwargs
+            )
+        except Exception:
+            logger.exception(f"[{trade.pair}] adjust_trade_position 异常")
+            return None
+
+    def _adjust_trade_position_impl(self, trade, current_time, current_rate, current_profit, **kwargs):
+
         if trade.has_open_orders:
             return None
 
@@ -901,33 +1820,28 @@ class DcaTpShort(IStrategy):
 
         if current_time.tzinfo:
             current_time = current_time.replace(tzinfo=None)
-        open_time = trade.open_date_utc
-        if getattr(open_time, 'tzinfo', None):
-            open_time.replace(tzinfo=None)
-        candle_ts = pd.Timestamp(df.index[-1]).tz_localize(None).floor('min')
-        df30, _ = self.dp.get_analyzed_dataframe(trade.pair, '30m')
-        if df30.empty:
-            return None
-        last30_ts = pd.Timestamp(df30.index[-1]).tz_localize(None).floor('min')
-        if candle_ts != last30_ts:
-            return None
 
         collateral = self._collateral_total()
         if collateral <= 0:
             return None
 
+        candle_ts = self._get_candle_ts(df)
+        if candle_ts is None:
+            logger.warning(f"[{trade.pair}] 无法获取有效 candle_ts，跳过")
+            return None
+
         # 1) 趋势加仓
-        res = self.trend_add(trade, last, margin, collateral, current_time, current_profit)
+        res = self.trend_add(trade, last, margin, collateral, current_time, current_profit, candle_ts)
         if res:
             return res
 
-        # 2) DCA 加仓（空头）
+        # 2) DCA 加仓
         res = self.dca_add(trade, df, last, current_time, current_rate)
         if res:
             return res
 
         # 3) 浮盈加仓
-        res = self.profit_resell(trade, last, collateral)
+        res = self.profit_rebuy(trade, last, collateral)
         if res:
             return res
 
@@ -942,26 +1856,40 @@ class DcaTpShort(IStrategy):
             return res
         return None
 
-    def order_filled(self, pair: str, trade: Trade, order: Order, current_time: datetime, **kwargs) -> None:
-        tag = getattr(order, 'ft_order_tag', '') or ''
-
-        if tag in ("tp30", "tp30_with_prior_repull") and order.side == "buy":
-            self._set(trade, 'need_resell', True)
-
-    def custom_stoploss(self, *args, **kwargs) -> float | None:
-        trade = kwargs.get("trade")
-        if trade is None and len(args) > 0:
-            trade = args[0]
-        if trade is None:
-            return None
-
+    def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
         cfg = self.get_runtime_config()
         sl_cfg = self._cfg(cfg, "sl", default={}) or {}
+
         if not bool(sl_cfg.get("enable", True)):
-            return -0.99
+            return None
 
         try:
-            stoploss = float(sl_cfg.get("stoploss", -9) or -9)
+            stoploss_roi = float(sl_cfg.get("stoploss", -50) or -50) / 100.0
         except Exception:
-            stoploss = -9.0
-        return stoploss / 100.0
+            stoploss_roi = -0.5
+
+        if current_profit <= stoploss_roi:
+            if trade.id not in self._stop_loss_logged:
+                self._stop_loss_logged.add(trade.id)
+                logger.info(
+                    f"[{pair}] {RED}触发ROI止损{RESET} "
+                    f"收益率={current_profit * 100:.2f}% "
+                    f"持仓价={trade.open_rate:.4f} "
+                    f"开仓价={current_rate:.4f}"
+                )
+                self._record_chart_marker(
+                    event_type="stop_loss",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=current_rate,
+                    amount=abs(float(trade.amount or 0)),
+                    current_time=current_time,
+                    message="ROI止损"
+                )
+            return "stop_loss"
+
+        return None
+
+    def custom_stoploss(self, *args, **kwargs) -> float | None:
+        return None
