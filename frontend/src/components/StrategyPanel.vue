@@ -174,219 +174,168 @@
             </template>
 
 
-            <el-divider>
-            MACD
-            </el-divider>
+            <el-divider>MACD</el-divider>
 
             <el-row :gutter="12">
-
                 <el-col :span="8">
-
                     <el-form-item label="Fast">
-
                         <el-input-number
-
                             v-model="config.indicator.macd.fast"
-
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
 
-
                 <el-col :span="8">
-
                     <el-form-item label="Slow">
-
                         <el-input-number
-
                             v-model="config.indicator.macd.slow"
-
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
 
-
                 <el-col :span="8">
-
                     <el-form-item label="Signal">
-
                         <el-input-number
-
                             v-model="config.indicator.macd.signal"
-
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
-
-
             </el-row>
 
-            <el-divider>
-            KDJ
-            </el-divider>
-
+            <el-divider>KDJ</el-divider>
 
             <el-row :gutter="12">
-
                 <el-col :span="8">
-
                     <el-form-item label="FastK">
-
                         <el-input-number
-
-                            v-model="
-                            config.indicator.kdj.fastk
-                            "
-
+                            v-model="config.indicator.kdj.fastk"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
 
                 <el-col :span="8">
-
                     <el-form-item label="SlowK">
-
                         <el-input-number
-
-                        v-model="
-                        config.indicator.kdj.slowk
-                        "
-
+                            v-model="config.indicator.kdj.slowk"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
-
 
                 <el-col :span="8">
-
                     <el-form-item label="SlowD">
-
                         <el-input-number
-
-                            v-model="
-                            config.indicator.kdj.slowd
-                            "
-
+                            v-model="config.indicator.kdj.slowd"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
-
             </el-row>
 
-
-            <el-divider>
-            EMA
-            </el-divider>
+            <el-divider>EMA</el-divider>
 
             <el-row :gutter="12">
-
                 <el-col :span="8">
-
                     <el-form-item label="EMA快">
-
                         <el-input-number
-
-                            v-model="
-                            config.indicator.ema.fast
-                            "
+                            v-model="config.indicator.ema.fast"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
 
-
                 <el-col :span="8">
-
                     <el-form-item label="EMA中">
-
                         <el-input-number
-
-                            v-model="
-                            config.indicator.ema.mid
-                            "
-
+                            v-model="config.indicator.ema.mid"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
-
                 </el-col>
-
-                <el-divider>
-                RSI
-                </el-divider>
-
-                <el-form-item label="周期">
-
-                    <el-input-number
-
-                        v-model="config.indicator.rsi.period"
-
-                    />
-
-                </el-form-item>
-
-                <el-divider>
-                Bollinger
-                </el-divider>
-
-                <el-form-item label="周期">
-
-                    <el-input-number
-
-                        v-model="config.indicator.bb.period"
-
-                    />
-
-                </el-form-item>
-
-
-                <el-form-item label="STD">
-
-                    <el-input-number
-
-                        v-model="config.indicator.bb.std"
-
-                        :min="0.5"
-
-                        :max="5"
-
-                        :step="0.1"
-
-                    />
-
-                </el-form-item>
-
 
                 <el-col :span="8">
-
                     <el-form-item label="EMA慢">
-
-                    <el-input-number
-
-                        v-model="
-                        config.indicator.ema.slow
-                        "
-
+                        <el-input-number
+                            v-model="config.indicator.ema.slow"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
-
                     </el-form-item>
+                </el-col>
+            </el-row>
 
+            <el-divider>RSI</el-divider>
+
+            <el-row :gutter="12">
+                <el-col :span="8">
+                    <el-form-item label="周期">
+                        <el-input-number
+                            v-model="config.indicator.rsi.period"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
+                        />
+                    </el-form-item>
+                </el-col>
+            </el-row>
+
+            <el-divider>Bollinger</el-divider>
+
+            <el-row :gutter="12">
+                <el-col :span="8">
+                    <el-form-item label="周期">
+                        <el-input-number
+                            v-model="config.indicator.bb.period"
+                            :min="2"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
+                        />
+                    </el-form-item>
                 </el-col>
 
-
+                <el-col :span="8">
+                    <el-form-item label="STD">
+                        <el-input-number
+                            v-model="config.indicator.bb.std"
+                            :min="0.5"
+                            :max="5"
+                            :step="0.1"
+                            :precision="2"
+                        />
+                    </el-form-item>
+                </el-col>
             </el-row>
         </el-card>
 
@@ -435,6 +384,9 @@
                         class="roi-input"
                         controls-position="right"
                         :min="0"
+                        :max="10080"
+                        :step="1"
+                        :precision="0"
                         size="small"
                         placeholder="分钟"/>
 
@@ -442,6 +394,10 @@
                         v-model="roi.roi"
                         class="roi-input"
                         controls-position="right"
+                        :min="-100"
+                        :max="100"
+                        :step="0.1"
+                        :precision="2"
                         size="small"
                         placeholder="收益%"/>
 
@@ -499,6 +455,8 @@
                         :disabled="!config.entry.rsi.enable"
                         :min="1"
                         :max="100"
+                        :step="1"
+                        :precision="0"
                     />
                 </el-form>
 
@@ -561,10 +519,7 @@
                         达到 ROI 后减仓，并自动补回目标仓位
                     </el-alert>
 
-                    <el-form
-                        class="compact-form"
-                        label-width="128px"
-                        size="small">
+                    <el-form class="compact-form" label-width="128px" size="small">
                         <el-form-item label="自动补仓">
                             <el-switch
                                 v-model="config.tp.rebuy_enable"
@@ -578,6 +533,8 @@
                                 controls-position="right"
                                 :min="0"
                                 :max="100"
+                                :step="1"
+                                :precision="0"
                                 :disabled="!config.tp.rebuy_enable"
                             />
                         </el-form-item>
@@ -587,7 +544,10 @@
                                 class="compact-input-number"
                                 controls-position="right"
                                 :min="0"
-                                :max="100" />
+                                :max="100"
+                                :step="0.1"
+                                :precision="2"
+                            />
                         </el-form-item>
                     </el-form>
                 </el-card>
@@ -614,10 +574,7 @@
                         达到设定亏损比例后强制平仓
                     </el-alert>
 
-                    <el-form
-                        class="compact-form"
-                        label-width="102px"
-                        size="small">
+                    <el-form class="compact-form" label-width="102px" size="small">
                         <el-form-item label="启用止损">
                             <el-switch v-model="config.sl.enable" />
                         </el-form-item>
@@ -625,7 +582,12 @@
                             <el-input-number
                                 v-model="config.sl.stoploss"
                                 class="compact-input-number"
-                                controls-position="right" />
+                                controls-position="right"
+                                :min="-999"
+                                :max="0"
+                                :step="1"
+                                :precision="0"
+                            />
                         </el-form-item>
                     </el-form>
                 </el-card>
@@ -654,11 +616,7 @@
                 回撤达到阈值且满足 RSI 或 KDJ 条件时加仓
             </el-alert>
 
-            <el-form
-                class="compact-form dca-top-form"
-                label-width="108px"
-                size="small"
-            >
+            <el-form class="compact-form dca-top-form" label-width="108px" size="small">
                 <el-row :gutter="12">
 
                     <el-col :span="8">
@@ -700,6 +658,9 @@
                                 class="compact-input-number"
                                 controls-position="right"
                                 :min="1"
+                                :max="20"
+                                :step="1"
+                                :precision="0"
                             />
                         </el-form-item>
                     </el-col>
@@ -711,6 +672,9 @@
                                 class="compact-input-number"
                                 controls-position="right"
                                 :min="0"
+                                :max="1440"
+                                :step="5"
+                                :precision="0"
                             />
                         </el-form-item>
                     </el-col>
@@ -724,6 +688,7 @@
                                 :min="0.1"
                                 :max="20"
                                 :step="0.1"
+                                :precision="2"
                             />
                         </el-form-item>
                     </el-col>
@@ -737,11 +702,11 @@
                                 :min="0.1"
                                 :max="10"
                                 :step="0.1"
+                                :precision="2"
                             />
                         </el-form-item>
                     </el-col>
 
-                    <!-- 自动模式字段 -->
                     <template v-if="config.dca.amount_mode === 'auto'">
 
                         <el-col :span="8">
@@ -753,6 +718,7 @@
                                     :min="0.1"
                                     :max="100"
                                     :step="0.1"
+                                    :precision="2"
                                 />
                             </el-form-item>
                         </el-col>
@@ -766,6 +732,7 @@
                                     :min="0.1"
                                     :max="10"
                                     :step="0.1"
+                                    :precision="2"
                                 />
                             </el-form-item>
                         </el-col>
@@ -775,26 +742,21 @@
                 </el-row>
             </el-form>
 
-            <!-- 手动模式：levels 卡片 -->
-        <div class="dca-levels">
+                <!-- 手动模式：levels 卡片 -->
+            <div class="dca-levels">
 
-            <div
-                v-for="(level, index) in config.dca.levels"
-                :key="index"
-                class="dca-level-row"
-            >
-
-                <div class="dca-level-index">
-                    {{ index + 1 }}
-                </div>
-
-                <el-form
-                    class="dca-level-form"
-                    label-width="110px"
-                    size="small"
+                <div
+                    v-for="(level, index) in config.dca.levels"
+                    :key="index"
+                    class="dca-level-row"
                 >
 
-                    <!-- 手动模式才显示金额 -->
+                    <div class="dca-level-index">
+                        {{ index + 1 }}
+                </div>
+
+                <el-form class="dca-level-form" label-width="110px" size="small">
+
                     <el-form-item
                         v-if="config.dca.amount_mode === 'manual'"
                         label="加仓金额USDT"
@@ -804,7 +766,9 @@
                             class="compact-input-number"
                             controls-position="right"
                             :min="1"
+                            :max="10000"
                             :step="10"
+                            :precision="2"
                         />
                     </el-form-item>
 
@@ -813,6 +777,10 @@
                             v-model="level.rsi_limit"
                             class="compact-input-number"
                             controls-position="right"
+                            :min="0"
+                            :max="100"
+                            :step="1"
+                            :precision="0"
                         />
                     </el-form-item>
 
@@ -821,6 +789,10 @@
                             v-model="level.j_limit"
                             class="compact-input-number"
                             controls-position="right"
+                            :min="-100"
+                            :max="200"
+                            :step="1"
+                            :precision="0"
                         />
                     </el-form-item>
 
@@ -851,9 +823,9 @@
 
         </div>
 
-        </el-card>
+    </el-card>
 
-                <el-card class="section-card">
+        <el-card class="section-card">
             <template #header>
                 <div class="card-head">
                     <span class="card-head__title">
@@ -872,35 +844,17 @@
             </template>
 
 
-            <el-form
-                class="compact-form"
-                label-width="118px"
-                size="small"
-            >
-
+            <el-form class="compact-form" label-width="118px" size="small">
                 <el-row :gutter="12">
 
-
-                    <!-- 总开关 -->
                     <el-col :span="12">
-
                         <el-form-item label="启用">
-
-                            <el-switch
-                                v-model="config.loss_tp.enable"
-                            />
-
+                            <el-switch v-model="config.loss_tp.enable" />
                         </el-form-item>
-
                     </el-col>
 
-
-
-                    <!-- DCA快速止盈 -->
                     <el-col :span="12">
-
                         <el-form-item label="DCA止盈目标收益率%">
-
                             <el-input-number
                                 v-model="config.loss_tp.dca_tp_profit"
                                 class="compact-input-number"
@@ -908,19 +862,13 @@
                                 :min="0"
                                 :max="100"
                                 :step="0.1"
+                                :precision="2"
                             />
-
                         </el-form-item>
-
                     </el-col>
 
-
-
-                    <!-- 保留仓位 -->
                     <el-col :span="12">
-
                         <el-form-item label="保留仓位%">
-
                             <el-input-number
                                 v-model="config.loss_tp.target_wallet_percent"
                                 class="compact-input-number"
@@ -928,10 +876,9 @@
                                 :min="0"
                                 :max="100"
                                 :step="1"
+                                :precision="2"
                             />
-
                         </el-form-item>
-
                     </el-col>
                 </el-row>
             </el-form>
@@ -972,42 +919,31 @@
                             :"MACD+KDJ+EMA空头趋势加仓"}}
                     </el-alert>
 
-                    <el-form
-                        class="compact-form"
-                        label-width="120px"
-                        size="small"
-                    >
+                    <el-form class="compact-form" label-width="120px" size="small">
                         <el-row :gutter="12">
-                            <el-col :span="24">
+                            <el-col :span="12">
                                 <el-form-item label="启用趋势加仓">
                                     <el-switch v-model="config.trend_add.enable" />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="24">
+                            <el-col :span="12">
                                 <el-form-item label="加仓比例%">
                                     <el-input-number
                                         v-model="config.trend_add.amount_percent"
                                         :min="0"
                                         :max="100"
+                                        :step="0.1"
+                                        :precision="2"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="条件模式">
-                                    <el-select
-                                        v-model="config.trend_add.condition"
-                                    >
-                                        <el-option
-                                            label="全部满足 AND"
-                                            value="and"
-                                        />
-
-                                        <el-option
-                                            label="任意满足 OR"
-                                            value="or"
-                                        />
+                                    <el-select v-model="config.trend_add.condition">
+                                        <el-option label="全部满足 AND" value="and" />
+                                        <el-option label="任意满足 OR" value="or" />
                                     </el-select>
                                 </el-form-item>
                             </el-col>
@@ -1061,32 +997,34 @@
                             趋势加仓后，KDJ转弱退出趋势仓位
                         </el-alert>
 
-                        <el-form
-                            label-width="120px"
-                            size="small"
-                        >
-                            <el-form-item label="启用KDJ减仓">
-                                <el-switch
-                                    v-model="config.trend_add.kdj_reduce.enable"
-                                    :disabled="!config.trend_add.enable"
-                                />
+                        <el-form label-width="120px" size="small">
+                            <el-row :gutter="12">
+                                <el-col :span="12">
+                                    <el-form-item label="启用KDJ减仓">
+                                        <el-switch
+                                            v-model="config.trend_add.kdj_reduce.enable"
+                                            :disabled="!config.trend_add.enable"
+                                        />
+                                    </el-form-item>
+                                </el-col>
 
-                            </el-form-item>
-
-                        <el-form-item label="减仓比例%">
-                            <el-input-number
-                                v-model="
-                                config.trend_add.kdj_reduce.reduce_percent
-                                "
-                                :disabled="
-                                !config.trend_add.enable ||
-                                !config.trend_add.kdj_reduce.enable
-                                "
-                                :min="0"
-                                :max="100"
-                                controls-position="right"
-                            />
-                            </el-form-item>
+                                <el-col :span="12">
+                                    <el-form-item label="减仓比例%">
+                                        <el-input-number
+                                            v-model="config.trend_add.kdj_reduce.reduce_percent"
+                                            :disabled="
+                                                !config.trend_add.enable ||
+                                                !config.trend_add.kdj_reduce.enable
+                                            "
+                                            :min="0"
+                                            :max="100"
+                                            :step="1"
+                                            :precision="0"
+                                            controls-position="right"
+                                        />
+                                    </el-form-item>
+                                </el-col>
+                            </el-row>
                         </el-form>
                     </el-card>
                 </el-card>
@@ -1115,11 +1053,7 @@
                     >
                         启用后将在当前仓位下方自动挂网格单</el-alert>
 
-                    <el-form
-                        class="compact-form"
-                        label-width="116px"
-                        size="small"
-                    >
+                    <el-form class="compact-form" label-width="116px" size="small">
                         <el-row :gutter="12">
                             <el-col :span="12">
                                 <el-form-item label="启用网格">
@@ -1127,49 +1061,63 @@
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="最大加仓次数">
                                     <el-input-number
                                         v-model="config.grid.max_count"
                                         class="compact-input-number"
                                         controls-position="right"
                                         :min="1"
+                                        :max="50"
+                                        :step="1"
+                                        :precision="0"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="冷却时间">
                                     <el-input-number
                                         v-model="config.grid.cooldown_minutes"
                                         class="compact-input-number"
                                         controls-position="right"
                                         :min="0"
+                                        :max="1440"
+                                        :step="5"
+                                        :precision="0"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="网格下沿%">
                                     <el-input-number
                                         v-model="config.grid.grid_lower"
                                         class="compact-input-number"
                                         controls-position="right"
+                                        :min="-50"
+                                        :max="0"
+                                        :step="0.1"
+                                        :precision="2"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="网格上沿%">
                                     <el-input-number
                                         v-model="config.grid.grid_upper"
                                         class="compact-input-number"
                                         controls-position="right"
+                                        :min="0"
+                                        :max="50"
+                                        :step="0.1"
+                                        :precision="2"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="加仓占总资金%">
                                     <el-input-number
                                         v-model="config.grid.buy_percent"
@@ -1177,11 +1125,13 @@
                                         controls-position="right"
                                         :min="0"
                                         :max="100"
+                                        :step="0.1"
+                                        :precision="2"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
+                            <el-col :span="12">
                                 <el-form-item label="减仓占总资金%">
                                     <el-input-number
                                         v-model="config.grid.sell_percent"
@@ -1189,23 +1139,25 @@
                                         controls-position="right"
                                         :min="0"
                                         :max="100"
+                                        :step="0.1"
+                                        :precision="2"
                                     />
                                 </el-form-item>
                             </el-col>
 
-                            <el-col :span="18">
-
+                            <el-col :span="12">
                                 <el-form-item label="订单规模倍率">
                                     <el-input-number
                                         v-model="config.grid.order_scale"
                                         class="compact-input-number"
                                         controls-position="right"
                                         :min="0.1"
+                                        :max="10"
                                         :step="0.1"
+                                        :precision="2"
                                     />
                                 </el-form-item>
                             </el-col>
-
                         </el-row>
                     </el-form>
                 </el-card>

@@ -544,6 +544,51 @@ const formatDuration = minutes => {
     return `${m}分`
 }
 
+const formatDate = (row, column, value) => {
+
+    const ts = row.open_timestamp || row.open_fill_timestamp
+
+    if (ts) {
+        const date = new Date(Number(ts))
+
+        if (!isNaN(date.getTime())) {
+
+            const pad = (n) => String(n).padStart(2, "0")
+
+            return (
+                `${date.getFullYear()}-` +
+                `${pad(date.getMonth() + 1)}-` +
+                `${pad(date.getDate())} ` +
+                `${pad(date.getHours())}:` +
+                `${pad(date.getMinutes())}:` +
+                `${pad(date.getSeconds())}`
+            )
+        }
+    }
+
+    if (!value) {
+        return "-"
+    }
+
+    const parsed = new Date(String(value).replace(" ", "T"))
+
+    if (!isNaN(parsed.getTime())) {
+
+        const pad = (n) => String(n).padStart(2, "0")
+
+        return (
+            `${parsed.getFullYear()}-` +
+            `${pad(parsed.getMonth() + 1)}-` +
+            `${pad(parsed.getDate())} ` +
+            `${pad(parsed.getHours())}:` +
+            `${pad(parsed.getMinutes())}:` +
+            `${pad(parsed.getSeconds())}`
+        )
+    }
+
+    return value
+}
+
 watch(
 
     () => actionForm.value.action,

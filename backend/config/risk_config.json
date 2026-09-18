@@ -1,6 +1,6 @@
 {
     "global_tp_enabled": true,
-    "global_sl_enabled": true,
+    "global_sl_enabled": false,
     "global_tp_amount": 2,
-    "global_sl_amount": 10
+    "global_sl_amount": 5
 }

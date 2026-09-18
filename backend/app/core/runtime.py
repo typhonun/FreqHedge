@@ -26,6 +26,12 @@ ROUND_INFO = {
     # 本轮开始时累计利润
     "start_profit": None,
 
+    # 本轮开始时多单已平仓
+    "start_long_closed": None,
+
+    # 本轮开始时空单已平仓
+    "start_short_closed": None,
+
     # 本轮开始时资金
     "start_balance": None,
 
@@ -34,6 +40,13 @@ ROUND_INFO = {
 
     # 当前轮收益率
     "round_ratio": 0,
+
+    # 新增
+    "global_tp_count": 0,
+    "global_sl_count": 0,
+
+    # 冷却时间
+    "last_tp_time": 0,
 
     "trigger_reason": ""
 }

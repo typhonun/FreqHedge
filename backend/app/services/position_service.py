@@ -524,60 +524,61 @@ class PositionService:
     @staticmethod
     def get_profit_summary(snapshot=None):
 
+        from app.core import runtime
+
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
-        long_positions = (
-            PositionService._extract_trades(
-                snapshot["long_status"]
-            )
-        )
+        long_positions = PositionService._extract_trades(snapshot["long_status"])
+        short_positions = PositionService._extract_trades(snapshot["short_status"])
 
-        short_positions = (
-            PositionService._extract_trades(
-                snapshot["short_status"]
-            )
-        )
-
-        long_profit = sum(
-            float(
-                trade.get(
-                    "profit_abs",
-                    0
-                ) or 0
-            )
+        long_float = sum(
+            float(trade.get("profit_abs", 0) or 0)
             for trade in long_positions
         )
 
-        short_profit = sum(
-            float(
-                trade.get(
-                    "profit_abs",
-                    0
-                ) or 0
-            )
+        short_float = sum(
+            float(trade.get("profit_abs", 0) or 0)
             for trade in short_positions
         )
 
+        # 当前历史全部已平仓
+        closed = PositionService.get_closed_profit_summary(snapshot)
+
+        # 本轮开始时已平仓（重启后 ROUND_INFO 可能是 None，兜底 0）
+        start_long_closed = runtime.ROUND_INFO.get("start_long_closed")
+        start_short_closed = runtime.ROUND_INFO.get("start_short_closed")
+
+        if start_long_closed is None:
+            start_long_closed = closed["long_closed_profit"]
+        if start_short_closed is None:
+            start_short_closed = closed["short_closed_profit"]
+
+        # 本轮已平仓 = 当前 - 本轮基准
+        long_closed_round = closed["long_closed_profit"] - start_long_closed
+        short_closed_round = closed["short_closed_profit"] - start_short_closed
+
+        # 本轮累计 = 浮盈 + 本轮已平仓
+        long_round = long_float + long_closed_round
+        short_round = short_float + short_closed_round
+
         return {
+            # 本轮累计
+            "long_profit": round(long_round, 2),
+            "short_profit": round(short_round, 2),
+            "total_profit": round(long_round + short_round, 2),
 
-            "long_profit":
-                round(
-                    long_profit,
-                    2
-                ),
+            # 浮盈
+            "long_float": round(long_float, 2),
+            "short_float": round(short_float, 2),
 
-            "short_profit":
-                round(
-                    short_profit,
-                    2
-                ),
+            # 本轮已平仓
+            "long_closed": round(long_closed_round, 2),
+            "short_closed": round(short_closed_round, 2),
 
-            "total_profit":
-                round(
-                    long_profit + short_profit,
-                    2
-                )
+            # 新增
+            "global_tp_count": runtime.ROUND_INFO.get("global_tp_count", 0),
+            "global_sl_count": runtime.ROUND_INFO.get("global_sl_count", 0),
         }
 
     # =========================================================
@@ -692,69 +693,42 @@ class PositionService:
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
-        long_trades = (
-            PositionService._extract_trades(
-                snapshot["long_trades"]
-            )
+        long_trades = PositionService._extract_trades(snapshot["long_trades"])
+        short_trades = PositionService._extract_trades(snapshot["short_trades"])
+
+        long_status = PositionService._extract_trades(snapshot["long_status"])
+        short_status = PositionService._extract_trades(snapshot["short_status"])
+
+        # 用 status 的 realized_profit（当前持仓，包括部分平仓）
+        long_open_realized = sum(
+            float(t.get("realized_profit", 0) or 0)
+            for t in long_status
+        )
+        short_open_realized = sum(
+            float(t.get("realized_profit", 0) or 0)
+            for t in short_status
         )
 
-        short_trades = (
-            PositionService._extract_trades(
-                snapshot["short_trades"]
-            )
+        # 用 trades 的 close_profit_abs（完全平仓）
+        long_closed = sum(
+            float(t.get("close_profit_abs", 0) or 0)
+            for t in long_trades
+            if not t.get("is_open", True)
+        )
+        short_closed = sum(
+            float(t.get("close_profit_abs", 0) or 0)
+            for t in short_trades
+            if not t.get("is_open", True)
         )
 
-        long_profit = 0.0
-        short_profit = 0.0
+        long_profit = long_open_realized + long_closed
+        short_profit = short_open_realized + short_closed
 
-        for trade in long_trades:
-
-            if not trade.get(
-                    "is_open",
-                    True
-            ):
-                long_profit += float(
-                    trade.get(
-                        "close_profit_abs",
-                        0
-                    ) or 0
-                )
-
-        for trade in short_trades:
-
-            if not trade.get(
-                    "is_open",
-                    True
-            ):
-                short_profit += float(
-                    trade.get(
-                        "close_profit_abs",
-                        0
-                    ) or 0
-                )
-
-        result = {
-
-            "long_closed_profit":
-                round(
-                    long_profit,
-                    2
-                ),
-
-            "short_closed_profit":
-                round(
-                    short_profit,
-                    2
-                ),
-
-            "total_closed_profit":
-                round(
-                    long_profit + short_profit,
-                    2
-                )
+        return {
+            "long_closed_profit": round(long_profit, 2),
+            "short_closed_profit": round(short_profit, 2),
+            "total_closed_profit": round(long_profit + short_profit, 2)
         }
-
-        return result
 
     # =========================================================
     # 总已关闭利润
