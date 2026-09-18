@@ -21,6 +21,8 @@ GLOBAL_RISK = {
     "global_sl_amount": -50
 }
 
+GLOBAL_EXIT_REASONS = {}
+
 ROUND_INFO = {
 
     # 本轮开始时累计利润

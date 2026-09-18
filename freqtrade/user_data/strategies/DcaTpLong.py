@@ -176,7 +176,8 @@ class DcaTpLong(IStrategy):
             price,
             amount,
             current_time,
-            message: str
+            message: str,
+            candle_time=None  # 新增
     ) -> None:
         if current_time is None or price is None:
             return
@@ -196,7 +197,8 @@ class DcaTpLong(IStrategy):
             price=price,
             amount=amount,
             message=message,
-            current_time=current_time
+            current_time=current_time,
+            candle_time=candle_time  # 传给后端
         )
 
     def order_filled(
@@ -207,7 +209,6 @@ class DcaTpLong(IStrategy):
             current_time,
             **kwargs
     ):
-
         entry_price = float(
             order.average
             or trade.open_rate
@@ -219,10 +220,12 @@ class DcaTpLong(IStrategy):
             or ""
         ).lower()
 
+        # 新增：统一计算 K 线时间戳
+        candle_ts = self._index_candle_key(current_time)
+
         if order.ft_order_side == "buy":
 
             if reason.startswith("trend_add"):
-
                 self._record_chart_marker(
                     event_type="trend_add",
                     pair=pair,
@@ -231,12 +234,11 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="趋势加仓成交"
+                    message="趋势加仓成交",
+                    candle_time=candle_ts  # 新增
                 )
 
-
             elif reason.startswith("grid_add"):
-
                 self._record_chart_marker(
                     event_type="grid_add",
                     pair=pair,
@@ -245,11 +247,11 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="网格加仓成交"
+                    message="网格加仓成交",
+                    candle_time=candle_ts  # 新增
                 )
 
             elif reason.startswith("dca"):
-
                 self._record_chart_marker(
                     event_type="dca",
                     pair=pair,
@@ -258,7 +260,8 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="DCA加仓成交"
+                    message="DCA加仓成交",
+                    candle_time=candle_ts  # 新增
                 )
 
         elif order.ft_order_side == "sell":
@@ -272,7 +275,8 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="KDJ减仓成交"
+                    message="KDJ减仓成交",
+                    candle_time=candle_ts  # 新增
                 )
 
             elif reason.startswith("tp_afterDCA"):
@@ -284,11 +288,11 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="DCA止盈"
+                    message="DCA止盈",
+                    candle_time=candle_ts  # 新增
                 )
 
             elif reason.startswith("tp_"):
-
                 self._record_chart_marker(
                     event_type="tp",
                     pair=pair,
@@ -297,11 +301,11 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="普通止盈"
+                    message="普通止盈",
+                    candle_time=candle_ts  # 新增
                 )
 
             elif reason.startswith("grid_sell"):
-
                 self._record_chart_marker(
                     event_type="grid_sell",
                     pair=pair,
@@ -310,7 +314,8 @@ class DcaTpLong(IStrategy):
                     price=entry_price,
                     amount=order.amount,
                     current_time=current_time,
-                    message="网格减仓成交"
+                    message="网格减仓成交",
+                    candle_time=candle_ts  # 新增
                 )
 
         # =========================
@@ -690,24 +695,36 @@ class DcaTpLong(IStrategy):
         except Exception as e:
             logger.warning(f"[{pair}] confirm_trade_entry 读取指标失败: {e}")
 
+        # 判断是否为手动开仓
+        entry_tag_str = str(entry_tag or "").lower()
+        is_manual = (
+            entry_tag_str.startswith("force_entry")
+            or entry_tag_str in ("manual", "manual_entry")
+        )
+
         logger.info(
             f"[{pair}] {GREEN} 开仓信号触发 {RESET}"
             f"entry_tag={entry_tag} "
             f"当前价={rate:.4f} "
             f"保证金={stake_amount:.4f} USDT "
             f"RSI={rsi_value} "
+            f"is_manual={is_manual}"
         )
 
-        self._record_chart_marker(
-            event_type="signal",
-            pair=pair,
-            trade_id=0,
-            side="long",
-            price=rate,
-            amount=stake_amount,
-            current_time=current_time,
-            message=f"入场信号 {entry_tag}"
-        )
+        if not is_manual:
+            candle_ts = self._index_candle_key(current_time)
+            if candle_ts is not None:
+                self._record_chart_marker(
+                    event_type="signal",
+                    pair=pair,
+                    trade_id=0,
+                    side="long",
+                    price=rate,
+                    amount=stake_amount,
+                    current_time=current_time,
+                    message=f"入场信号 {entry_tag}",
+                    candle_time=candle_ts  # 关键：传 K 线时间戳
+                )
 
         return True
 
@@ -817,10 +834,13 @@ class DcaTpLong(IStrategy):
                 ts = pd.Timestamp(float(value), unit='s')
             except Exception:
                 return None
-        try:
-            ts = ts.tz_localize(None)
-        except Exception:
-            pass
+
+        # ✅ 统一转成 UTC
+        if ts.tzinfo is None:
+            ts = ts.tz_localize('UTC')
+        else:
+            ts = ts.tz_convert('UTC')
+
         try:
             ts = ts.floor('min')
         except Exception:
@@ -2008,7 +2028,8 @@ class DcaTpLong(IStrategy):
                     price=current_rate,
                     amount=abs(float(trade.amount or 0)),
                     current_time=current_time,
-                    message="ROI止损"
+                    message="ROI止损",
+                    candle_time=self._index_candle_key(current_time)  # 新增
                 )
             return "stop_loss"
 

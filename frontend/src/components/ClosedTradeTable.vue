@@ -63,6 +63,7 @@
         <el-table-column
             prop="exit_reason"
             label="平倉原因"
+            :formatter="formatExitReason"
         />
 
     </el-table>
@@ -107,6 +108,30 @@ const tableData = computed(() => {
     })
 })
 
+const EXIT_REASON_MAP = {
+    force_exit: "强制退出",
+    roi: "ROI止盈",
+    stop_loss: "止损",
+    trailing_stop_loss: "移动止损",
+    custom_exit: "自定义退出",
+    partial_exit: "部分退出",
+    exit_signal: "信号退出",
+    emergency_exit: "紧急退出",
+    liquidation: "爆仓",
+    exit_timeout: "超时退出",
+}
+
+const formatExitReason = (row, column, value) => {
+
+    if (!value) {
+        return "-"
+    }
+
+    const key = String(value).toLowerCase()
+
+    return EXIT_REASON_MAP[key] || value
+}
+
 const formatNumber = (
     row,
     column,
@@ -140,14 +165,8 @@ const formatPercent = (
     return `${Number(value).toFixed(2)}%`
 }
 
-/**
- * 通用时间格式化（按浏览器本地时区显示）
- *
- * 优先用毫秒时间戳，兜底用字符串
- */
 const formatTimestamp = (ts, fallbackStr) => {
 
-    // 优先用毫秒时间戳
     if (ts) {
         const date = new Date(Number(ts))
 
@@ -156,7 +175,6 @@ const formatTimestamp = (ts, fallbackStr) => {
         }
     }
 
-    // 兜底：字符串
     if (!fallbackStr) {
         return "-"
     }

@@ -30,7 +30,7 @@ class RiskService:
             f"start_profit={runtime.ROUND_INFO['start_profit']}, "
             f"start_long_closed={runtime.ROUND_INFO['start_long_closed']}, "
             f"start_short_closed={runtime.ROUND_INFO['start_short_closed']}, "
-            f"start_balance={runtime.ROUND_INFO['start_balance']}"
+            f"start_balance={runtime.ROUND_INFO['start_balance']}, "
             f"累计止盈次数={runtime.ROUND_INFO.get('global_tp_count', 0)}, "
             f"累计止损次数={runtime.ROUND_INFO.get('global_sl_count', 0)}"
         )
@@ -38,7 +38,6 @@ class RiskService:
     @classmethod
     def calc_round_profit(cls):
 
-        # ---------- 取值，全部兜底 ----------
         try:
             closed = PositionService.get_closed_profit_summary()
         except Exception as e:
@@ -59,37 +58,26 @@ class RiskService:
                 "total_float": 0.0
             }
 
-        # ---------- 本轮基准 ----------
         start_long_closed = runtime.ROUND_INFO.get("start_long_closed") or 0.0
         start_short_closed = runtime.ROUND_INFO.get("start_short_closed") or 0.0
         start_balance = runtime.ROUND_INFO.get("start_balance") or 0.0
 
-        # ---------- 本轮多单已平仓 ----------
-        long_closed_round = (
-                closed["long_closed_profit"] - start_long_closed
-        )
-        short_closed_round = (
-                closed["short_closed_profit"] - start_short_closed
-        )
+        long_closed_round = closed["long_closed_profit"] - start_long_closed
+        short_closed_round = closed["short_closed_profit"] - start_short_closed
 
-        # ---------- 本轮多单收益 = 多单本轮已平仓 + 多单浮盈 ----------
         long_round = long_closed_round + floating["long_float"]
         short_round = short_closed_round + floating["short_float"]
 
-        # ---------- 本轮总收益 ----------
         round_profit = long_round + short_round
 
-        # ---------- 本轮收益率 ----------
         if start_balance:
             round_ratio = round_profit / start_balance * 100
         else:
             round_ratio = 0.0
 
-        # ---------- 写回 ROUND_INFO ----------
         runtime.ROUND_INFO["round_profit"] = round_profit
         runtime.ROUND_INFO["round_ratio"] = round(round_ratio, 2)
 
-        # ---------- 日志 ----------
         print(
             f"[Risk] calc "
             f"多单本轮已平仓={long_closed_round:.2f}, "
@@ -105,9 +93,28 @@ class RiskService:
         )
 
     @classmethod
-    def force_exit_all(cls):
+    def force_exit_all(cls, reason: str = None):
+        """全部平仓
+
+        reason: 可选，全局平仓原因
+        """
+
         snapshot_cache["time"] = 0
         positions = PositionService.get_all_positions()
+
+        # 如果传了 reason，记录一下
+        if reason:
+            for pos in positions:
+                trade_id = pos.get("trade_id")
+                if trade_id is not None:
+                    runtime.GLOBAL_EXIT_REASONS[trade_id] = reason
+
+            # 限制大小
+            if len(runtime.GLOBAL_EXIT_REASONS) > 1000:
+                keys = list(runtime.GLOBAL_EXIT_REASONS.keys())
+                for k in keys[:len(keys) - 1000]:
+                    del runtime.GLOBAL_EXIT_REASONS[k]
+
         for pos in positions:
             for attempt in range(3):
                 try:
@@ -127,7 +134,7 @@ class RiskService:
     def wait_positions_closed(cls, timeout=60):
         start = time.time()
         while time.time() - start < timeout:
-            snapshot_cache["time"] = 0  # 强制刷新
+            snapshot_cache["time"] = 0
             positions = PositionService.get_all_positions()
             if len(positions) == 0:
                 return True
@@ -136,15 +143,12 @@ class RiskService:
 
     @classmethod
     def reset_round(cls):
-
         cls.init_round()
-
         print("开始新一轮交易")
 
     @classmethod
     def check_risk(cls):
 
-        # 冷却：止盈/止损触发后 60 秒内不再检查
         last_tp = runtime.ROUND_INFO.get("last_tp_time", 0) or 0
         if time.time() - last_tp < 60:
             return
@@ -170,7 +174,9 @@ class RiskService:
                     runtime.ROUND_INFO.get("global_tp_count", 0) + 1
             )
 
-            cls.force_exit_all()
+            cls.record_global_exit_events("global_tp", "全局止盈")
+
+            cls.force_exit_all(reason="全局止盈")
             cls.wait_positions_closed(timeout=60)
             cls.reset_round()
             return
@@ -183,10 +189,69 @@ class RiskService:
                     runtime.ROUND_INFO.get("global_sl_count", 0) + 1
             )
 
-            cls.force_exit_all()
+            cls.record_global_exit_events("global_sl", "全局止损")
+
+            cls.force_exit_all(reason="全局止损")
             cls.wait_positions_closed(timeout=60)
             cls.reset_round()
             return
+
+    @classmethod
+    def record_global_exit_events(cls, event_type: str, message: str):
+        """记录全局平仓事件到图表"""
+
+        import sys
+        from pathlib import Path
+        from datetime import datetime
+
+        EVENT_LOGGER_DIR = (
+                Path(__file__).resolve().parents[3]
+                / "freqtrade"
+                / "user_data"
+                / "strategies"
+        )
+
+        if str(EVENT_LOGGER_DIR) not in sys.path:
+            sys.path.insert(0, str(EVENT_LOGGER_DIR))
+
+        try:
+            from event_logger import record_event
+        except Exception as e:
+            print(f"[Risk] event_logger 导入失败，跳过事件记录: {e}")
+            return
+
+        positions = PositionService.get_all_positions()
+
+        current_time = datetime.utcnow()
+
+        for pos in positions:
+
+            trade_id = pos.get("trade_id")
+            pair = pos.get("pair")
+            price = pos.get("current_rate") or pos.get("close_rate") or 0
+            amount = pos.get("amount") or 0
+            side = pos.get("side", "long").lower()
+
+            if trade_id is None or not pair:
+                continue
+
+            # 根据 side 判断策略名
+            strategy_name = "DcaTpShort" if side == "short" else "DcaTpLong"
+
+            try:
+                record_event(
+                    strategy=strategy_name,
+                    pair=pair,
+                    trade_id=trade_id,
+                    event_type=event_type,
+                    side=side,
+                    price=float(price),
+                    amount=float(amount),
+                    message=message,
+                    current_time=current_time
+                )
+            except Exception as e:
+                print(f"[Risk] record_event 失败: {e}")
 
     @classmethod
     def monitor(cls):

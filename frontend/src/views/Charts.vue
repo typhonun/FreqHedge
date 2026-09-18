@@ -142,7 +142,7 @@ const timeframes = [
     "1d"
 ]
 
-const REFRESH_INTERVAL = 2000
+const REFRESH_INTERVAL = 5000
 
 let chart = null
 
@@ -338,8 +338,49 @@ const loadChart = async () => {
 
     }
 
+        /*
+    =========================
+    过滤：手动开仓时隐藏 signal
+    =========================
+    */
+    const rawEvents = eventRes.data || []
+
+    // 找出所有 manual_entry 事件的时间（转成秒）
+    const manualEntryTimes = rawEvents
+        .filter(e => e.event_type === "manual_entry")
+        .map(e => parseEventTime(
+            e.candle_time || e.time
+        ))
+        .filter(t => t !== null && t !== undefined)
+
+    // 判断某个 signal 是否落在某根手动开仓的 30min K 线内
+    function isSignalFromManualEntry(e) {
+
+        if (e.event_type !== "signal") return false
+
+        const sigTime = parseEventTime(
+            e.candle_time || e.time || e.created_at
+        )
+        if (sigTime === null || sigTime === undefined) return false
+
+        // 同一根 30 分钟 K 线（1800 秒）
+        const sigBucket = Math.floor(sigTime / 1800)
+
+        return manualEntryTimes.some(mt => {
+            return Math.floor(mt / 1800) === sigBucket
+        })
+    }
+
+    // 过滤掉手动开仓产生的 signal
+    const filteredEvents = rawEvents.filter(
+        e => !isSignalFromManualEntry(e)
+    )
+
+    console.log("raw events:", rawEvents)
+    console.log("filtered events:", filteredEvents)
+
     const eventMarkers =
-        eventRes.data.map(e=>{
+        filteredEvents.map(e=>{
 
 
             let config={}
@@ -354,7 +395,7 @@ const loadChart = async () => {
                         position:"belowBar",
 
                         color:"#673ab7",
-                
+
                         shape:"arrowUp",
 
                         text:
@@ -515,8 +556,6 @@ const loadChart = async () => {
 
                 break
 
-
-
                 case "sl":
 
                     config={
@@ -554,6 +593,52 @@ const loadChart = async () => {
                             数量:${e.amount}`,
 
                         size: 2
+
+                    }
+
+                break
+
+                case "global_tp":
+
+                    config = {
+
+                        position: "aboveBar",
+
+                        color: "#00c853",
+
+                        shape: "arrowDown",
+
+                        text: `全局止盈 ${e.price}`,
+
+                        title:
+                            `价格:${e.price}
+                            数量:${e.amount}
+                            ${e.message || ""}`,
+
+                        size: 3
+
+                    }
+
+                break
+
+                case "global_sl":
+
+                    config = {
+
+                        position: "aboveBar",
+
+                        color: "#d50000",
+
+                        shape: "arrowDown",
+
+                        text: `全局止损 ${e.price}`,
+
+                        title:
+                            `价格:${e.price}
+                            数量:${e.amount}
+                            ${e.message || ""}`,
+
+                        size: 3
 
                     }
 
@@ -642,7 +727,7 @@ const loadChart = async () => {
 
     console.log(
         "events:",
-        eventRes.data
+        filteredEvents
     )
 
     console.log(
@@ -661,18 +746,10 @@ const loadChart = async () => {
         eventMarkers[0]?.time
     )
 
-    if(eventMarkers.length){
+    markerApi.setMarkers(eventMarkers)
 
-        markerApi.setMarkers(
-            eventMarkers
-        )
-
-    }else{
-
-        console.warn(
-            "没有交易事件"
-        )
-
+    if(!eventMarkers.length){
+        console.warn("没有交易事件")
     }
 
 

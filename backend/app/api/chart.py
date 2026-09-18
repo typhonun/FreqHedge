@@ -6,7 +6,7 @@ from app.services.position_service import PositionService
 from pathlib import Path
 from fastapi import Depends
 from sqlalchemy.orm import Session
-
+from datetime import datetime, timedelta
 from app.database import get_db
 from app.models.trade_event import TradeEvent
 from app.schemas.chart import (
@@ -19,17 +19,11 @@ router = APIRouter()
 kline_cache = {}
 
 exchange = ccxt.binance({
-
     "enableRateLimit": True,
-
     "rateLimit": 1200,
-
     "options": {
-
-        "defaultType":"future"
-
+        "defaultType": "future"
     }
-
 })
 
 
@@ -37,11 +31,8 @@ def load_whitelist_pairs():
     pairs = set()
 
     config_files = [
-
         BASE_DIR / "freqtrade/user_data/config_long.json",
-
         BASE_DIR / "freqtrade/user_data/config_short.json"
-
     ]
 
     for cfg in config_files:
@@ -51,23 +42,13 @@ def load_whitelist_pairs():
 
         try:
 
-            with open(
-                    cfg,
-                    "r",
-                    encoding="utf8"
-            ) as f:
-
+            with open(cfg, "r", encoding="utf8") as f:
                 data = json.load(f)
 
-            pairs.update(
-                data["exchange"]["pair_whitelist"]
-            )
+            pairs.update(data["exchange"]["pair_whitelist"])
 
         except Exception as e:
-
-            print(
-                f"读取配置失败: {e}"
-            )
+            print(f"读取配置失败: {e}")
 
     return list(pairs)
 
@@ -87,6 +68,9 @@ def get_pairs(strategy: str):
 
     elif strategy == "DcaTpShort":
         cfg = BASE_DIR / "freqtrade/user_data/config_short.json"
+
+    else:
+        return []
 
     with open(cfg, "r", encoding="utf8") as f:
         data = json.load(f)
@@ -269,53 +253,47 @@ def warmup_cache():
 
 
 @router.post("/event")
-def create_event(
-        event: TradeEventCreate,
-        db:Session=Depends(get_db)
-):
+def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
+    # 用 candle_time 去重：同一策略、同一交易对、同一事件类型、同一根 K 线，只记录一次
+    if event.candle_time:
+        exists = db.query(TradeEvent).filter(
+            TradeEvent.strategy == event.strategy,
+            TradeEvent.pair == event.pair,
+            TradeEvent.event_type == event.event_type,
+            TradeEvent.candle_time == event.candle_time
+        ).first()
+        if exists:
+            return exists
 
+    # 如果没有 candle_time，退化为用 time 做 5 分钟窗口去重
+    else:
+        time_threshold = datetime.now() - timedelta(minutes=5)
+        exists = db.query(TradeEvent).filter(
+            TradeEvent.strategy == event.strategy,
+            TradeEvent.pair == event.pair,
+            TradeEvent.event_type == event.event_type,
+            TradeEvent.time >= time_threshold
+        ).first()
 
-    exists = db.query(
-        TradeEvent
-    ).filter(
-        TradeEvent.strategy==event.strategy,
-        TradeEvent.pair==event.pair,
-        TradeEvent.event_type==event.event_type,
-        TradeEvent.candle_time==event.candle_time
-    ).first()
+        if exists:
+            return exists
 
-
-    if exists:
-        return exists
-
+    # 插入逻辑（无论是否有 candle_time，都要走到这里）
     obj = TradeEvent(
-
         strategy=event.strategy,
-
         pair=event.pair,
-
         trade_id=event.trade_id,
-
         event_type=event.event_type,
-
         side=event.side,
-
         price=event.price,
-
         amount=event.amount,
-
         time=event.time,
-
         candle_time=event.candle_time,
-
         message=event.message
     )
 
-
     db.add(obj)
-
     db.commit()
-
     db.refresh(obj)
 
     return obj
@@ -337,20 +315,11 @@ def get_events(
     ]
 
     return (
-
-        db.query(
-            TradeEvent
-        )
-
+        db.query(TradeEvent)
         .filter(
             TradeEvent.strategy == strategy,
             TradeEvent.pair.in_(pairs)
         )
-
-        .order_by(
-            TradeEvent.time
-        )
-
+        .order_by(TradeEvent.time)
         .all()
-
     )

@@ -6,6 +6,7 @@ from pathlib import Path
 from app.database import SessionLocal
 from app.models.equity_history import EquityHistory
 from app.models.profit_history import ProfitHistory
+from app.core import runtime
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from config.settings import (
@@ -524,8 +525,6 @@ class PositionService:
     @staticmethod
     def get_profit_summary(snapshot=None):
 
-        from app.core import runtime
-
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
@@ -640,46 +639,30 @@ class PositionService:
 
         snapshot = PositionService.get_snapshot()
 
-        long_trades = (
-            PositionService._extract_trades(
-                snapshot["long_trades"]
-            )
-        )
+        long_trades = PositionService._extract_trades(snapshot["long_trades"])
+        short_trades = PositionService._extract_trades(snapshot["short_trades"])
 
-        short_trades = (
-            PositionService._extract_trades(
-                snapshot["short_trades"]
-            )
-        )
+        def enrich(trade, side):
+            trade = {**trade, "side": side}
+
+            trade_id = trade.get("trade_id")
+
+            # 覆盖 exit_reason
+            if trade_id in runtime.GLOBAL_EXIT_REASONS:
+                trade["exit_reason"] = runtime.GLOBAL_EXIT_REASONS[trade_id]
+
+            return trade
 
         return {
-
             "long": [
-                {
-                    **trade,
-                    "side": "LONG"
-                }
-
+                enrich(trade, "LONG")
                 for trade in long_trades
-
-                if not trade.get(
-                    "is_open",
-                    True
-                )
+                if not trade.get("is_open", True)
             ],
-
             "short": [
-                {
-                    **trade,
-                    "side": "SHORT"
-                }
-
+                enrich(trade, "SHORT")
                 for trade in short_trades
-
-                if not trade.get(
-                    "is_open",
-                    True
-                )
+                if not trade.get("is_open", True)
             ]
         }
 
