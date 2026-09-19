@@ -610,7 +610,7 @@
                     </el-col>
 
                     <el-col :span="8">
-                        <el-form-item label="下跌步骤%">
+                        <el-form-item label="价格偏差">
                             <el-input-number
                                 v-model="config.dca.price_offset"
                                 class="field-input"
@@ -624,7 +624,7 @@
                     </el-col>
 
                     <el-col :span="8">
-                        <el-form-item label="价格偏差">
+                        <el-form-item label="价格偏差乘数">
                             <el-input-number
                                 v-model="config.dca.price_multiplier"
                                 class="field-input"
@@ -639,7 +639,7 @@
 
                     <template v-if="config.dca.amount_mode === 'auto'">
                         <el-col :span="8">
-                            <el-form-item label="首次加仓%">
+                            <el-form-item label="订单大小%">
                                 <el-input-number
                                     v-model="config.dca.base_percent"
                                     class="field-input"
@@ -653,7 +653,7 @@
                         </el-col>
 
                         <el-col :span="8">
-                            <el-form-item label="订单规模倍率">
+                            <el-form-item label="订单规模乘数">
                                 <el-input-number
                                     v-model="config.dca.amount_multiplier"
                                     class="field-input"

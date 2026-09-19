@@ -18,7 +18,15 @@ GLOBAL_RISK = {
     "global_sl_enabled": False,
 
     "global_tp_amount": 100,
-    "global_sl_amount": -50
+    "global_sl_amount": 50,
+
+    # 新增：模式 "amount" / "ratio"
+    "global_tp_mode": "amount",
+    "global_sl_mode": "amount",
+
+    # 新增：百分比阈值
+    "global_tp_ratio": 5.0,
+    "global_sl_ratio": 100.0,
 }
 
 GLOBAL_EXIT_REASONS = {}

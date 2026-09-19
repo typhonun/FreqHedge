@@ -417,7 +417,8 @@ const loadChart = async () => {
 
                         shape:"arrowUp",
 
-                        text:"手动开仓",
+                        text:
+                        `手动开仓 ${e.price}`,
 
                         size:2,
 
@@ -439,7 +440,8 @@ const loadChart = async () => {
 
                         shape:"arrowUp",
 
-                        text:"DCA加仓",
+                        text:
+                        `DCA加仓 ${e.price}`,
 
                         size:1,
 

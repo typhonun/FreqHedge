@@ -155,46 +155,90 @@ class RiskService:
 
         cls.calc_round_profit()
 
+        # 无持仓不判断，避免 0 收益误触发
+        position_count = PositionService.get_position_count()
+        if position_count["total"] == 0:
+            return
+
         risk = runtime.GLOBAL_RISK
         profit = runtime.ROUND_INFO.get("round_profit", 0.0) or 0.0
+        ratio = runtime.ROUND_INFO.get("round_ratio", 0.0) or 0.0
 
-        print(
-            f"[Risk] check "
-            f"profit={profit}, "
-            f"tp_enabled={risk['global_tp_enabled']}, "
-            f"tp_amount={risk['global_tp_amount']}, "
-            f"last_tp={runtime.ROUND_INFO.get('last_tp_time')}"
-        )
+        # ---------- 止盈 ----------
+        if risk["global_tp_enabled"]:
 
-        if risk["global_tp_enabled"] and profit >= risk["global_tp_amount"]:
-            print(f"触发全局止盈 {profit:.2f} USDT")
-            runtime.ROUND_INFO["last_tp_time"] = time.time()
+            tp_mode = risk.get("global_tp_mode", "amount")
 
-            runtime.ROUND_INFO["global_tp_count"] = (
-                    runtime.ROUND_INFO.get("global_tp_count", 0) + 1
-            )
+            if tp_mode == "ratio":
+                tp_ratio = float(risk.get("global_tp_ratio", 0.0) or 0.0)
+                # 阈值必须 > 0 才判断
+                if tp_ratio > 0 and ratio >= tp_ratio:
+                    tp_hit = True
+                    tp_desc = f"{ratio:.2f}% >= {tp_ratio}%"
+                else:
+                    tp_hit = False
+                    tp_desc = ""
+            else:
+                tp_amount = float(risk.get("global_tp_amount", 0.0) or 0.0)
+                if tp_amount > 0 and profit >= tp_amount:
+                    tp_hit = True
+                    tp_desc = f"{profit:.2f} >= {tp_amount} USDT"
+                else:
+                    tp_hit = False
+                    tp_desc = ""
 
-            cls.record_global_exit_events("global_tp", "全局止盈")
+            if tp_hit:
+                print(f"触发全局止盈 {tp_desc}")
+                runtime.ROUND_INFO["last_tp_time"] = time.time()
 
-            cls.force_exit_all(reason="全局止盈")
-            cls.wait_positions_closed(timeout=60)
-            cls.reset_round()
-            return
+                runtime.ROUND_INFO["global_tp_count"] = (
+                        runtime.ROUND_INFO.get("global_tp_count", 0) + 1
+                )
 
-        if risk["global_sl_enabled"] and profit <= -risk["global_sl_amount"]:
-            print(f"触发全局止损 {profit:.2f} USDT")
-            runtime.ROUND_INFO["last_tp_time"] = time.time()
+                cls.record_global_exit_events("global_tp", "全局止盈")
 
-            runtime.ROUND_INFO["global_sl_count"] = (
-                    runtime.ROUND_INFO.get("global_sl_count", 0) + 1
-            )
+                cls.force_exit_all(reason="全局止盈")
+                cls.wait_positions_closed(timeout=60)
+                cls.reset_round()
+                return
 
-            cls.record_global_exit_events("global_sl", "全局止损")
+        # ---------- 止损 ----------
+        if risk["global_sl_enabled"]:
 
-            cls.force_exit_all(reason="全局止损")
-            cls.wait_positions_closed(timeout=60)
-            cls.reset_round()
-            return
+            sl_mode = risk.get("global_sl_mode", "amount")
+
+            if sl_mode == "ratio":
+                sl_ratio = float(risk.get("global_sl_ratio", 0.0) or 0.0)
+                # 阈值必须 > 0 才判断
+                if sl_ratio > 0 and ratio <= -sl_ratio:
+                    sl_hit = True
+                    sl_desc = f"{ratio:.2f}% <= -{sl_ratio}%"
+                else:
+                    sl_hit = False
+                    sl_desc = ""
+            else:
+                sl_amount = float(risk.get("global_sl_amount", 0.0) or 0.0)
+                if sl_amount > 0 and profit <= -sl_amount:
+                    sl_hit = True
+                    sl_desc = f"{profit:.2f} <= -{sl_amount} USDT"
+                else:
+                    sl_hit = False
+                    sl_desc = ""
+
+            if sl_hit:
+                print(f"触发全局止损 {sl_desc}")
+                runtime.ROUND_INFO["last_tp_time"] = time.time()
+
+                runtime.ROUND_INFO["global_sl_count"] = (
+                        runtime.ROUND_INFO.get("global_sl_count", 0) + 1
+                )
+
+                cls.record_global_exit_events("global_sl", "全局止损")
+
+                cls.force_exit_all(reason="全局止损")
+                cls.wait_positions_closed(timeout=60)
+                cls.reset_round()
+                return
 
     @classmethod
     def record_global_exit_events(cls, event_type: str, message: str):
@@ -262,8 +306,15 @@ class RiskService:
                 risk = runtime.GLOBAL_RISK
                 print(
                     f"[Risk] profit={runtime.ROUND_INFO.get('round_profit')}, "
-                    f"tp={risk.get('global_tp_enabled')}/{risk.get('global_tp_amount')}, "
-                    f"sl={risk.get('global_sl_enabled')}/{risk.get('global_sl_amount')}"
+                    f"ratio={runtime.ROUND_INFO.get('round_ratio')}, "
+                    f"tp={risk.get('global_tp_enabled')}"
+                    f"/{risk.get('global_tp_mode')}"
+                    f"/{risk.get('global_tp_amount')}"
+                    f"/{risk.get('global_tp_ratio')}, "
+                    f"sl={risk.get('global_sl_enabled')}"
+                    f"/{risk.get('global_sl_mode')}"
+                    f"/{risk.get('global_sl_amount')}"
+                    f"/{risk.get('global_sl_ratio')}"
                 )
                 cls.check_risk()
             except Exception as e:

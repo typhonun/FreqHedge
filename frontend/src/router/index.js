@@ -15,27 +15,37 @@ const routes = [
     {
         path: "/",
         component: MainLayout,
-
+        redirect: "/dashboard",   // 根路径默认跳到仪表盘
         children: [
             {
-                path: "",
-                component: Dashboard
+                path: "dashboard",           // 子路由不要写 / 开头
+                name: "Dashboard",
+                component: Dashboard,
+                meta: { title: "仪表盘" }     // ← 新增
             },
             {
-                path: "/control",
-                component: Control
+                path: "control",
+                name: "Control",
+                component: Control,
+                meta: { title: "控制中心" }    // ← 新增
             },
             {
                 path: "strategyConfig",
-                component: StrategyConfig
+                name: "StrategyConfig",
+                component: StrategyConfig,
+                meta: { title: "策略配置" }    // ← 新增
             },
             {
                 path: "charts",
-                component: Charts
+                name: "Charts",
+                component: Charts,
+                meta: { title: "K线分析" }     // ← 新增
             },
             {
                 path: "logs",
-                component: Logs
+                name: "Logs",
+                component: Logs,
+                meta: { title: "系统日志" }    // ← 新增
             }
         ]
     }

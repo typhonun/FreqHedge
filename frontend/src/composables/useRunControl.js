@@ -26,6 +26,11 @@ export function useRunControl() {
     const globalTpAmount = ref(0)
     const globalSlAmount = ref(0)
 
+    const globalTpMode = ref("amount")
+    const globalSlMode = ref("amount")
+    const globalTpRatio = ref(0)
+    const globalSlRatio = ref(0)
+
     const configCache = ref({
         longStake: 20,
         shortStake: 20
@@ -420,30 +425,37 @@ export function useRunControl() {
 
         globalSlAmount.value =
             data.global_sl_amount
+
+        globalTpMode.value =
+            data.global_tp_mode || "amount"
+
+        globalSlMode.value =
+            data.global_sl_mode || "amount"
+
+        globalTpRatio.value =
+            Number(data.global_tp_ratio || 0)
+
+        globalSlRatio.value =
+            Number(data.global_sl_ratio || 0)
     }
 
     const saveRiskConfig = async () => {
-
         await axios.post(
             `${API}/control/risk-config`,
             {
+                global_tp_enabled: globalTpEnabled.value,
+                global_tp_amount: globalTpAmount.value,
+                global_tp_mode: globalTpMode.value,
+                global_tp_ratio: globalTpRatio.value,
 
-                global_tp_enabled:
-                    globalTpEnabled.value,
-
-                global_sl_enabled:
-                    globalSlEnabled.value,
-                global_tp_amount:
-                    globalTpAmount.value,
-
-                global_sl_amount:
-                    globalSlAmount.value
+                global_sl_enabled: globalSlEnabled.value,
+                global_sl_amount: globalSlAmount.value,
+                global_sl_mode: globalSlMode.value,
+                global_sl_ratio: globalSlRatio.value,
             }
         )
 
-        ElMessage.success(
-            "已保存"
-        )
+        ElMessage.success("已保存")
     }
 
     return {
@@ -479,6 +491,11 @@ export function useRunControl() {
 
         globalTpAmount,
         globalSlAmount,
+
+        globalTpMode,
+        globalSlMode,
+        globalTpRatio,
+        globalSlRatio,
 
         loadRiskConfig,
         saveRiskConfig

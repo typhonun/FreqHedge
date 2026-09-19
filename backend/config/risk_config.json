@@ -2,5 +2,9 @@
     "global_tp_enabled": true,
     "global_sl_enabled": true,
     "global_tp_amount": 12,
-    "global_sl_amount": 12
+    "global_sl_amount": 12,
+    "global_tp_mode": "ratio",
+    "global_sl_mode": "amount",
+    "global_tp_ratio": 1,
+    "global_sl_ratio": 20
 }

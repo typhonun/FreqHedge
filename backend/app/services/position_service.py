@@ -560,12 +560,25 @@ class PositionService:
         # 本轮累计 = 浮盈 + 本轮已平仓
         long_round = long_float + long_closed_round
         short_round = short_float + short_closed_round
+        total_round = long_round + short_round
+
+        # 本轮开始总资金（方案 A 分母）
+        start_balance = runtime.ROUND_INFO.get("start_balance") or 0.0
+
+        if start_balance:
+            round_ratio = total_round / start_balance * 100
+            long_ratio = long_round / start_balance * 100
+            short_ratio = short_round / start_balance * 100
+        else:
+            round_ratio = 0.0
+            long_ratio = 0.0
+            short_ratio = 0.0
 
         return {
             # 本轮累计
             "long_profit": round(long_round, 2),
             "short_profit": round(short_round, 2),
-            "total_profit": round(long_round + short_round, 2),
+            "total_profit": round(total_round, 2),
 
             # 浮盈
             "long_float": round(long_float, 2),
@@ -574,6 +587,18 @@ class PositionService:
             # 本轮已平仓
             "long_closed": round(long_closed_round, 2),
             "short_closed": round(short_closed_round, 2),
+
+            # 本轮收益率
+            "round_ratio": round(round_ratio, 2),
+            "long_ratio": round(long_ratio, 2),
+            "short_ratio": round(short_ratio, 2),
+
+            # 持仓数量（前端控制显隐）
+            "position_count": {
+                "long": len(long_positions),
+                "short": len(short_positions),
+                "total": len(long_positions) + len(short_positions),
+            },
 
             # 新增
             "global_tp_count": runtime.ROUND_INFO.get("global_tp_count", 0),

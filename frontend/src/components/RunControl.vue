@@ -198,15 +198,38 @@
 
         <div class="risk-item">
           <div>
-            <span>止盈金额(USDT)</span>
+            <span>止盈阈值</span>
+            <p>达到目标自动平仓</p>
           </div>
 
+          <div class="risk-input">
+            <el-radio-group
+              v-model="globalTpMode"
+              size="small"
+              @change="saveRiskConfig"
+            >
+              <el-radio-button label="amount">金额</el-radio-button>
+              <el-radio-button label="ratio">百分比</el-radio-button>
+            </el-radio-group>
+
             <el-input-number
+              v-if="globalTpMode === 'amount'"
               v-model="globalTpAmount"
               :min="0"
               :step="10"
               @change="saveRiskConfig"
             />
+
+            <el-input-number
+              v-else
+              v-model="globalTpRatio"
+              :min="0"
+              :step="0.1"
+              :precision="2"
+              suffix="%"
+              @change="saveRiskConfig"
+            />
+          </div>
         </div>
 
         <div class="risk-item">
@@ -223,15 +246,38 @@
 
         <div class="risk-item">
           <div>
-            <span>止损金额(USDT)</span>
+            <span>止损阈值</span>
+            <p>达到亏损限制自动止损</p>
           </div>
 
+          <div class="risk-input">
+            <el-radio-group
+              v-model="globalSlMode"
+              size="small"
+              @change="saveRiskConfig"
+            >
+              <el-radio-button label="amount">金额</el-radio-button>
+              <el-radio-button label="ratio">百分比</el-radio-button>
+            </el-radio-group>
+
             <el-input-number
+              v-if="globalSlMode === 'amount'"
               v-model="globalSlAmount"
               :min="0"
               :step="10"
               @change="saveRiskConfig"
             />
+
+            <el-input-number
+              v-else
+              v-model="globalSlRatio"
+              :min="0"
+              :step="0.1"
+              :precision="2"
+              suffix="%"
+              @change="saveRiskConfig"
+            />
+          </div>
         </div>
       </div>
     </el-card>
@@ -265,6 +311,10 @@ const {
   globalSlEnabled,
   globalTpAmount,
   globalSlAmount,
+  globalTpMode,
+  globalSlMode,
+  globalTpRatio,
+  globalSlRatio,
   loadRiskConfig,
   saveRiskConfig
 } = useRunControl()
@@ -411,5 +461,11 @@ onMounted(async () => {
 
 .force-form .el-form-item {
   width: 80%;
+}
+
+.risk-input {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 </style>

@@ -1,0 +1,10 @@
+:root {
+  --bg-dark: #131722;        /* 主背景深色 */
+  --bg-card: #1E232F;        /* 卡片背景色 */
+  --bg-sidebar: #181C25;     /* 侧边栏背景色 */
+  --primary-color: #2BBDF6;  /* 主题青绿色 */
+  --primary-hover: #1CAEE7;  /* 主题色悬浮态 */
+  --text-main: #FFFFFF;      /* 主文字白色 */
+  --text-muted: #848E9C;     /* 次要文字灰色 */
+  --border-color: #2B3139;   /* 边框色 */
+}
