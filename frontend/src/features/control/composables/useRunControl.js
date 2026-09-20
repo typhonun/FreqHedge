@@ -31,6 +31,15 @@ export function useRunControl() {
     const globalTpRatio = ref(0)
     const globalSlRatio = ref(0)
 
+    const globalTrailEnabled = ref(false)
+    const globalTrailMode = ref("ratio")
+
+    const globalTrailActivateAmount = ref(10)
+    const globalTrailActivateRatio = ref(1)
+
+    const globalTrailDrawdownAmount = ref(5)
+    const globalTrailDrawdownRatio = ref(0.5)
+
     const configCache = ref({
         longStake: 20,
         shortStake: 20
@@ -437,6 +446,24 @@ export function useRunControl() {
 
         globalSlRatio.value =
             Number(data.global_sl_ratio || 0)
+
+        globalTrailEnabled.value =
+            data.global_trail_enabled || false
+
+        globalTrailMode.value =
+            data.global_trail_mode || "ratio"
+
+        globalTrailActivateAmount.value =
+            Number(data.global_trail_activate_amount || 0)
+
+        globalTrailActivateRatio.value =
+            Number(data.global_trail_activate_ratio || 0)
+
+        globalTrailDrawdownAmount.value =
+            Number(data.global_trail_drawdown_amount || 0)
+
+        globalTrailDrawdownRatio.value =
+            Number(data.global_trail_drawdown_ratio || 0)
     }
 
     const saveRiskConfig = async () => {
@@ -452,6 +479,15 @@ export function useRunControl() {
                 global_sl_amount: globalSlAmount.value,
                 global_sl_mode: globalSlMode.value,
                 global_sl_ratio: globalSlRatio.value,
+
+                global_trail_enabled: globalTrailEnabled.value,
+                global_trail_mode: globalTrailMode.value,
+
+                global_trail_activate_amount: globalTrailActivateAmount.value,
+                global_trail_activate_ratio: globalTrailActivateRatio.value,
+
+                global_trail_drawdown_amount: globalTrailDrawdownAmount.value,
+                global_trail_drawdown_ratio: globalTrailDrawdownRatio.value,
             }
         )
 
@@ -496,6 +532,13 @@ export function useRunControl() {
         globalSlMode,
         globalTpRatio,
         globalSlRatio,
+
+        globalTrailEnabled,
+        globalTrailMode,
+        globalTrailActivateAmount,
+        globalTrailActivateRatio,
+        globalTrailDrawdownAmount,
+        globalTrailDrawdownRatio,
 
         loadRiskConfig,
         saveRiskConfig

@@ -216,7 +216,7 @@
               v-if="globalTpMode === 'amount'"
               v-model="globalTpAmount"
               :min="0"
-              :step="10"
+              :step="1"
               @change="saveRiskConfig"
             />
 
@@ -264,7 +264,7 @@
               v-if="globalSlMode === 'amount'"
               v-model="globalSlAmount"
               :min="0"
-              :step="10"
+              :step="1"
               @change="saveRiskConfig"
             />
 
@@ -277,6 +277,71 @@
               suffix="%"
               @change="saveRiskConfig"
             />
+          </div>
+        </div>
+
+        <!-- ===== 追踪止损 ===== -->
+        <div class="risk-item">
+          <div>
+            <span>📈 启用追踪止损</span>
+            <p>回撤或反弹到触发线自动平仓</p>
+          </div>
+
+          <el-switch
+            v-model="globalTrailEnabled"
+            @change="saveRiskConfig"
+          />
+        </div>
+
+        <div class="risk-item">
+          <div>
+            <span>追踪参数</span>
+            <p>触发盈亏可正可负，正数追踪盈利，负数追踪亏损</p>
+          </div>
+
+          <div class="risk-input">
+            <el-radio-group
+              v-model="globalTrailMode"
+              size="small"
+              @change="saveRiskConfig"
+            >
+              <el-radio-button label="amount">金额</el-radio-button>
+              <el-radio-button label="ratio">百分比</el-radio-button>
+            </el-radio-group>
+
+            <template v-if="globalTrailMode === 'amount'">
+              <el-input-number
+                v-model="globalTrailActivateAmount"
+                :step="1"
+                @change="saveRiskConfig"
+                placeholder="触发盈亏"
+              />
+              <el-input-number
+                v-model="globalTrailDrawdownAmount"
+                :min="0"
+                :step="1"
+                @change="saveRiskConfig"
+                placeholder="追踪止损"
+              />
+            </template>
+
+            <template v-else>
+              <el-input-number
+                v-model="globalTrailActivateRatio"
+                :step="0.1"
+                :precision="2"
+                @change="saveRiskConfig"
+                placeholder="触发盈亏"
+              />
+              <el-input-number
+                v-model="globalTrailDrawdownRatio"
+                :min="0"
+                :step="0.1"
+                :precision="2"
+                @change="saveRiskConfig"
+                placeholder="追踪止损"
+              />
+            </template>
           </div>
         </div>
       </div>
@@ -315,6 +380,12 @@ const {
   globalSlMode,
   globalTpRatio,
   globalSlRatio,
+  globalTrailEnabled,
+  globalTrailMode,
+  globalTrailActivateAmount,
+  globalTrailActivateRatio,
+  globalTrailDrawdownAmount,
+  globalTrailDrawdownRatio,
   loadRiskConfig,
   saveRiskConfig
 } = useRunControl()
@@ -467,5 +538,9 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.risk-input .el-input-number {
+  width: 110px;
 }
 </style>

@@ -25,6 +25,12 @@ class RiskService:
         runtime.ROUND_INFO["round_ratio"] = 0.0
         runtime.ROUND_INFO["last_tp_time"] = 0.0
 
+        runtime.ROUND_INFO["peak_profit"] = 0.0
+        runtime.ROUND_INFO["peak_ratio"] = 0.0
+        runtime.ROUND_INFO["trough_profit"] = 0.0
+        runtime.ROUND_INFO["trough_ratio"] = 0.0
+        runtime.ROUND_INFO["trail_active"] = False
+
         print(
             f"新一轮开始 "
             f"start_profit={runtime.ROUND_INFO['start_profit']}, "
@@ -77,6 +83,19 @@ class RiskService:
 
         runtime.ROUND_INFO["round_profit"] = round_profit
         runtime.ROUND_INFO["round_ratio"] = round(round_ratio, 2)
+
+        # 更新峰值 / 谷值（用于追踪止损）
+        if round_profit > runtime.ROUND_INFO.get("peak_profit", 0.0):
+            runtime.ROUND_INFO["peak_profit"] = round_profit
+
+        if round_ratio > runtime.ROUND_INFO.get("peak_ratio", 0.0):
+            runtime.ROUND_INFO["peak_ratio"] = round_ratio
+
+        if round_profit < runtime.ROUND_INFO.get("trough_profit", 0.0):
+            runtime.ROUND_INFO["trough_profit"] = round_profit
+
+        if round_ratio < runtime.ROUND_INFO.get("trough_ratio", 0.0):
+            runtime.ROUND_INFO["trough_ratio"] = round_ratio
 
         print(
             f"[Risk] calc "
@@ -240,6 +259,86 @@ class RiskService:
                 cls.reset_round()
                 return
 
+        # ---------- 追踪止损 ----------
+        if risk.get("global_trail_enabled"):
+
+            trail_mode = risk.get("global_trail_mode", "ratio")
+
+            if trail_mode == "ratio":
+                activate = float(risk.get("global_trail_activate_ratio", 0.0) or 0.0)
+                drawdown = float(risk.get("global_trail_drawdown_ratio", 0.0) or 0.0)
+                current = ratio
+                peak = runtime.ROUND_INFO.get("peak_ratio", 0.0)
+                trough = runtime.ROUND_INFO.get("trough_ratio", 0.0)
+            else:
+                activate = float(risk.get("global_trail_activate_amount", 0.0) or 0.0)
+                drawdown = float(risk.get("global_trail_drawdown_amount", 0.0) or 0.0)
+                current = profit
+                peak = runtime.ROUND_INFO.get("peak_profit", 0.0)
+                trough = runtime.ROUND_INFO.get("trough_profit", 0.0)
+
+            # 参数合法性：回撤必须 > 0
+            if drawdown > 0 and activate != 0:
+
+                # 激活判断
+                if not runtime.ROUND_INFO.get("trail_active"):
+                    if activate > 0 and peak >= activate:
+                        runtime.ROUND_INFO["trail_active"] = True
+                        runtime.ROUND_INFO["trail_direction"] = "profit"
+
+                        # 启用起算：把 peak 重置为当前值
+                        runtime.ROUND_INFO["peak_profit"] = profit
+                        runtime.ROUND_INFO["peak_ratio"] = ratio
+
+                        print(
+                            f"[Risk] 追踪止盈已激活 "
+                            f"peak={profit:.2f}/{ratio:.2f}（启用起算）"
+                        )
+
+                    elif activate < 0 and trough <= activate:
+                        runtime.ROUND_INFO["trail_active"] = True
+                        runtime.ROUND_INFO["trail_direction"] = "loss"
+
+                        # 启用起算：把 trough 重置为当前值
+                        runtime.ROUND_INFO["trough_profit"] = profit
+                        runtime.ROUND_INFO["trough_ratio"] = ratio
+
+                        print(
+                            f"[Risk] 追踪止损已激活 "
+                            f"trough={profit:.2f}/{ratio:.2f}（启用起算）"
+                        )
+
+                # 触发判断
+                if runtime.ROUND_INFO.get("trail_active"):
+
+                    direction = runtime.ROUND_INFO.get("trail_direction", "profit")
+
+                    if direction == "profit":
+                        # 盈利区：从峰值回撤
+                        trigger_line = peak - drawdown
+                        hit = current <= trigger_line
+                        desc = f"{current:.2f} <= {trigger_line:.2f} (peak={peak:.2f}, dd={drawdown})"
+                    else:
+                        # 亏损区：从谷值反弹
+                        trigger_line = trough + drawdown
+                        hit = current >= trigger_line
+                        desc = f"{current:.2f} >= {trigger_line:.2f} (trough={trough:.2f}, dd={drawdown})"
+
+                    if hit:
+                        print(f"触发追踪止损 [{direction}] {desc}")
+                        runtime.ROUND_INFO["last_tp_time"] = time.time()
+
+                        runtime.ROUND_INFO["global_trail_count"] = (
+                                runtime.ROUND_INFO.get("global_trail_count", 0) + 1
+                        )
+
+                        cls.record_global_exit_events("global_trail", "追踪止损")
+
+                        cls.force_exit_all(reason="追踪止损")
+                        cls.wait_positions_closed(timeout=60)
+                        cls.reset_round()
+                        return
+
     @classmethod
     def record_global_exit_events(cls, event_type: str, message: str):
         """记录全局平仓事件到图表"""
@@ -315,6 +414,17 @@ class RiskService:
                     f"/{risk.get('global_sl_mode')}"
                     f"/{risk.get('global_sl_amount')}"
                     f"/{risk.get('global_sl_ratio')}"
+                    f", trail={risk.get('global_trail_enabled')}"
+                    f"/{risk.get('global_trail_mode')}"
+                    f"/{risk.get('global_trail_activate_amount')}"
+                    f"/{risk.get('global_trail_activate_ratio')}"
+                    f"/{risk.get('global_trail_drawdown_amount')}"
+                    f"/{risk.get('global_trail_drawdown_ratio')}"
+                    f", peak={runtime.ROUND_INFO.get('peak_profit'):.2f}"
+                    f"/{runtime.ROUND_INFO.get('peak_ratio'):.2f}"
+                    f", trough={runtime.ROUND_INFO.get('trough_profit'):.2f}"
+                    f"/{runtime.ROUND_INFO.get('trough_ratio'):.2f}"
+                    f", active={runtime.ROUND_INFO.get('trail_active')}"
                 )
                 cls.check_risk()
             except Exception as e:

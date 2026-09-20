@@ -94,10 +94,10 @@ import {
 <!-- 下拉面板全局样式 -->
 <style>
 .user-menu-popper {
-  background: var(--bg-card) !important;
-  border: 1px solid var(--border-color) !important;
+  background: #ffffff !important;
+  border: 1px solid #ebeef5 !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08) !important;
   padding: 4px !important;
-  /* 宽度增加两倍：约 150px -> 300px */
   min-width: 300px !important;
   width: 300px !important;
 }
@@ -105,7 +105,7 @@ import {
 .user-menu-popper .el-dropdown-menu {
   background: transparent;
   padding: 6px;
-  width: 100%;          /* 撑满外层 300px */
+  width: 100%;
   min-width: 100%;
 }
 
@@ -114,21 +114,21 @@ import {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 12px;                 /* 图标与文字间距略加大，配合宽面板 */
-  color: var(--text-main);
+  gap: 12px;
+  color: #303133;
   border-radius: 6px;
   font-size: 15px;
-  line-height: 44px;         /* 行高略加大，视觉更舒展 */
-  padding: 0 16px;           /* 左右内边距加大，避免贴边 */
+  line-height: 44px;
+  padding: 0 16px;
 }
 
 .user-menu-popper .el-dropdown-menu__item:not(.is-disabled):hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: #f5f7fa;
   color: var(--primary-color);
 }
 
 .user-menu-popper .el-dropdown-menu__item--divided {
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid #ebeef5;
   margin-top: 6px;
 }
 
