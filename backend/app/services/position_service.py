@@ -7,16 +7,13 @@ from app.database import SessionLocal
 from app.models.equity_history import EquityHistory
 from app.models.profit_history import ProfitHistory
 from app.core import runtime
+from app.core.config_manager import ConfigManager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from config.settings import (
     LONG_URL,
     SHORT_URL
 )
-
-BASE_DIR = Path(__file__).resolve().parents[2]
-
-DB_PATH = BASE_DIR / "strategy.db"
 
 snapshot_cache = {
     "time": 0,
@@ -243,33 +240,8 @@ class PositionService:
 
     @staticmethod
     def _get_roi_levels(side):
-
-        conn = sqlite3.connect(
-            str(DB_PATH)
-        )
-
-        cursor = conn.cursor()
-
-        cursor.execute(
-            """
-            SELECT config_json
-            FROM strategy_config
-            WHERE side=?
-            """,
-            (side,)
-        )
-
-        row = cursor.fetchone()
-
-        conn.close()
-
-        if not row:
-            return []
-
-        config = json.loads(
-            row[0]
-        )
-
+        """从 ConfigManager 取该 side 的 roi_levels"""
+        config = ConfigManager.get(side)
         return (
             config
             .get("tp", {})

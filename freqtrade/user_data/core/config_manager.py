@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 
-DB_FILE = BASE_DIR / "backend" / "strategy.db"
+DB_FILE = BASE_DIR / "backend" / "data" / "strategy.db"
 
 
 class ConfigManager:

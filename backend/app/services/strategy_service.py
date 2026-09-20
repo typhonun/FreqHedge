@@ -1,5 +1,5 @@
 import json
-from db import get_conn
+from app.db import get_conn
 from app.core.config_manager import ConfigManager
 
 
