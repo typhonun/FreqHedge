@@ -18,8 +18,8 @@
 
 <script setup>
 
-import StatusPanel from "../components/StatusPanel.vue"
-import RunControl from "../components/RunControl.vue"
-import Capital from "../components/Capital.vue"
+import Capital from '@features/dashboard/components/Capital.vue'
+import StatusPanel from '@features/control/components/StatusPanel.vue'
+import RunControl from '@features/control/components/RunControl.vue'
 
 </script>

@@ -285,7 +285,7 @@
 </template>
 
 <script setup>
-import { useRunControl } from "../composables/useRunControl"
+import { useRunControl } from '@features/control/composables/useRunControl.js'
 import { onMounted } from "vue"
 
 const {

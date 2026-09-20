@@ -22,7 +22,7 @@
 
         <el-table-column
             prop="stake_amount"
-            label="平仓金额"
+            label="平仓金额 (USDT)"
             :formatter="formatNumber"
         />
 
@@ -56,7 +56,7 @@
 
         <el-table-column
             prop="profit_abs"
-            label="收益USDT"
+            label="收益 (USDT)"
             :formatter="formatNumber"
         />
 

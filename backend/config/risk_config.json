@@ -4,7 +4,7 @@
     "global_tp_amount": 12,
     "global_sl_amount": 12,
     "global_tp_mode": "ratio",
-    "global_sl_mode": "amount",
-    "global_tp_ratio": 1,
-    "global_sl_ratio": 20
+    "global_sl_mode": "ratio",
+    "global_tp_ratio": 2,
+    "global_sl_ratio": 10
 }

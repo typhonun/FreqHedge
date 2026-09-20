@@ -247,7 +247,7 @@
 import { onMounted } from "vue"
 import { ElMessage } from "element-plus"
 
-import { useCapital } from "../composables/useCapital"
+import { useCapital } from '@features/dashboard/composables/useCapital.js'
 
 const {
     longConfig,

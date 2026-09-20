@@ -1,4 +1,3 @@
-<!-- src/components/layout/UserMenu.vue -->
 <template>
   <el-dropdown trigger="click" placement="bottom-end" popper-class="user-menu-popper">
     <!-- 触发区 -->

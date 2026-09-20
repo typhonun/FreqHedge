@@ -61,7 +61,7 @@ import { useRoute } from 'vue-router'
 import {
   Odometer, Monitor, SetUp, TrendCharts, Document
 } from '@element-plus/icons-vue'
-import UserMenu from '@/components/layout/UserMenu.vue'
+import UserMenu from '@components/layout/UserMenu.vue'
 
 const route = useRoute()
 const pageTitle = computed(() => route.meta?.title || '仪表盘')

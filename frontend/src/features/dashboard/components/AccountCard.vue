@@ -56,7 +56,8 @@
 </template>
 
 <script setup>
-import BalanceCurve from "./BalanceCurve.vue"
+import BalanceCurve from './BalanceCurve.vue'
+
 const props = defineProps({
   summary: {
     type: Object,

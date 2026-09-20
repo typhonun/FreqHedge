@@ -107,8 +107,7 @@ import {
     createSeriesMarkers
 } from "lightweight-charts"
 
-import PositionTableCommon
-from "@/components/PositionTableCommon.vue"
+import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
 
 const API = "http://localhost:9000"
 

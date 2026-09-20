@@ -58,84 +58,41 @@
 </template>
 
 <script setup>
+// ============ 组件 ============
+import AccountCard from '@features/dashboard/components/AccountCard.vue'
+import ProfitCard from '@features/dashboard/components/ProfitCard.vue'
+import ExposureCard from '@features/dashboard/components/ExposureCard.vue'
+import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
+import ClosedTradeTable from '@features/dashboard/components/ClosedTradeTable.vue'
+import ClosedProfitCard from '@features/dashboard/components/ClosedProfitCard.vue'
+import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 
-import AccountCard from "../components/AccountCard.vue"
-import ProfitCard from "../components/ProfitCard.vue"
-import ExposureCard from "../components/ExposureCard.vue"
-import PositionTableCommon from "@/components/PositionTableCommon.vue"
-import ClosedTradeTable from "../components/ClosedTradeTable.vue"
-import ClosedProfitCard from "../components/ClosedProfitCard.vue"
-import ProfitCurve from "../components/ProfitCurve.vue"
+// ============ Store ============
+import { useTradeStore } from '@/stores/tradeStore'
 
-import { useTradeStore } from "../stores/tradeStore"
-import {
-    onMounted,
-    onUnmounted
-} from "vue"
+// ============ Vue ============
+import { onMounted, onUnmounted } from 'vue'
 
 const store = useTradeStore()
 
 let timer = null
-
 let historyTimer = null
 
+onMounted(async () => {
+  await store.refresh()
+  await store.refreshHistory()
 
+  timer = setInterval(() => {
+    store.refresh()
+  }, 5000)
 
-onMounted(async()=>{
-
-
-    // 初始化数据
-
-    await store.refresh()
-
-    await store.refreshHistory()
-
-
-
-    // 高频数据
-
-    timer = setInterval(()=>{
-
-
-        store.refresh()
-
-
-    },5000)
-
-
-
-    // 历史数据
-
-    historyTimer = setInterval(()=>{
-
-
-        store.refreshHistory()
-
-
-    },60000)
-
-
-
+  historyTimer = setInterval(() => {
+    store.refreshHistory()
+  }, 60000)
 })
 
-
-onUnmounted(()=>{
-
-
-    if(timer){
-
-        clearInterval(timer)
-
-    }
-
-
-    if(historyTimer){
-
-        clearInterval(historyTimer)
-
-    }
-
-
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+  if (historyTimer) clearInterval(historyTimer)
 })
-
 </script>

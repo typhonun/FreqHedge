@@ -121,9 +121,7 @@ import {
 } from "vue"
 
 
-import {
-    useStatus
-} from "../composables/useStatus"
+import { useStatus } from '@features/control/composables/useStatus.js'
 
 
 

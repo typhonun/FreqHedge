@@ -45,11 +45,9 @@
 import { onMounted } from "vue"
 import { ElMessage } from "element-plus"
 
-import StrategyPanel from "@/components/StrategyPanel.vue"
+import StrategyPanel from '@features/strategy/components/StrategyPanel.vue'
 
-import {
-    useStrategyConfig
-} from "@/composables/useStrategyConfig"
+import { useStrategyConfig } from '@features/strategy/composables/useStrategyConfig.js'
 
 const {
     longConfig,
