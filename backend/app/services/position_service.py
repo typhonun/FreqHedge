@@ -442,7 +442,10 @@ class PositionService:
 
     @staticmethod
     def _load_custom_data(trade_ids, db_path, cache_key=None):
-        """从 Freqtrade sqlite 读 trades.custom_data
+        """从 Freqtrade sqlite 读自定义数据
+
+        表结构：
+            trade_custom_data(ft_trade_id, cd_key, cd_type, cd_value)
 
         return: {trade_id: {key: value, ...}}
         """
@@ -461,26 +464,35 @@ class PositionService:
                         for tid in trade_ids
                     }
 
-        result = {}
+        result = {tid: {} for tid in trade_ids}
+
         try:
             conn = sqlite3.connect(db_path, timeout=5)
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
 
             placeholders = ",".join("?" * len(trade_ids))
+
             cur.execute(
-                f"SELECT id, custom_data FROM trades WHERE id IN ({placeholders})",
+                f"SELECT ft_trade_id, cd_key, cd_type, cd_value "
+                f"FROM trade_custom_data "
+                f"WHERE ft_trade_id IN ({placeholders})",
                 list(trade_ids)
             )
 
             for row in cur.fetchall():
-                raw = row["custom_data"]
-                if not raw:
+                tid = row["ft_trade_id"]
+                key = row["cd_key"]
+                ctype = row["cd_type"]
+                raw = row["cd_value"]
+
+                if raw is None:
                     continue
-                try:
-                    result[row["id"]] = json.loads(raw)
-                except Exception:
-                    result[row["id"]] = {}
+
+                # 按 cd_type 反序列化
+                val = PositionService._decode_custom_value(ctype, raw)
+
+                result.setdefault(tid, {})[key] = val
 
             conn.close()
 
@@ -495,6 +507,29 @@ class PositionService:
             }
 
         return result
+
+    @staticmethod
+    def _decode_custom_value(ctype, raw):
+        """根据 cd_type 把 cd_value 还原成 Python 值"""
+        try:
+            if ctype == "int":
+                return int(float(raw))
+            if ctype == "float":
+                return float(raw)
+            if ctype == "bool":
+                return str(raw).lower() in ("1", "true", "t", "yes", "y")
+            if ctype in ("json", "dict", "list"):
+                return json.loads(raw)
+            if ctype == "str":
+                return raw
+        except Exception:
+            pass
+
+        # 兜底：尝试 json，再退回字符串
+        try:
+            return json.loads(raw)
+        except Exception:
+            return raw
 
     # =========================================================
     # 持仓数量
