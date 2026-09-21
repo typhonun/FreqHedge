@@ -40,3 +40,14 @@ STRATEGY_SHORT = (
     "config" /
     "strategy_short.json"
 )
+
+# ---------- sqlite 数据库路径 ----------
+LONG_DB = (
+    FREQTRADE_DIR /
+    "tradesv3_long.sqlite"
+)
+
+SHORT_DB = (
+    FREQTRADE_DIR /
+    "tradesv3_short.sqlite"
+)

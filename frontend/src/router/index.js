@@ -11,6 +11,9 @@ import Charts from "@/views/Charts.vue"
 import Control from "@/views/Control.vue"
 import Logs from "@/views/Logs.vue"
 
+import Settings from '@/views/Settings.vue'
+import SettingsProfile from '@/views/settings/Profile.vue'
+
 const routes = [
     {
         path: "/",
@@ -41,6 +44,23 @@ const routes = [
                 component: Charts,
                 meta: { title: "K线分析" }     // ← 新增
             },
+
+            {
+                path: 'settings',
+                component: Settings,
+                redirect: '/settings/profile',       // 进设置默认到「账户」
+                meta: { title: '设置' },
+                children: [
+                  {
+                    path: 'profile',
+                    name: 'SettingsProfile',
+                    component: SettingsProfile,
+                    meta: { title: '账户' }
+
+                  }
+                ]
+            },
+
             {
                 path: "logs",
                 name: "Logs",

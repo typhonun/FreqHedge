@@ -30,6 +30,7 @@ class RiskService:
         runtime.ROUND_INFO["trough_profit"] = 0.0
         runtime.ROUND_INFO["trough_ratio"] = 0.0
         runtime.ROUND_INFO["trail_active"] = False
+        runtime.ROUND_INFO["exiting"] = False
 
         print(
             f"新一轮开始 "
@@ -116,49 +117,119 @@ class RiskService:
         """全部平仓
 
         reason: 可选，全局平仓原因
+        return: 未成功发出平仓请求的 trade_id 列表
         """
 
         snapshot_cache["time"] = 0
         positions = PositionService.get_all_positions()
 
-        # 如果传了 reason，记录一下
         if reason:
             for pos in positions:
                 trade_id = pos.get("trade_id")
                 if trade_id is not None:
                     runtime.GLOBAL_EXIT_REASONS[trade_id] = reason
 
-            # 限制大小
             if len(runtime.GLOBAL_EXIT_REASONS) > 1000:
                 keys = list(runtime.GLOBAL_EXIT_REASONS.keys())
                 for k in keys[:len(keys) - 1000]:
                     del runtime.GLOBAL_EXIT_REASONS[k]
 
+        failed_trade_ids = []
+
         for pos in positions:
+            trade_id = pos.get("trade_id")
+            side = pos.get("side")
+
+            success = False
             for attempt in range(3):
                 try:
-                    PositionService.force_exit(pos["trade_id"], pos["side"])
+                    PositionService.force_exit(trade_id, side)
+                    success = True
                     break
                 except Exception as e:
                     print(
                         f"force_exit 失败 "
-                        f"trade_id={pos.get('trade_id')} "
+                        f"trade_id={trade_id} "
                         f"pair={pos.get('pair')} "
                         f"attempt={attempt + 1} "
                         f"error={e}"
                     )
                     time.sleep(1)
 
+            if not success:
+                failed_trade_ids.append(trade_id)
+
+        return failed_trade_ids
+
     @classmethod
-    def wait_positions_closed(cls, timeout=60):
+    def wait_positions_closed(cls, timeout=60, stable_count=3, interval=2):
+        """等待所有仓位真正平完
+
+        连续 stable_count 次查询都为空，才认为平完。
+        """
         start = time.time()
+        empty_times = 0
+
         while time.time() - start < timeout:
             snapshot_cache["time"] = 0
-            positions = PositionService.get_all_positions()
-            if len(positions) == 0:
-                return True
-            time.sleep(2)
+
+            try:
+                positions = PositionService.get_all_positions()
+            except Exception as e:
+                print(f"[Risk] wait_positions_closed 查询失败: {e}")
+                positions = None
+
+            if positions is not None and len(positions) == 0:
+                empty_times += 1
+                print(f"[Risk] 等待平仓，连续空仓次数={empty_times}/{stable_count}")
+                if empty_times >= stable_count:
+                    return True
+            else:
+                if positions:
+                    print(f"[Risk] 等待平仓中，剩余仓位={len(positions)}")
+                empty_times = 0
+
+            time.sleep(interval)
+
+        print("[Risk] wait_positions_closed 超时")
         return False
+
+    @classmethod
+    def handle_global_exit(cls, event_type: str, message: str, reason: str):
+        """统一处理全局平仓：记录事件 -> 平仓 -> 等待 -> 成功才 reset_round"""
+
+        # 已经在平仓流程中，直接跳过
+        if runtime.ROUND_INFO.get("exiting"):
+            print("[Risk] 已在平仓流程中，跳过重复触发")
+            return
+
+        runtime.ROUND_INFO["exiting"] = True
+        runtime.ROUND_INFO["last_tp_time"] = time.time()
+
+        try:
+            cls.record_global_exit_events(event_type, message)
+
+            failed = cls.force_exit_all(reason=reason)
+            if failed:
+                print(f"[Risk] 以下 trade_id 平仓请求失败: {failed}")
+
+            ok = cls.wait_positions_closed(timeout=60)
+
+            if not ok:
+                print("[Risk] 平仓未完成，取消 reset_round，等待下一轮检查")
+                return
+
+            # 再确认一次，防止缓存/延迟
+            snapshot_cache["time"] = 0
+            positions = PositionService.get_all_positions()
+            if len(positions) > 0:
+                print(f"[Risk] reset_round 前仍有仓位 {len(positions)} 个，取消 reset_round")
+                return
+
+            cls.reset_round()
+
+        finally:
+            runtime.ROUND_INFO["exiting"] = False
 
     @classmethod
     def reset_round(cls):
@@ -167,6 +238,14 @@ class RiskService:
 
     @classmethod
     def check_risk(cls):
+
+        # 正在平仓流程中，不再做任何风险判断
+        if runtime.ROUND_INFO.get("exiting"):
+            return
+
+        last_tp = runtime.ROUND_INFO.get("last_tp_time", 0) or 0
+        if time.time() - last_tp < 60:
+            return
 
         last_tp = runtime.ROUND_INFO.get("last_tp_time", 0) or 0
         if time.time() - last_tp < 60:
@@ -208,17 +287,12 @@ class RiskService:
 
             if tp_hit:
                 print(f"触发全局止盈 {tp_desc}")
-                runtime.ROUND_INFO["last_tp_time"] = time.time()
 
                 runtime.ROUND_INFO["global_tp_count"] = (
                         runtime.ROUND_INFO.get("global_tp_count", 0) + 1
                 )
 
-                cls.record_global_exit_events("global_tp", "全局止盈")
-
-                cls.force_exit_all(reason="全局止盈")
-                cls.wait_positions_closed(timeout=60)
-                cls.reset_round()
+                cls.handle_global_exit("global_tp", "全局止盈", "全局止盈")
                 return
 
         # ---------- 止损 ----------
@@ -246,17 +320,12 @@ class RiskService:
 
             if sl_hit:
                 print(f"触发全局止损 {sl_desc}")
-                runtime.ROUND_INFO["last_tp_time"] = time.time()
 
                 runtime.ROUND_INFO["global_sl_count"] = (
                         runtime.ROUND_INFO.get("global_sl_count", 0) + 1
                 )
 
-                cls.record_global_exit_events("global_sl", "全局止损")
-
-                cls.force_exit_all(reason="全局止损")
-                cls.wait_positions_closed(timeout=60)
-                cls.reset_round()
+                cls.handle_global_exit("global_sl", "全局止损", "全局止损")
                 return
 
         # ---------- 追踪止损 ----------
@@ -326,17 +395,12 @@ class RiskService:
 
                     if hit:
                         print(f"触发追踪止损 [{direction}] {desc}")
-                        runtime.ROUND_INFO["last_tp_time"] = time.time()
 
                         runtime.ROUND_INFO["global_trail_count"] = (
                                 runtime.ROUND_INFO.get("global_trail_count", 0) + 1
                         )
 
-                        cls.record_global_exit_events("global_trail", "追踪止损")
-
-                        cls.force_exit_all(reason="追踪止损")
-                        cls.wait_positions_closed(timeout=60)
-                        cls.reset_round()
+                        cls.handle_global_exit("global_trail", "追踪止损", "追踪止损")
                         return
 
     @classmethod

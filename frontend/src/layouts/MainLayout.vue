@@ -31,6 +31,10 @@
           <el-icon :size="20"><TrendCharts /></el-icon>
           <span>K线分析</span>
         </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-icon :size="20"><Setting /></el-icon>
+          <span>设置</span>
+        </el-menu-item>
         <el-menu-item index="/logs">
           <el-icon :size="20"><Document /></el-icon>
           <span>系统日志</span>
@@ -59,7 +63,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Odometer, Monitor, SetUp, TrendCharts, Document
+  Odometer, Monitor, SetUp, TrendCharts, Document, Setting
 } from '@element-plus/icons-vue'
 import UserMenu from '@components/layout/UserMenu.vue'
 

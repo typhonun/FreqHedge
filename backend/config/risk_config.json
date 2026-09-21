@@ -1,7 +1,7 @@
 {
     "global_tp_enabled": true,
     "global_sl_enabled": true,
-    "global_tp_amount": 13,
+    "global_tp_amount": 10,
     "global_sl_amount": 12,
     "global_tp_mode": "amount",
     "global_sl_mode": "ratio",
@@ -9,8 +9,8 @@
     "global_sl_ratio": 10,
     "global_trail_enabled": true,
     "global_trail_mode": "amount",
-    "global_trail_activate_amount": -5,
+    "global_trail_activate_amount": 3,
     "global_trail_activate_ratio": 3,
-    "global_trail_drawdown_amount": 3,
+    "global_trail_drawdown_amount": 1,
     "global_trail_drawdown_ratio": 1
 }

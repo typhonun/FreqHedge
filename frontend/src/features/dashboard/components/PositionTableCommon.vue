@@ -96,6 +96,15 @@
     </el-table-column>
 
     <el-table-column
+        prop="round_minutes"
+        label="本轮时间"
+    >
+        <template #default="scope">
+            {{ formatDuration(scope.row.round_minutes) }}
+        </template>
+    </el-table-column>
+
+    <el-table-column
     label="操作"
     width="120"
 >
