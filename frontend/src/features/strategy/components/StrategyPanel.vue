@@ -111,6 +111,29 @@
             </el-alert>
         </el-card>
 
+        <!-- ==================== 金额模式 ==================== -->
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">金额模式</span>
+                    <span class="card-head__meta">
+                        <el-text type="info" size="small">
+                            百分比按总资金缩放，固定金额每层固定
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+            <el-radio-group v-model="config.amount_mode">
+                <el-radio-button value="percent">
+                    百分比
+                </el-radio-button>
+                <el-radio-button value="amount">
+                    固定金额（保证金 USDT）
+                </el-radio-button>
+            </el-radio-group>
+        </el-card>
+
         <!-- ==================== 指标配置 ==================== -->
         <el-card class="section-card">
             <template #header>
@@ -461,8 +484,41 @@
                                 @change="onRebuyChange"
                             />
                         </el-form-item>
-                        <el-form-item label="减仓比例%">
+                        <el-form-item
+                            :label="
+                                !config.tp.rebuy_enable
+                                    ? '减仓比例%'
+                                    : (config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%')
+                            "
+                        >
+                            <!-- 不补仓：一律显示 100% 且禁用 -->
                             <el-input-number
+                                v-if="!config.tp.rebuy_enable"
+                                :model-value="100"
+                                class="field-input"
+                                controls-position="right"
+                                :min="100"
+                                :max="100"
+                                :step="1"
+                                :precision="0"
+                                disabled
+                            />
+
+                            <!-- 补仓 + 金额模式 -->
+                            <el-input-number
+                                v-else-if="config.amount_mode === 'amount'"
+                                v-model="config.tp.reduce_amount"
+                                class="field-input"
+                                controls-position="right"
+                                :min="1"
+                                :max="100000"
+                                :step="10"
+                                :precision="2"
+                            />
+
+                            <!-- 补仓 + 百分比模式 -->
+                            <el-input-number
+                                v-else
                                 v-model="config.tp.reduce_percent"
                                 class="field-input"
                                 controls-position="right"
@@ -470,11 +526,24 @@
                                 :max="100"
                                 :step="1"
                                 :precision="0"
-                                :disabled="!config.tp.rebuy_enable"
                             />
                         </el-form-item>
-                        <el-form-item label="目标仓位占比%">
+
+                        <el-form-item
+                            :label="config.amount_mode === 'amount' ? '加仓至(USDT)' : '目标仓位占比%'"
+                        >
                             <el-input-number
+                                v-if="config.amount_mode === 'amount'"
+                                v-model="config.tp.target_wallet_amount"
+                                class="field-input"
+                                controls-position="right"
+                                :min="1"
+                                :max="100000"
+                                :step="10"
+                                :precision="2"
+                            />
+                            <el-input-number
+                                v-else
                                 v-model="config.tp.target_wallet_percent"
                                 class="field-input"
                                 controls-position="right"
@@ -508,7 +577,7 @@
                         达到设定亏损比例后强制平仓
                     </el-alert>
 
-                    <el-form class="compact-form" label-width="100px" size="small">
+                    <el-form class="compact-form" label-width="120px" size="small">
                         <el-form-item label="启用止损">
                             <el-switch v-model="config.sl.enable" />
                         </el-form-item>
@@ -639,8 +708,23 @@
 
                     <template v-if="config.dca.amount_mode === 'auto'">
                         <el-col :span="8">
-                            <el-form-item label="订单大小%">
+                            <el-form-item
+                                :label="config.amount_mode === 'amount' ? '加仓金额(USDT)' : '加仓比例%'"
+                            >
+                                <!-- 固定金额：用 base_amount -->
                                 <el-input-number
+                                    v-if="config.amount_mode === 'amount'"
+                                    v-model="config.dca.base_amount"
+                                    class="field-input"
+                                    controls-position="right"
+                                    :min="1"
+                                    :max="100000"
+                                    :step="10"
+                                    :precision="2"
+                                />
+                                <!-- 百分比：用 base_percent -->
+                                <el-input-number
+                                    v-else
                                     v-model="config.dca.base_percent"
                                     class="field-input"
                                     controls-position="right"
@@ -677,17 +761,31 @@
                     class="dca-level-row">
                     <div class="dca-level-index">{{ index + 1 }}</div>
 
-                    <el-form class="dca-level-form" label-width="90px" size="small">
+                    <el-form class="dca-level-form" label-width="120px" size="small">
                         <el-form-item
                             v-if="config.dca.amount_mode === 'manual'"
-                            label="金额USDT">
+                            :label="config.amount_mode === 'amount' ? '加仓金额(USDT)' : '加仓比例%'"
+                        >
+                            <!-- 固定金额：用 level.amount -->
                             <el-input-number
+                                v-if="config.amount_mode === 'amount'"
                                 v-model="level.amount"
                                 class="field-input"
                                 controls-position="right"
                                 :min="1"
                                 :max="10000"
                                 :step="10"
+                                :precision="2"
+                            />
+                            <!-- 百分比：用 level.percent -->
+                            <el-input-number
+                                v-else
+                                v-model="level.percent"
+                                class="field-input"
+                                controls-position="right"
+                                :min="0.1"
+                                :max="100"
+                                :step="0.1"
                                 :precision="2"
                             />
                         </el-form-item>
@@ -775,8 +873,21 @@
                     </el-col>
 
                     <el-col :span="8">
-                        <el-form-item label="保留仓位%">
+                        <el-form-item
+                            :label="config.amount_mode === 'amount' ? '减仓至(USDT)' : '目标仓位%'"
+                        >
                             <el-input-number
+                                v-if="config.amount_mode === 'amount'"
+                                v-model="config.loss_tp.target_wallet_amount"
+                                class="field-input"
+                                controls-position="right"
+                                :min="1"
+                                :max="100000"
+                                :step="10"
+                                :precision="2"
+                            />
+                            <el-input-number
+                                v-else
                                 v-model="config.loss_tp.target_wallet_percent"
                                 class="field-input"
                                 controls-position="right"
@@ -829,8 +940,19 @@
                             </el-col>
 
                             <el-col :span="24">
-                                <el-form-item label="加仓比例%">
+                                <el-form-item
+                                    :label="config.amount_mode === 'amount' ? '加仓金额(USDT)' : '加仓比例%'"
+                                >
                                     <el-input-number
+                                        v-if="config.amount_mode === 'amount'"
+                                        v-model="config.trend_add.amount_amount"
+                                        :min="1"
+                                        :max="100000"
+                                        :step="10"
+                                        :precision="2"
+                                    />
+                                    <el-input-number
+                                        v-else
                                         v-model="config.trend_add.amount_percent"
                                         :min="0"
                                         :max="100"
@@ -910,8 +1032,24 @@
                                 </el-col>
 
                                 <el-col :span="24">
-                                    <el-form-item label="减仓比例%">
+                                    <el-form-item
+                                        :label="config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%'"
+                                    >
                                         <el-input-number
+                                            v-if="config.amount_mode === 'amount'"
+                                            v-model="config.trend_add.kdj_reduce.reduce_amount"
+                                            :disabled="
+                                                !config.trend_add.enable ||
+                                                !config.trend_add.kdj_reduce.enable
+                                            "
+                                            :min="1"
+                                            :max="100000"
+                                            :step="10"
+                                            :precision="2"
+                                            controls-position="right"
+                                        />
+                                        <el-input-number
+                                            v-else
                                             v-model="config.trend_add.kdj_reduce.reduce_percent"
                                             :disabled="
                                                 !config.trend_add.enable ||
@@ -1016,8 +1154,21 @@
                             </el-col>
 
                             <el-col :span="24">
-                                <el-form-item label="加仓占比%">
+                                <el-form-item
+                                    :label="config.amount_mode === 'amount' ? '加仓金额(USDT)' : '加仓占比%'"
+                                >
                                     <el-input-number
+                                        v-if="config.amount_mode === 'amount'"
+                                        v-model="config.grid.buy_amount"
+                                        class="field-input"
+                                        controls-position="right"
+                                        :min="1"
+                                        :max="100000"
+                                        :step="10"
+                                        :precision="2"
+                                    />
+                                    <el-input-number
+                                        v-else
                                         v-model="config.grid.buy_percent"
                                         class="field-input"
                                         controls-position="right"
@@ -1030,8 +1181,21 @@
                             </el-col>
 
                             <el-col :span="24">
-                                <el-form-item label="减仓占比%">
+                                <el-form-item
+                                    :label="config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓占比%'"
+                                >
                                     <el-input-number
+                                        v-if="config.amount_mode === 'amount'"
+                                        v-model="config.grid.sell_amount"
+                                        class="field-input"
+                                        controls-position="right"
+                                        :min="1"
+                                        :max="100000"
+                                        :step="10"
+                                        :precision="2"
+                                    />
+                                    <el-input-number
+                                        v-else
                                         v-model="config.grid.sell_percent"
                                         class="field-input"
                                         controls-position="right"
@@ -1081,6 +1245,10 @@ const props = defineProps({
     config: Object,
     tradeInfo: Object
 })
+
+if (props.config && !props.config.amount_mode) {
+    props.config.amount_mode = "percent"
+}
 
 const emit = defineEmits(['save'])
 
@@ -1132,14 +1300,16 @@ const addDca = () => {
             drawdown: -5,
             rsi_limit: 20,
             j_limit: 0,
-            amount: 10
+            amount: 10,
+            percent: 2.0
         })
     } else {
         props.config.dca.levels.push({
             drawdown: -5,
             rsi_limit: 80,
             j_limit: 100,
-            amount: 10
+            amount: 10,
+            percent: 2.0
         })
     }
 }
@@ -1170,13 +1340,22 @@ const onRebuyChange = (val) => {
     if (!props.config?.tp) return
 
     if (val) {
-        if (!props.config.tp.reduce_percent || props.config.tp.reduce_percent === 100) {
-            props.config.tp.reduce_percent = 30
+        // 补仓：按模式初始化
+        if (props.config.amount_mode === "amount") {
+            if (!props.config.tp.reduce_amount || props.config.tp.reduce_amount <= 0) {
+                props.config.tp.reduce_amount = 10.0
+            }
+        } else {
+            if (!props.config.tp.reduce_percent || props.config.tp.reduce_percent === 100) {
+                props.config.tp.reduce_percent = 30
+            }
         }
     } else {
+        // 不补仓：统一 100%，跟金额模式无关
         props.config.tp.reduce_percent = 100
     }
 }
+
 </script>
 
 <style scoped>
@@ -1244,11 +1423,13 @@ const onRebuyChange = (val) => {
 .compact-form :deep(.el-form-item__label) {
     line-height: 28px;
     font-size: 13px;
+    white-space: nowrap;
 }
 
-.compact-form :deep(.el-form-item__content) {
+.dca-level-form :deep(.el-form-item__label) {
     line-height: 28px;
-    min-width: 0;
+    font-size: 13px;
+    white-space: nowrap;
 }
 
 /* 输入控件：固定 140px，不撑满 */
@@ -1319,25 +1500,26 @@ const onRebuyChange = (val) => {
 /* ==================== ROI 列表 ==================== */
 .roi-list {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+    gap: 8px;
 }
 
 .roi-row {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 8px;
+    gap: 6px;
+    padding: 6px 8px;
     border: 1px solid var(--el-border-color-light);
     border-radius: 6px;
     background: var(--el-fill-color-extra-light);
+    min-width: 0;
 }
 
 .roi-index {
-    width: 22px;
+    width: 20px;
     text-align: center;
     font-weight: 700;
-    font-size: 13px;
+    font-size: 12px;
     color: var(--el-text-color-secondary);
     flex: none;
 }
@@ -1348,14 +1530,25 @@ const onRebuyChange = (val) => {
 }
 
 .roi-input :deep(.el-input__wrapper) {
-    padding-left: 6px;
-    padding-right: 30px;
+    padding-left: 4px;
+    padding-right: 24px;
+}
+
+.roi-input :deep(.el-input__inner) {
+    font-size: 12px;
+    text-align: left;
+}
+
+.roi-input :deep(.el-input-number__increase),
+.roi-input :deep(.el-input-number__decrease) {
+    width: 20px;
 }
 
 .roi-delete {
-    width: 22px;
+    width: 20px;
     padding: 0;
     flex: none;
+    font-size: 12px;
 }
 
 /* ==================== 概览描述 ==================== */
@@ -1497,34 +1690,4 @@ const onRebuyChange = (val) => {
     }
 }
 
-@media (max-width: 1200px) {
-    .roi-list {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .entry-grid {
-        grid-template-columns: 1fr;
-    }
-
-    /* 左右分栏卡片改为单列 */
-    .panel-grid :deep(.el-col) {
-        max-width: 100%;
-        flex: 0 0 100%;
-    }
-}
-
-@media (max-width: 700px) {
-    .roi-list {
-        grid-template-columns: 1fr;
-    }
-
-    .field-input {
-        width: 100%;
-    }
-
-    .dca-level-form {
-        flex-direction: column;
-        gap: 8px;
-    }
-}
 </style>

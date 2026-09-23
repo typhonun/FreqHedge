@@ -112,102 +112,94 @@ const buildTradeInfo = (side, config) => {
 
 
         // TP减仓
-        tpSignal:
-
-            config.tp?.enable
-
-                ?
-
-                `减仓仓位大小 ${config.tp.reduce_percent}%，加仓总资金 ${config.tp.target_wallet_percent}%`
-
-                :
-
-                null,
+        tpSignal: config.tp?.enable
+            ? (() => {
+                if (!config.tp.rebuy_enable) {
+                    return "不补仓，触发 TP 后全平"
+                }
+                if (config.amount_mode === "amount") {
+                    return `减仓 ${config.tp.reduce_amount} USDT，加仓至 ${config.tp.target_wallet_amount} USDT`
+                }
+                return `减仓仓位大小 ${config.tp.reduce_percent}%，加仓总资金 ${config.tp.target_wallet_percent}%`
+            })()
+            : null,
 
 
         // 浮亏止盈
-        lossTpSignal:(()=>{
-
-            if(!config.loss_tp?.enable){
+        lossTpSignal: (() => {
+            if (!config.loss_tp?.enable) {
                 return null
             }
 
+            if (config.amount_mode === "amount") {
+                return `减仓至 ${config.loss_tp.target_wallet_amount} USDT，反弹止盈 ${config.loss_tp.dca_tp_profit}%`
+            }
 
-            return `
-            目标仓位 ${config.loss_tp.target_wallet_percent}%,
-            反弹止盈 ${config.loss_tp.dca_tp_profit}%
-            `
-
-
+            return `目标仓位 ${config.loss_tp.target_wallet_percent}%，反弹止盈 ${config.loss_tp.dca_tp_profit}%`
         })(),
 
 
+        trendSignal: (() => {
+            if (!config.trend_add?.enable) return null
 
-        trendSignal:(()=>{
+            const list = []
+            if (config.trend_add.macd_enable) list.push("MACD")
+            if (config.trend_add.kdj_enable) list.push("KDJ")
+            if (config.trend_add.ema_enable) list.push("EMA")
 
-            if(!config.trend_add?.enable){
-                return null
-            }
+            const cond = list.length ? list.join(" + ") : null
+            if (!cond) return null
 
+            const amountText = config.amount_mode === "amount"
+                ? `加仓 ${config.trend_add.amount_amount} USDT`
+                : `加仓 ${config.trend_add.amount_percent}%`
 
-            const list=[]
-
-
-            if(config.trend_add.macd_enable){
-                list.push("MACD")
-            }
-
-            if(config.trend_add.kdj_enable){
-                list.push("KDJ")
-            }
-
-            if(config.trend_add.ema_enable){
-                list.push("EMA")
-            }
-
-
-            return list.length
-                ?
-                list.join(" + ")
-                :
-                null
-
-
+            return `${cond}，${amountText}`
         })(),
-
-
 
 
         dcaSignal: (() => {
             if (!config.dca?.enable) return null
 
             const d = config.dca
-            const mode = d.amount_mode || "auto"
+            const dcaMode = d.amount_mode || "auto"
+            const globalMode = config.amount_mode || "percent"
 
-            if (mode === "auto") {
-                return `最多 ${d.max_count} 次，自动模式 基础 ${d.base_percent}% × ${d.amount_multiplier}^n，
-                价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
+            if (dcaMode === "auto") {
+                if (globalMode === "amount") {
+                    return `最多 ${d.max_count} 次，自动模式 基础 ${d.base_amount} USDT × ${d.amount_multiplier}^n，` +
+                           `价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
+                }
+                return `最多 ${d.max_count} 次，自动模式 基础 ${d.base_percent}% × ${d.amount_multiplier}^n，` +
+                       `价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
             }
 
-            return `最多 ${d.max_count} 次，手动分层 ${d.levels?.length || 0} 层，价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
+            // manual
+            if (globalMode === "amount") {
+                return `最多 ${d.max_count} 次，手动分层 ${d.levels?.length || 0} 层（金额 USDT），` +
+                       `价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
+            }
+            return `最多 ${d.max_count} 次，手动分层 ${d.levels?.length || 0} 层（百分比），` +
+                   `价格下跌步骤 ${d.price_offset}%，价格偏差 ${d.price_multiplier}`
         })(),
 
 
         gridSignal:
-
             config.grid?.enable
+                ? (() => {
+                    const buyText = config.amount_mode === "amount"
+                        ? `加仓 ${config.grid.buy_amount} USDT`
+                        : `加仓 ${config.grid.buy_percent}%`
 
-                ?
+                    const sellText = config.amount_mode === "amount"
+                        ? `减仓 ${config.grid.sell_amount} USDT`
+                        : `减仓 ${config.grid.sell_percent}%`
 
-                `网格下沿 ${config.grid.grid_lower}% 加仓总资金 ${config.grid.buy_percent}%，
-                 网格上沿 ${config.grid.grid_upper}%，减仓总资金 ${config.grid.sell_percent}%
-                 订单规模 ${config.grid.order_scale}`
-
-                :
-
-                null,
-
-
+                    return `网格下沿 ${config.grid.grid_lower}% ${buyText}，` +
+                           `网格上沿 ${config.grid.grid_upper}% ${sellText}，` +
+                           `订单规模 ${config.grid.order_scale}`
+                })()
+                : null,
 
 
         roiLevels:
@@ -229,6 +221,9 @@ const defaultLongConfig = () => ({
     side: "long",
 
     timeframe:"30m",
+
+    // 全局金额模式
+    amount_mode: "percent",
 
     entry:{
 
@@ -258,8 +253,10 @@ const defaultLongConfig = () => ({
             roi: level.roi
         })),
         reduce_percent: 30,
+        reduce_amount: 10.0,
         rebuy_enable: true,
-        target_wallet_percent: 5
+        target_wallet_percent: 5,
+        target_wallet_amount: 50.0
     },
 
     sl: {
@@ -309,6 +306,8 @@ const defaultLongConfig = () => ({
 
         amount_percent:0.5,
 
+        amount_amount: 10.0,
+
         condition:"and",
 
 
@@ -321,7 +320,8 @@ const defaultLongConfig = () => ({
 
         kdj_reduce:{
             enable:false,
-            reduce_percent:50
+            reduce_percent:50,
+            reduce_amount: 10.0
         }
 
     },
@@ -337,6 +337,7 @@ const defaultLongConfig = () => ({
 
         // 自动模式用
         base_percent: 2,
+        base_amount: 10.0,
         amount_multiplier: 1.5,
 
         // 价格触发
@@ -347,6 +348,7 @@ const defaultLongConfig = () => ({
         levels: [
             {
                 amount: 100,
+                percent: 2.0,
                 rsi_limit: 25,
                 j_limit: 10
             }
@@ -355,7 +357,8 @@ const defaultLongConfig = () => ({
     loss_tp:{
         enable:true,
         dca_tp_profit:3,
-        target_wallet_percent:5
+        target_wallet_percent:5,
+        target_wallet_amount: 50.0
     },
     grid: {
         enable: true,
@@ -363,7 +366,9 @@ const defaultLongConfig = () => ({
         grid_lower: -2,
         grid_upper: 2,
         buy_percent: 2,
+        buy_amount: 10.0,
         sell_percent: 2,
+        sell_amount: 10.0,
         order_scale: 1,
         cooldown_minutes: 30
     }
@@ -372,6 +377,8 @@ const defaultLongConfig = () => ({
 
 const defaultShortConfig = () => ({
     side: "short",
+
+    amount_mode: "percent",
 
     entry:{
 
@@ -401,8 +408,10 @@ const defaultShortConfig = () => ({
             roi: level.roi
         })),
         reduce_percent: 30,
+        reduce_amount: 10.0,
         rebuy_enable: true,
-        target_wallet_percent: 5
+        target_wallet_percent: 5,
+        target_wallet_amount: 50.0
     },
 
     sl: {
@@ -453,8 +462,9 @@ const defaultShortConfig = () => ({
 
         amount_percent:0.5,
 
-        condition:"and",
+        amount_amount: 10.0,
 
+        condition:"and",
 
         macd_enable:true,
 
@@ -465,7 +475,8 @@ const defaultShortConfig = () => ({
 
         kdj_reduce:{
             enable:false,
-            reduce_percent:50
+            reduce_percent:50,
+            reduce_amount: 10.0
         }
 
     },
@@ -482,6 +493,7 @@ const defaultShortConfig = () => ({
         // 自动模式用
         base_percent: 2,
         amount_multiplier: 1.5,
+        base_amount: 10.0,
 
         // 价格触发
         price_offset: 1.0,
@@ -491,6 +503,7 @@ const defaultShortConfig = () => ({
         levels: [
             {
                 amount: 100,
+                percent: 2.0,
                 rsi_limit: 25,
                 j_limit: 10
             }
@@ -505,7 +518,9 @@ const defaultShortConfig = () => ({
 
         dca_tp_profit:3,
 
-        target_wallet_percent:5
+        target_wallet_percent:5,
+
+        target_wallet_amount: 50.0
     },
 
     grid: {
@@ -514,7 +529,9 @@ const defaultShortConfig = () => ({
         grid_lower: -2,
         grid_upper: 2,
         buy_percent: 2,
+        buy_amount: 10.0,
         sell_percent: 2,
+        sell_amount: 10.0,
         order_scale: 1,
         cooldown_minutes: 30
     }
@@ -574,8 +591,73 @@ const normalizeDca = (config) => {
         config.dca.base_percent = 2
     }
 
+    if (config.dca.base_amount == null) {          // 新增
+        config.dca.base_amount = 100.0
+    }
+
     if (!config.dca.amount_multiplier) {
         config.dca.amount_multiplier = 1.5
+    }
+
+        // levels 兜底
+    if (Array.isArray(config.dca.levels)) {        // 新增
+        config.dca.levels.forEach((level) => {
+            if (level.amount == null) {
+                level.amount = 100
+            }
+            if (level.percent == null) {
+                level.percent = 2.0
+            }
+        })
+    }
+
+    return config
+}
+
+const normalizeAmountMode = (config) => {
+    if (!config) return config
+
+    if (!config.amount_mode) {
+        config.amount_mode = "percent"
+    }
+
+    // trend_add.amount_amount
+    if (config.trend_add && config.trend_add.amount_amount == null) {
+        config.trend_add.amount_amount = 10.0
+    }
+
+    // grid.buy_amount / sell_amount
+    if (config.grid) {
+        if (config.grid.buy_amount == null) {
+            config.grid.buy_amount = 10.0
+        }
+        if (config.grid.sell_amount == null) {
+            config.grid.sell_amount = 10.0
+        }
+    }
+
+    // 新增：tp.reduce_amount / target_wallet_amount
+    if (config.tp) {
+        if (config.tp.reduce_amount == null) {
+            config.tp.reduce_amount = 10.0
+        }
+        if (config.tp.target_wallet_amount == null) {
+            config.tp.target_wallet_amount = 50.0
+        }
+    }
+
+    // 新增：loss_tp.target_wallet_amount
+    if (config.loss_tp) {
+        if (config.loss_tp.target_wallet_amount == null) {
+            config.loss_tp.target_wallet_amount = 50.0
+        }
+    }
+
+    // 新增：trend_add.kdj_reduce.reduce_amount
+    if (config.trend_add && config.trend_add.kdj_reduce) {
+        if (config.trend_add.kdj_reduce.reduce_amount == null) {
+            config.trend_add.kdj_reduce.reduce_amount = 10.0
+        }
     }
 
     return config
@@ -585,12 +667,16 @@ const loadConfig = async () => {
 
     const res = await axios.get(`${API}/strategy`)
 
-    longConfig.value = normalizeDca(
-        merge(defaultLongConfig(), res.data.long)
+    longConfig.value = normalizeAmountMode(
+        normalizeDca(
+            merge(defaultLongConfig(), res.data.long)
+        )
     )
 
-    shortConfig.value = normalizeDca(
-        merge(defaultShortConfig(), res.data.short)
+    shortConfig.value = normalizeAmountMode(
+        normalizeDca(
+            merge(defaultShortConfig(), res.data.short)
+        )
     )
 
     savedLongConfig.value = JSON.parse(

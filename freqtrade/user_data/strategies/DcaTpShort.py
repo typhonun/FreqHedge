@@ -897,6 +897,17 @@ class DcaTpShort(IStrategy):
         except Exception:
             return 0.0
 
+    def _amount_mode(self):
+        """全局金额模式：percent / amount"""
+        try:
+            cfg = self.get_runtime_config()
+            mode = str(cfg.get("amount_mode", "percent")).lower()
+            if mode not in ("percent", "amount"):
+                return "percent"
+            return mode
+        except Exception:
+            return "percent"
+
     def _qty_from_usdt(
             self,
             usdt,
@@ -1001,6 +1012,8 @@ class DcaTpShort(IStrategy):
         ema_fast = self._cfg_int(ema_cfg, "fast", 9)
         ema_mid = self._cfg_int(ema_cfg, "mid", 21)
         ema_slow = self._cfg_int(ema_cfg, "slow", 99)
+        amount_mode = self._amount_mode()
+
         try:
             amount_pct = float(
                 trend_cfg.get(
@@ -1011,6 +1024,16 @@ class DcaTpShort(IStrategy):
 
         except Exception:
             amount_pct = 0.005
+
+        try:
+            amount_amount = float(
+                trend_cfg.get(
+                    "amount_amount",
+                    10.0
+                )
+            )
+        except Exception:
+            amount_amount = 10.0
 
         trend_conditions = []
 
@@ -1071,10 +1094,18 @@ class DcaTpShort(IStrategy):
                 and is_bearish_trend
         ):
             self._set(trade, 'kdj_reduced', False)
-            amt = min(
-                collateral * amount_pct,
-                self._available_stake() * 0.8
-            )
+            if amount_mode == "amount":
+                # 固定保证金金额
+                amt = min(
+                    amount_amount,
+                    self._available_stake() * 0.8
+                )
+            else:
+                amt = min(
+                    collateral * amount_pct,
+                    self._available_stake() * 0.8
+                )
+
             _add_trend_total_usdt(abs(amt))
             self._set(
                 trade,
@@ -1110,9 +1141,18 @@ class DcaTpShort(IStrategy):
                                   old_qty + add_qty
                           )
 
-            logger.info(f"[{trade.pair}] {RED}[空头趋势加仓 {amount_pct * 100:.1f}%]{RESET}, "
-                        f"{YELLOW} 保证金={margin:.2f}{RESET}, "f"当前价={price:.4f}, "
-                        f"加仓={abs(amt):.4f} USDT, 新均价={new_avg:.4f}")
+            if amount_mode == "amount":
+                logger.info(
+                    f"[{trade.pair}] {GREEN}[空头趋势加仓 {amt:.2f} USDT]{RESET}, "
+                    f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={price:.4f}, "
+                    f"加仓={abs(amt):.4f} USDT, 新均价={new_avg:.4f}"
+                )
+            else:
+                logger.info(
+                    f"[{trade.pair}] {GREEN}[空头趋势加仓 {amount_pct * 100:.1f}%]{RESET}, "
+                    f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={price:.4f}, "
+                    f"加仓={abs(amt):.4f} USDT, 新均价={new_avg:.4f}"
+                )
 
             return float(amt), 'trend_add20_bear'
 
@@ -1136,22 +1176,35 @@ class DcaTpShort(IStrategy):
                     >
                     last.get('d_tf', 0)
             ):
-                reduce_percent = float(
-                    kdj_reduce_cfg.get("reduce_percent", 50)
-                )
+                if amount_mode == "amount":
+                    try:
+                        reduce_amount = float(
+                            kdj_reduce_cfg.get("reduce_amount", 10.0) or 10.0
+                        )
+                    except Exception:
+                        reduce_amount = 10.0
+                    sell_usdt = min(reduce_amount, margin)
+                    reduce_text = f"{sell_usdt:.2f} USDT"
+                else:
+                    reduce_percent = float(
+                        kdj_reduce_cfg.get("reduce_percent", 50)
+                    )
+                    sell_usdt = min(
+                        collateral * (reduce_percent / 100),
+                        margin
+                    )
+                    reduce_text = f"{reduce_percent:.1f}%"
 
-                sell_usdt = min(
-                    collateral * (reduce_percent / 100),
-                    margin
-                )
                 amt = -float(sell_usdt)
 
                 self._set(trade, 'trend_level', 0)
                 self._set(trade, 'kdj_reduced', True)
 
-                logger.info(f"[{trade.pair}] {GREEN}[KDJ 减仓 {reduce_percent:.1f}%]{RESET}, "
-                            f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
-                            f"减仓={abs(amt):.4f} USDT")
+                logger.info(
+                    f"[{trade.pair}] {RED}[KDJ 减仓 {reduce_text}]{RESET}, "
+                    f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
+                    f"减仓={abs(amt):.4f} USDT"
+                )
                 return float(amt), 'kdj_reduce_by_trend_added'
 
     # ============================================================
@@ -1290,28 +1343,47 @@ class DcaTpShort(IStrategy):
             except Exception:
                 margin = 0.0
 
-            amount_mode = str(dca_cfg.get("amount_mode", "auto")).lower()
+            dca_mode = str(dca_cfg.get("amount_mode", "auto")).lower()
+            global_mode = self._amount_mode()  # percent / amount
             collateral = self._collateral_total()
 
-            if amount_mode == "auto":
-                base_percent = float(dca_cfg.get("base_percent", 2) or 2)
+            if dca_mode == "auto":
                 amount_multiplier = float(dca_cfg.get("amount_multiplier", 1.0) or 1.0)
 
-                base_amount = collateral * (base_percent / 100.0)
-                buy_amt = base_amount * (amount_multiplier ** u)
-                actual_pct = base_percent * (amount_multiplier ** u)
+                if global_mode == "amount":
+                    # 固定金额：base_amount 是保证金
+                    base_amt = float(dca_cfg.get("base_amount", 10.0) or 10.0)
+                    buy_amt = base_amt * (amount_multiplier ** u)
+                    actual_pct = (buy_amt / collateral * 100) if collateral > 0 else 0.0
+                    amount_text = f"模式：自动, 固定金额"
+                    amount_label = f"{buy_amt:.2f} USDT"
+                else:
+                    # 百分比：base_percent 是总资金百分比
+                    base_percent = float(dca_cfg.get("base_percent", 2) or 2)
+                    base_amt = collateral * (base_percent / 100.0)
+                    buy_amt = base_amt * (amount_multiplier ** u)
+                    actual_pct = base_percent * (amount_multiplier ** u)
+                    amount_text = f"模式：自动, 百分比"
+                    amount_label = f"{actual_pct:.2f}%"
 
-                amount_text = (
-                    f"模式：自动, "
-                )
             else:
-                base_amount = float(level_cfg.get("amount", 100) or 100)
-                buy_amt = base_amount
+                # manual
                 amount_multiplier = 1.0
-                actual_pct = (buy_amt / collateral * 100) if collateral > 0 else 0.0
-                amount_text = (
-                    f"模式：手动, 本层金额={base_amount}"
-                )
+
+                if global_mode == "amount":
+                    # 固定金额：用 level.amount
+                    base_amt = float(level_cfg.get("amount", 100) or 100)
+                    buy_amt = base_amt
+                    actual_pct = (buy_amt / collateral * 100) if collateral > 0 else 0.0
+                    amount_text = f"模式：手动, 本层金额={base_amt}"
+                    amount_label = f"{buy_amt:.2f} USDT"
+                else:
+                    # 百分比：用 level.percent
+                    base_percent = float(level_cfg.get("percent", 2.0) or 2.0)
+                    buy_amt = collateral * (base_percent / 100.0)
+                    actual_pct = base_percent
+                    amount_text = f"模式：手动, 本层百分比={base_percent}"
+                    amount_label = f"{actual_pct:.2f}%"
 
             try:
                 prev_qty = abs(trade.amount)
@@ -1343,7 +1415,7 @@ class DcaTpShort(IStrategy):
                 j_val_text = "None"
 
             logger.info(
-                f"[{trade.pair}] {RED}[浮亏 DCA 加仓 {actual_pct:.2f}% {RESET}"
+                f"[{trade.pair}] {RED}[浮亏 DCA 加仓 {amount_label} {RESET}"
                 f"订单规模倍率：{amount_multiplier ** u:.2f})], u=({u}->{u + 1}), "
                 f"{amount_text}, "
                 f"触发条件={triggered_label}, "
@@ -1383,13 +1455,23 @@ class DcaTpShort(IStrategy):
                 current_qty * price / lev
         ) if price else 0.0
 
-        try:
-            target_wallet_percent = float(tp_cfg.get("target_wallet_percent", 5) or 5)
-        except Exception:
-            target_wallet_percent = 5.0
-        target_value = collateral * (target_wallet_percent / 100.0)
-        buy_amt = target_value - current_value
+        amount_mode = self._amount_mode()
 
+        if amount_mode == "amount":
+            try:
+                target_value = float(tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
+            except Exception:
+                target_value = 50.0
+            target_text = f"{target_value:.2f} USDT"
+        else:
+            try:
+                target_wallet_percent = float(tp_cfg.get("target_wallet_percent", 5) or 5)
+            except Exception:
+                target_wallet_percent = 5.0
+            target_value = collateral * (target_wallet_percent / 100.0)
+            target_text = f"{target_wallet_percent:.0f}%"
+
+        buy_amt = target_value - current_value
         if buy_amt <= 0:
             return None
 
@@ -1412,13 +1494,16 @@ class DcaTpShort(IStrategy):
                               current_qty + added_qty
                       )
         logger.info(
-            f"[{trade.pair}] {RED}[浮盈加仓至 {target_wallet_percent:.0f}%]{RESET}, n=({n}->{n + 1}), 当前价={price:.4f}, "
+            f"[{trade.pair}] {GREEN}[浮盈加仓至 {target_text}]{RESET}, n=({n}->{n + 1}), 当前价={price:.4f}, "
             f"{YELLOW}保证金={current_value:.4f}{RESET}, 加仓={buy_amt:.4f} USDT, 新均价={new_avg:.4f}"
         )
-        return (
-            float(buy_amt),
-            f"rebuy_to_{target_wallet_percent:.0f}pct"
-        )
+
+        if amount_mode == "amount":
+            tag = "rebuy_to_amount"
+        else:
+            tag = f"rebuy_to_{target_wallet_percent:.0f}pct"
+
+        return float(buy_amt), tag
 
     # ============================================================
     # TP 止盈（做空）
@@ -1445,6 +1530,8 @@ class DcaTpShort(IStrategy):
 
         if not bool(tp_cfg.get("enable", True)):
             return None
+
+        amount_mode = self._amount_mode()
 
         account_profit = float(current_profit)
 
@@ -1548,11 +1635,20 @@ class DcaTpShort(IStrategy):
 
             margin_val = margin
             collateral_total = self._collateral_total()
-            try:
-                target_wallet_percent = float(tp_cfg.get("target_wallet_percent", 5) or 5)
-            except Exception:
-                target_wallet_percent = 5.0
-            target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
+
+            if amount_mode == "amount":
+                # 固定金额：保留 target_wallet_amount USDT 保证金
+                try:
+                    target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
+                except Exception:
+                    target_usdt = 50.0
+            else:
+                try:
+                    target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
+                except Exception:
+                    target_wallet_percent = 5.0
+                target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
+
             target_qty = (target_usdt * lev) / price
             sell_qty = max(0.0, current_qty_abs - target_qty)
 
@@ -1563,8 +1659,13 @@ class DcaTpShort(IStrategy):
                     self._set(trade, 'dca_done', False)
                     self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
 
+                    if amount_mode == "amount":
+                        target_text = f"{target_usdt:.2f} USDT"
+                    else:
+                        target_text = f"{target_wallet_percent:.0f}%"
+
                     logger.info(
-                        f"[{trade.pair}] {RED}[当前仓位过小，浮亏DCA止盈加仓至 {target_wallet_percent:.0f}%]{RESET}, "
+                        f"[{trade.pair}] {RED}[当前仓位过小，浮亏DCA止盈加仓至 {target_text}]{RESET}, "
                         f"保证金={margin_val:.4f}, 加仓={need_add_usdt:.4f} USDT"
                     )
                     return float(need_add_usdt), "tp_afterDCA_rebuy_to_target"
@@ -1590,9 +1691,13 @@ class DcaTpShort(IStrategy):
                 f"DCA止盈目标收益率="
                 f"{dca_tp_profit * 100:.2f}%"
             )
+            if amount_mode == "amount":
+                target_text = f"{target_usdt:.2f} USDT"
+            else:
+                target_text = f"{target_wallet_percent:.0f}%"
 
             logger.info(
-                f"[{trade.pair}] {RED}[浮亏止盈减仓至 {target_wallet_percent:.0f}%]{RESET}, "
+                f"[{trade.pair}] {RED}[浮亏止盈减仓至 {target_text}]{RESET}, "
                 f"DCA次数={u}, "
                 f"{tp_reason}, "
                 f"当前收益={account_profit * 100:.2f}%, "
@@ -1604,29 +1709,37 @@ class DcaTpShort(IStrategy):
             return float(-sell_usdt_capped), "tp_afterDCA_sell_keep_target"
 
         # -- 浮盈 TP 减仓 --
+        amount_mode = self._amount_mode()
         rebuy_enable = bool(tp_cfg.get("rebuy_enable", True))
+        reduce_percent = 100.0  # 兜底，避免未定义
 
-        if rebuy_enable:
-            try:
-                reduce_percent = float(
-                    tp_cfg.get(
-                        "reduce_percent",
-                        30
-                    )
-                )
-            except Exception:
-                reduce_percent = 30
+        if not rebuy_enable:
+            # 不补仓：一律全平，跟金额模式无关
+            sell_amt = -margin
+            reduce_text = f"全平 {margin:.2f} USDT"
         else:
-            reduce_percent = 100.0
+            if amount_mode == "amount":
+                try:
+                    reduce_amount = float(tp_cfg.get("reduce_amount", 10.0) or 10.0)
+                except Exception:
+                    reduce_amount = 10.0
+                sell_amt = -min(reduce_amount, margin)
+                reduce_text = f"{abs(sell_amt):.2f} USDT"
+            else:
+                try:
+                    reduce_percent = float(tp_cfg.get("reduce_percent", 30))
+                except Exception:
+                    reduce_percent = 30
+                sell_amt = -(reduce_percent / 100.0) * margin
+                reduce_text = f"{reduce_percent:.0f}%"
 
-        sell_amt = -(reduce_percent / 100.0) * margin
         self._set(trade, 'dca_done', False)
         self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
         self._set(trade, 'last_tp_margin', float(margin))
         self._set(trade, 'need_rebuy', bool(tp_cfg.get("rebuy_enable", True)))
 
         logger.info(
-            f"[{trade.pair}] {RED}[浮盈减仓 {reduce_percent:.0f}%]{RESET}, "
+            f"[{trade.pair}] {GREEN}[浮盈减仓 {reduce_text}]{RESET}, "
             f"持仓时间={elapsed:.0f}min, "
             f"ROI目标={roi_text}, "
             f"当前收益率={account_profit * 100:.2f}%, "
@@ -1634,7 +1747,7 @@ class DcaTpShort(IStrategy):
             f"当前价={last.get('close'):.4f}, "
             f"减仓={abs(sell_amt):.4f}"
         )
-        tp_tag = f"tp_{reduce_percent}"
+        tp_tag = f"tp_{'amount' if amount_mode == 'amount' else reduce_percent}"
         return float(sell_amt), tp_tag
 
     # ============================================================
@@ -1708,6 +1821,8 @@ class DcaTpShort(IStrategy):
 
         max_w = self._cfg_int(grid_cfg, "max_count", 5)
 
+        amount_mode = self._amount_mode()
+
         try:
             lev = float(self.leverage(trade.pair) or 1.0)
             if not (lev > 0):
@@ -1723,6 +1838,7 @@ class DcaTpShort(IStrategy):
                 return None
 
             buy_percent = self._cfg_float(grid_cfg, "buy_percent", 2.0)
+            buy_amount = self._cfg_float(grid_cfg, "buy_amount", 10.0)
 
             order_scale = self._cfg_float(grid_cfg, "order_scale", 1.0)
 
@@ -1731,19 +1847,27 @@ class DcaTpShort(IStrategy):
 
             scale_factor = order_scale ** w
 
-            grid_frac = (
-                                buy_percent / 100.0
-                        ) * scale_factor
+            if amount_mode == "amount":
+                buy_usdt = min(
+                    buy_amount * scale_factor,
+                    self._available_stake() * 0.8
+                )
+                grid_frac = 0.0  # 仅用于日志
+            else:
+                grid_frac = (
+                                    buy_percent / 100.0
+                            ) * scale_factor
 
-            grid_frac = max(
-                0.01,
-                grid_frac
-            )
+                grid_frac = max(
+                    0.01,
+                    grid_frac
+                )
 
-            buy_usdt = min(
-                collateral * grid_frac,
-                self._available_stake() * 0.8
-            )
+                buy_usdt = min(
+                    collateral * grid_frac,
+                    self._available_stake() * 0.8
+                )
+
             if buy_usdt <= 0:
                 return None
 
@@ -1777,20 +1901,34 @@ class DcaTpShort(IStrategy):
             self._set(trade, 'grid_count', self._safe_int(self._get_int(trade, 'grid_count', 0) + 1))
             self._set(trade, 'grid_w', self._safe_int(new_w))
 
-            logger.info(
-                f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% {RESET}"
-                f"(订单规模倍率：{scale_factor:.2f})], 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
-                f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
-                f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
-            )
+            if amount_mode == "amount":
+                logger.info(
+                    f"[{trade.pair}] {RED}[网格加仓 {buy_usdt:.2f} USDT {RESET}"
+                    f"(订单规模倍率：{scale_factor:.2f})], 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
+                    f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
+                    f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
+                )
+            else:
+                logger.info(
+                    f"[{trade.pair}] {RED}[网格加仓 {grid_frac * 100:.2f}% {RESET}"
+                    f"(订单规模倍率：{scale_factor:.2f})], 当前价={price:.4f}, 触发价={grid_upper:.4f}, "
+                    f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 加仓={buy_usdt:.4f} USDT, 新均价={new_avg:.4f}, w={new_w}, "
+                    f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
+                )
             return float(buy_usdt), f"grid_add_{grid_frac:.3f}"
 
         # 做空：价格 <= grid_lower 时减仓
         if price <= grid_lower:
             sell_percent = self._cfg_float(grid_cfg, "sell_percent", 2.0)
-            grid_sell_frac = max(0.01, sell_percent / 100.0)
-            sell_usdt = collateral * grid_sell_frac
-            sell_usdt = min(sell_usdt, cur_margin)
+            sell_amount = self._cfg_float(grid_cfg, "sell_amount", 10.0)
+
+            if amount_mode == "amount":
+                sell_usdt = min(sell_amount, cur_margin)
+                grid_sell_frac = 0.0
+            else:
+                grid_sell_frac = max(0.01, sell_percent / 100.0)
+                sell_usdt = collateral * grid_sell_frac
+                sell_usdt = min(sell_usdt, cur_margin)
 
             if sell_usdt <= 0:
                 logger.debug(f"[{trade.pair}] 网格减仓触发，保证金不足，跳过")
@@ -1809,11 +1947,19 @@ class DcaTpShort(IStrategy):
             self._set(trade, 'grid_count', self._safe_int(self._get_int(trade, 'grid_count', 0) + 1))
             self._set(trade, 'grid_w', self._safe_int(new_w))
 
-            logger.info(
-                f"[{trade.pair}] {GREEN}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
-                f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
-                f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
-            )
+            if amount_mode == "amount":
+                logger.info(
+                    f"[{trade.pair}] {GREEN}[网格减仓 {sell_usdt:.2f} USDT]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
+                    f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
+                    f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
+                )
+            else:
+                logger.info(
+                    f"[{trade.pair}] {GREEN}[网格减仓 {grid_sell_frac * 100:.1f}%]{RESET} (triggered by {price_source}), 当前价={price:.4f}, 触发价={grid_lower:.4f}, "
+                    f"{YELLOW}保证金={cur_margin:.2f}{RESET}, 减仓={sell_usdt:.4f}, w={new_w}{RESET}, "
+                    f"下次网格 加仓价={next_sell:.4f}, 减仓价={next_buy:.4f}"
+                )
+
             return float(-sell_usdt), "grid_sell_20pct"
         return None
 

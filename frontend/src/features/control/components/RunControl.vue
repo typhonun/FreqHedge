@@ -215,7 +215,7 @@
             <el-input-number
               v-if="globalTpMode === 'amount'"
               v-model="globalTpAmount"
-              :min="0"
+              :min="5"
               :step="1"
               @change="saveRiskConfig"
             />
@@ -223,7 +223,7 @@
             <el-input-number
               v-else
               v-model="globalTpRatio"
-              :min="0"
+              :min="1"
               :step="0.1"
               :precision="2"
               suffix="%"
@@ -263,7 +263,7 @@
             <el-input-number
               v-if="globalSlMode === 'amount'"
               v-model="globalSlAmount"
-              :min="0"
+              :min="5"
               :step="1"
               @change="saveRiskConfig"
             />
@@ -271,7 +271,7 @@
             <el-input-number
               v-else
               v-model="globalSlRatio"
-              :min="0"
+              :min="1"
               :step="0.1"
               :precision="2"
               suffix="%"
