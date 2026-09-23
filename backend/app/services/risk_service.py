@@ -19,6 +19,8 @@ class RiskService:
         runtime.ROUND_INFO["start_short_closed"] = closed["short_closed_profit"] or 0.0
 
         start_balance = PositionService.get_account_summary().get("total_balance")
+        if not start_balance:
+            print("[Risk] 警告：无法获取 start_balance，round_ratio 将始终为 0")
         runtime.ROUND_INFO["start_balance"] = start_balance or 0.0
 
         runtime.ROUND_INFO["round_profit"] = 0.0
@@ -243,8 +245,9 @@ class RiskService:
         if runtime.ROUND_INFO.get("exiting"):
             return
 
-        last_tp = runtime.ROUND_INFO.get("last_tp_time", 0) or 0
-        if time.time() - last_tp < 60:
+        # 无持仓不判断，避免 0 收益误触发，也不打印
+        position_count = PositionService.get_position_count()
+        if position_count["total"] == 0:
             return
 
         last_tp = runtime.ROUND_INFO.get("last_tp_time", 0) or 0
@@ -252,11 +255,6 @@ class RiskService:
             return
 
         cls.calc_round_profit()
-
-        # 无持仓不判断，避免 0 收益误触发
-        position_count = PositionService.get_position_count()
-        if position_count["total"] == 0:
-            return
 
         risk = runtime.GLOBAL_RISK
         profit = runtime.ROUND_INFO.get("round_profit", 0.0) or 0.0
@@ -466,7 +464,16 @@ class RiskService:
         cls.init_round()
         while True:
             try:
+                # 无持仓直接跳过，不打印也不判断
+                position_count = PositionService.get_position_count()
+                if position_count["total"] == 0:
+                    time.sleep(5)
+                    continue
+
                 risk = runtime.GLOBAL_RISK
+
+                cls.check_risk()
+
                 print(
                     f"[Risk] profit={runtime.ROUND_INFO.get('round_profit')}, "
                     f"ratio={runtime.ROUND_INFO.get('round_ratio')}, "
@@ -484,13 +491,12 @@ class RiskService:
                     f"/{risk.get('global_trail_activate_ratio')}"
                     f"/{risk.get('global_trail_drawdown_amount')}"
                     f"/{risk.get('global_trail_drawdown_ratio')}"
-                    f", peak={runtime.ROUND_INFO.get('peak_profit'):.2f}"
-                    f"/{runtime.ROUND_INFO.get('peak_ratio'):.2f}"
-                    f", trough={runtime.ROUND_INFO.get('trough_profit'):.2f}"
-                    f"/{runtime.ROUND_INFO.get('trough_ratio'):.2f}"
+                    f", peak={runtime.ROUND_INFO.get('peak_profit', 0.0):.2f}"
+                    f"/{runtime.ROUND_INFO.get('peak_ratio', 0.0):.2f}"
+                    f", trough={runtime.ROUND_INFO.get('trough_profit', 0.0):.2f}"
+                    f"/{runtime.ROUND_INFO.get('trough_ratio', 0.0):.2f}"
                     f", active={runtime.ROUND_INFO.get('trail_active')}"
                 )
-                cls.check_risk()
             except Exception as e:
                 print("风险监控错误:", e)
                 print(traceback.format_exc())

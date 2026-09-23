@@ -395,11 +395,24 @@
                     <span class="card-head__title">开仓信号</span>
                     <span class="card-head__meta">
                         <el-text type="info" size="small">
-                            主开仓以 BB + RSI 为准
+                            选择满足方式与信号条件
                         </el-text>
                     </span>
                 </div>
             </template>
+
+            <!-- 条件模式 -->
+            <el-form class="compact-form" label-width="100px" size="small">
+                <el-form-item label="条件模式">
+                    <el-select
+                        v-model="config.entry.condition"
+                        class="field-input"
+                    >
+                        <el-option label="全部满足 AND" value="and" />
+                        <el-option label="任意满足 OR" value="or" />
+                    </el-select>
+                </el-form-item>
+            </el-form>
 
             <div class="entry-grid">
                 <section class="signal-card">
@@ -872,9 +885,21 @@
                         </el-form-item>
                     </el-col>
 
+                    <!-- 全平开关 -->
+                    <el-col :span="8">
+                        <el-form-item label="全平仓位">
+                            <el-switch
+                                v-model="config.loss_tp.close_all"
+                            />
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+
+                <!-- 非全平时显示目标仓位 -->
+                <el-row :gutter="12" v-if="!config.loss_tp.close_all">
                     <el-col :span="8">
                         <el-form-item
-                            :label="config.amount_mode === 'amount' ? '减仓至(USDT)' : '目标仓位%'"
+                            :label="config.amount_mode === 'amount' ? '减仓至(USDT)' : '减仓至目标仓位%'"
                         >
                             <el-input-number
                                 v-if="config.amount_mode === 'amount'"
@@ -1256,9 +1281,9 @@ const changeEntrySignal = (type, val) => {
     const entry = props.config.entry
 
     if (!val) {
-        const remain = Object.keys(entry)
+        const remain = ["rsi", "macd", "bb"]
             .filter(key => key !== type)
-            .some(key => entry[key].enable)
+            .some(key => entry[key]?.enable)
 
         if (!remain) {
             ElMessage.warning('开仓信号至少需要保留一个')

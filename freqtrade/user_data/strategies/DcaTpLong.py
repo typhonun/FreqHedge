@@ -634,10 +634,20 @@ class DcaTpLong(IStrategy):
         if macd_enable:
             cond_map["MACD"] = dataframe['macd_tf'] > dataframe['macdsig_tf']
 
+        condition_mode = str(
+            entry_cfg.get("condition", "and")
+        ).lower()
+
         if cond_map:
-            long_cond = None
-            for cond in cond_map.values():
-                long_cond = cond if long_cond is None else (long_cond & cond)
+            if condition_mode == "or":
+                long_cond = None
+                for cond in cond_map.values():
+                    long_cond = cond if long_cond is None else (long_cond | cond)
+            else:
+                # 默认 and
+                long_cond = None
+                for cond in cond_map.values():
+                    long_cond = cond if long_cond is None else (long_cond & cond)
         else:
             long_cond = pd.Series(False, index=dataframe.index)
 
@@ -651,6 +661,13 @@ class DcaTpLong(IStrategy):
             "_".join([names[i] for i, v in enumerate(row) if v]) or "NONE"
             for row in tag_matrix
         ]
+
+        tag_prefix = "AND" if condition_mode == "and" else "OR"
+        enter_tags = [
+            f"{tag_prefix}_{t}" if t != "NONE" else "NONE"
+            for t in enter_tags
+        ]
+
         enter_tags = pd.Series(enter_tags, index=dataframe.index)
 
         dataframe["enter_long"] = long_cond.astype(int)
@@ -1737,28 +1754,36 @@ class DcaTpLong(IStrategy):
                 lev = 1.0
 
             if price is None or price <= 0 or lev <= 0:
-                logger.warning(f"[{trade.pair}] [浮亏 DCA 止盈跳过] 无效 price/lev (price={price}, lev={lev})")
+                logger.warning(...)
                 return None
 
             margin_val = margin
             collateral_total = self._collateral_total()
 
-            if amount_mode == "amount":
-                try:
-                    target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
-                except Exception:
-                    target_usdt = 50.0
+            close_all = bool(dca_tp_cfg.get("close_all", False))
+
+            if close_all:
+                # 全平模式：目标仓位为 0
+                target_usdt = 0.0
+                target_wallet_percent = 0.0
             else:
-                try:
-                    target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
-                except Exception:
-                    target_wallet_percent = 5.0
-                target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
+                if amount_mode == "amount":
+                    try:
+                        target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
+                    except Exception:
+                        target_usdt = 50.0
+                else:
+                    try:
+                        target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
+                    except Exception:
+                        target_wallet_percent = 5.0
+                    target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
 
             target_qty = (target_usdt * lev) / price
             sell_qty = max(0.0, current_qty_abs - target_qty)
 
             if sell_qty <= 0:
+                # 全平模式下不会走这里，因为 target_qty = 0
                 need_add_usdt = max(0.0, target_usdt - margin_val)
                 if need_add_usdt > 0:
                     self._set(trade, 'dca_count', 0)
@@ -1798,7 +1823,9 @@ class DcaTpLong(IStrategy):
                 f"{dca_tp_profit * 100:.2f}%"
             )
 
-            if amount_mode == "amount":
+            if close_all:
+                target_text = "全平"
+            elif amount_mode == "amount":
                 target_text = f"{target_usdt:.2f} USDT"
             else:
                 target_text = f"{target_wallet_percent:.0f}%"

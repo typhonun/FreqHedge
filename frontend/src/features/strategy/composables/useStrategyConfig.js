@@ -57,56 +57,31 @@ const buildTradeInfo = (side, config) => {
 
 
         // 开仓逻辑
-        entrySignal: (()=>{
+        entrySignal: (() => {
+            const signals = []
 
-            const signals=[]
-
-
-            // Bollinger
-            if(config.entry?.bb?.enable){
-
-                signals.push(
-                    "Bollinger"
-                )
-
+            if (config.entry?.bb?.enable) {
+                signals.push("Bollinger")
             }
 
-
-            // RSI
-            if(config.entry?.rsi?.enable){
-
+            if (config.entry?.rsi?.enable) {
                 signals.push(
-
                     isLong
-
-                    ?
-                    `RSI < ${config.entry.rsi.value}`
-
-                    :
-                    `RSI > ${config.entry.rsi.value}`
-
+                        ? `RSI < ${config.entry.rsi.value}`
+                        : `RSI > ${config.entry.rsi.value}`
                 )
-
             }
 
-
-            // MACD
-            if(config.entry?.macd?.enable){
-
-                signals.push(
-                    "MACD"
-                )
-
+            if (config.entry?.macd?.enable) {
+                signals.push("MACD")
             }
 
+            if (!signals.length) return null
 
-            return signals.length
-                ?
-                signals.join(" + ")
-                :
-                null
+            const mode = config.entry?.condition || "and"
+            const joiner = mode === "or" ? " 或 " : " + "
 
-
+            return signals.join(joiner)
         })(),
 
 
@@ -129,6 +104,10 @@ const buildTradeInfo = (side, config) => {
         lossTpSignal: (() => {
             if (!config.loss_tp?.enable) {
                 return null
+            }
+
+            if (config.loss_tp.close_all) {
+                return `全平，反弹止盈 ${config.loss_tp.dca_tp_profit}%`
             }
 
             if (config.amount_mode === "amount") {
@@ -226,6 +205,8 @@ const defaultLongConfig = () => ({
     amount_mode: "percent",
 
     entry:{
+
+        condition: "and",
 
         rsi:{
             enable:true,
@@ -357,6 +338,7 @@ const defaultLongConfig = () => ({
     loss_tp:{
         enable:true,
         dca_tp_profit:3,
+        close_all: false,
         target_wallet_percent:5,
         target_wallet_amount: 50.0
     },
@@ -381,6 +363,8 @@ const defaultShortConfig = () => ({
     amount_mode: "percent",
 
     entry:{
+
+        condition: "and",
 
         rsi:{
             enable:true,
@@ -512,11 +496,9 @@ const defaultShortConfig = () => ({
     loss_tp:{
         enable:true,
 
-        trigger_loss:-10,
-
-        trigger_rebound:1,
-
         dca_tp_profit:3,
+
+        close_all: false,
 
         target_wallet_percent:5,
 
@@ -653,6 +635,11 @@ const normalizeAmountMode = (config) => {
         }
     }
 
+    // loss_tp.close_all
+    if (config.loss_tp && config.loss_tp.close_all == null) {
+        config.loss_tp.close_all = false
+    }
+
     // 新增：trend_add.kdj_reduce.reduce_amount
     if (config.trend_add && config.trend_add.kdj_reduce) {
         if (config.trend_add.kdj_reduce.reduce_amount == null) {
@@ -663,19 +650,31 @@ const normalizeAmountMode = (config) => {
     return config
 }
 
-const loadConfig = async () => {
+const normalizeEntry = (config) => {
+    if (!config) return config
+    if (!config.entry) return config
+    if (!config.entry.condition) {
+        config.entry.condition = "and"
+    }
+    return config
+}
 
+const loadConfig = async () => {
     const res = await axios.get(`${API}/strategy`)
 
-    longConfig.value = normalizeAmountMode(
-        normalizeDca(
-            merge(defaultLongConfig(), res.data.long)
+    longConfig.value = normalizeEntry(
+        normalizeAmountMode(
+            normalizeDca(
+                merge(defaultLongConfig(), res.data.long)
+            )
         )
     )
 
-    shortConfig.value = normalizeAmountMode(
-        normalizeDca(
-            merge(defaultShortConfig(), res.data.short)
+    shortConfig.value = normalizeEntry(
+        normalizeAmountMode(
+            normalizeDca(
+                merge(defaultShortConfig(), res.data.short)
+            )
         )
     )
 

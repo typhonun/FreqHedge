@@ -126,9 +126,17 @@ class DcaTpShort(IStrategy):
 
     def leverage(self, pair, **kwargs):
         try:
-            cfg = self.get_runtime_config()
+            # 1) 优先读 Freqtrade 加载的 config（顶层 leverage）
+            ft_cfg = self.config or {}
+            ft_leverage = ft_cfg.get("leverage", None)
+            if ft_leverage is not None:
+                try:
+                    return float(ft_leverage)
+                except (TypeError, ValueError):
+                    pass
 
-            # 1) 优先读顶层 leverage（和 config_long.json 对齐）
+            # 2) 再读 ConfigManager
+            cfg = self.get_runtime_config()
             top_level = self._cfg(cfg, "leverage", default=None)
             if top_level is not None:
                 try:
@@ -136,7 +144,6 @@ class DcaTpShort(IStrategy):
                 except (TypeError, ValueError):
                     pass
 
-            # 2) 再读 strategy.leverage
             nested = self._cfg(cfg, "strategy", "leverage", default=None)
             if nested is not None:
                 try:
@@ -144,9 +151,7 @@ class DcaTpShort(IStrategy):
                 except (TypeError, ValueError):
                     pass
 
-            # 3) 默认
             return 10.0
-
         except Exception:
             return 10.0
 
@@ -618,10 +623,20 @@ class DcaTpShort(IStrategy):
         if macd_enable:
             cond_map["MACD"] = dataframe['macd_tf'] < dataframe['macdsig_tf']
 
+        condition_mode = str(
+            entry_cfg.get("condition", "and")
+        ).lower()
+
         if cond_map:
-            short_cond = None
-            for cond in cond_map.values():
-                short_cond = cond if short_cond is None else (short_cond & cond)
+            if condition_mode == "or":
+                short_cond = None
+                for cond in cond_map.values():
+                    short_cond = cond if short_cond is None else (short_cond | cond)
+            else:
+                # 默认 and
+                short_cond = None
+                for cond in cond_map.values():
+                    short_cond = cond if short_cond is None else (short_cond & cond)
         else:
             short_cond = pd.Series(False, index=dataframe.index)
 
@@ -635,6 +650,13 @@ class DcaTpShort(IStrategy):
             "_".join([names[i] for i, v in enumerate(row) if v]) or "NONE"
             for row in tag_matrix
         ]
+
+        tag_prefix = "AND" if condition_mode == "and" else "OR"
+        enter_tags = [
+            f"{tag_prefix}_{t}" if t != "NONE" else "NONE"
+            for t in enter_tags
+        ]
+
         enter_tags = pd.Series(enter_tags, index=dataframe.index)
 
         dataframe["enter_short"] = short_cond.astype(int)
@@ -1636,23 +1658,30 @@ class DcaTpShort(IStrategy):
             margin_val = margin
             collateral_total = self._collateral_total()
 
-            if amount_mode == "amount":
-                # 固定金额：保留 target_wallet_amount USDT 保证金
-                try:
-                    target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
-                except Exception:
-                    target_usdt = 50.0
+            close_all = bool(dca_tp_cfg.get("close_all", False))
+
+            if close_all:
+                # 全平模式：目标仓位为 0
+                target_usdt = 0.0
+                target_wallet_percent = 0.0
             else:
-                try:
-                    target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
-                except Exception:
-                    target_wallet_percent = 5.0
-                target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
+                if amount_mode == "amount":
+                    try:
+                        target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
+                    except Exception:
+                        target_usdt = 50.0
+                else:
+                    try:
+                        target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
+                    except Exception:
+                        target_wallet_percent = 5.0
+                    target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
 
             target_qty = (target_usdt * lev) / price
             sell_qty = max(0.0, current_qty_abs - target_qty)
 
             if sell_qty <= 0:
+                # 全平模式下不会走这里，因为 target_qty = 0
                 need_add_usdt = max(0.0, target_usdt - margin_val)
                 if need_add_usdt > 0:
                     self._set(trade, 'dca_count', 0)
@@ -1691,7 +1720,10 @@ class DcaTpShort(IStrategy):
                 f"DCA止盈目标收益率="
                 f"{dca_tp_profit * 100:.2f}%"
             )
-            if amount_mode == "amount":
+
+            if close_all:
+                target_text = "全平"
+            elif amount_mode == "amount":
                 target_text = f"{target_usdt:.2f} USDT"
             else:
                 target_text = f"{target_wallet_percent:.0f}%"
