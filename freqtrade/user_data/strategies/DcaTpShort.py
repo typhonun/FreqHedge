@@ -1,7 +1,8 @@
 import sys
 import traceback
 from pathlib import Path
-
+import requests
+import time as _time
 import numpy as np
 
 USER_DATA_DIR = Path(__file__).resolve().parents[1]
@@ -26,7 +27,12 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
+_direction_cache = {
+    "ts": 0,
+    "data": None,
+}
 
+RISK_API_URL = "http://127.0.0.1:9000/api/risk/direction"
 class DcaTpShort(IStrategy):
 
     timeframe = '30m'
@@ -163,6 +169,27 @@ class DcaTpShort(IStrategy):
             return float(free)
         except Exception:
             return 0.0
+
+    def _get_direction_state(self, ttl: int = 5):
+        """读取后端多空失衡状态，缓存 ttl 秒"""
+
+        now = _time.time()
+
+        if _direction_cache["data"] and now - _direction_cache["ts"] < ttl:
+            return _direction_cache["data"]
+
+        try:
+            r = requests.get(RISK_API_URL, timeout=2)
+            if r.status_code == 200:
+                data = r.json()
+                _direction_cache["data"] = data
+                _direction_cache["ts"] = now
+                return data
+        except Exception as e:
+            logger.warning(f"获取多空失衡状态失败: {e}")
+
+        # 失败返回 None，调用方默认放行
+        return None
 
     def _record_chart_marker(
             self,
@@ -671,6 +698,32 @@ class DcaTpShort(IStrategy):
     def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
                             current_time, entry_tag, side, **kwargs):
 
+        # 先判断是否手动
+        entry_tag_str = str(entry_tag or "").lower()
+        is_manual = (
+                entry_tag_str.startswith("force_entry")
+                or entry_tag_str in ("manual", "manual_entry")
+        )
+
+        # 手动开仓跳过失衡闸门
+        if not is_manual:
+            state = self._get_direction_state()
+            if state:
+                if side == "long" and state.get("block_long"):
+                    logger.info(
+                        f"[{pair}] {YELLOW}多空失衡，暂停开多{RESET} "
+                        f"(多={state['long_count']}, 空={state['short_count']}, "
+                        f"diff={state['direction_diff']})"
+                    )
+                    return False
+                if side == "short" and state.get("block_short"):
+                    logger.info(
+                        f"[{pair}] {YELLOW}多空失衡，暂停开空{RESET} "
+                        f"(多={state['long_count']}, 空={state['short_count']}, "
+                        f"diff={state['direction_diff']})"
+                    )
+                    return False
+
         try:
             lev = float(self.leverage(pair) or 1.0)
         except Exception:
@@ -695,13 +748,6 @@ class DcaTpShort(IStrategy):
                 rsi_value = float(last.get("rsi")) if last.get("rsi") is not None else None
         except Exception as e:
             logger.warning(f"[{pair}] confirm_trade_entry 读取指标失败: {e}")
-
-        # 判断是否为手动开仓
-        entry_tag_str = str(entry_tag or "").lower()
-        is_manual = (
-            entry_tag_str.startswith("force_entry")
-            or entry_tag_str in ("manual", "manual_entry")
-        )
 
         logger.info(
             f"[{pair}] {GREEN} 开仓信号触发 {RESET}"

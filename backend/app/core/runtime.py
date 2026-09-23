@@ -39,6 +39,15 @@ GLOBAL_RISK = {
     # 追踪回撤幅度（永远正数）
     "global_trail_drawdown_amount": 5.0,
     "global_trail_drawdown_ratio": 1.0,
+
+    # ===== 多空失衡控制（只拦新开仓） =====
+    # 多头侧：多单 - 空单 >= imbalance_long_count 时，暂停开多
+    "imbalance_long_enable": False,
+    "imbalance_long_count": 2,
+
+    # 空头侧：空单 - 多单 >= imbalance_short_count 时，暂停开空
+    "imbalance_short_enable": False,
+    "imbalance_short_count": 2,
 }
 
 GLOBAL_EXIT_REASONS = {}

@@ -22,11 +22,17 @@ export function useCapital() {
 
         longConfig.value = {
             leverage: 10,
+            // 多头失衡控制默认值
+            imbalance_long_enable: false,
+            imbalance_long_count: 2,
             ...longData
         }
 
         shortConfig.value = {
             leverage: 10,
+            // 空头失衡控制默认值
+            imbalance_short_enable: false,
+            imbalance_short_count: 2,
             ...shortData
         }
 

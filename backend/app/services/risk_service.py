@@ -115,6 +115,49 @@ class RiskService:
         )
 
     @classmethod
+    def calc_direction_imbalance(cls):
+        """计算多空失衡状态（数量差），写入 runtime.ROUND_INFO"""
+
+        try:
+            positions = PositionService.get_all_positions()
+        except Exception as e:
+            print(f"[Risk] calc_direction_imbalance 失败: {e}")
+            positions = []
+
+        long_count = sum(
+            1 for p in positions
+            if str(p.get("side", "")).upper() == "LONG"
+        )
+        short_count = sum(
+            1 for p in positions
+            if str(p.get("side", "")).upper() == "SHORT"
+        )
+
+        risk = runtime.GLOBAL_RISK
+
+        # ---------- 多头侧 ----------
+        long_enable = bool(risk.get("imbalance_long_enable", False))
+        block_long = False
+        if long_enable:
+            threshold = int(risk.get("imbalance_long_count", 2) or 2)
+            if long_count - short_count >= threshold:
+                block_long = True
+
+        # ---------- 空头侧 ----------
+        short_enable = bool(risk.get("imbalance_short_enable", False))
+        block_short = False
+        if short_enable:
+            threshold = int(risk.get("imbalance_short_count", 2) or 2)
+            if short_count - long_count >= threshold:
+                block_short = True
+
+        runtime.ROUND_INFO["long_count"] = long_count
+        runtime.ROUND_INFO["short_count"] = short_count
+        runtime.ROUND_INFO["direction_diff"] = long_count - short_count
+        runtime.ROUND_INFO["block_long"] = block_long
+        runtime.ROUND_INFO["block_short"] = block_short
+
+    @classmethod
     def force_exit_all(cls, reason: str = None):
         """全部平仓
 
@@ -464,6 +507,9 @@ class RiskService:
         cls.init_round()
         while True:
             try:
+                # 多空失衡：无论有没有持仓都算，策略随时可能查
+                cls.calc_direction_imbalance()
+
                 # 无持仓直接跳过，不打印也不判断
                 position_count = PositionService.get_position_count()
                 if position_count["total"] == 0:
@@ -471,7 +517,6 @@ class RiskService:
                     continue
 
                 risk = runtime.GLOBAL_RISK
-
                 cls.check_risk()
 
                 print(

@@ -92,7 +92,40 @@ def get_config():
 
 @router.post("/config")
 def save_config(data: dict):
-    return ConfigService.save_config(data)
+    result = ConfigService.save_config(data)
+
+    side = data.get("side")
+
+    if side == "long":
+        imbalance_keys = [
+            "imbalance_long_enable",
+            "imbalance_long_count",
+        ]
+    elif side == "short":
+        imbalance_keys = [
+            "imbalance_short_enable",
+            "imbalance_short_count",
+        ]
+    else:
+        imbalance_keys = []
+
+    updated = False
+    for key in imbalance_keys:
+        if key in data:
+            runtime.GLOBAL_RISK[key] = data[key]
+            updated = True
+
+    if updated:
+        RiskConfigService.save(runtime.GLOBAL_RISK)
+        print(
+            f"[control] 失衡控制已同步 side={side}: "
+            f"long=(enable={runtime.GLOBAL_RISK.get('imbalance_long_enable')}, "
+            f"count={runtime.GLOBAL_RISK.get('imbalance_long_count')}), "
+            f"short=(enable={runtime.GLOBAL_RISK.get('imbalance_short_enable')}, "
+            f"count={runtime.GLOBAL_RISK.get('imbalance_short_count')})"
+        )
+
+    return result
 
 
 @router.get("/available_pairs/{side}")

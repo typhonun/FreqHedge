@@ -12,5 +12,13 @@
     "global_trail_activate_amount": 7,
     "global_trail_activate_ratio": 3,
     "global_trail_drawdown_amount": 2,
-    "global_trail_drawdown_ratio": 1
+    "global_trail_drawdown_ratio": 1,
+    "imbalance_long_enable": true,
+    "imbalance_long_count": 1,
+    "imbalance_short_enable": true,
+    "imbalance_short_count": 1,
+    "imbalance_enable": true,
+    "imbalance_mode": "count",
+    "imbalance_count": 2,
+    "imbalance_ratio": 0.7
 }

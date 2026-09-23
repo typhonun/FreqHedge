@@ -39,92 +39,38 @@ class ConfigService:
     @classmethod
     def get_config(cls):
 
-        long_cfg = cls.read_json(
-            LONG_CONFIG
-        )
-
-        short_cfg = cls.read_json(
-            SHORT_CONFIG
-        )
+        long_cfg = cls.read_json(LONG_CONFIG)
+        short_cfg = cls.read_json(SHORT_CONFIG)
 
         return {
             "long": {
-                "dry_run_wallet":
-                    long_cfg.get(
-                        "dry_run_wallet",
-                        300
-                    ),
+                "dry_run_wallet": long_cfg.get("dry_run_wallet", 300),
+                "stake_amount": long_cfg.get("stake_amount", 15),
+                "max_open_trades": long_cfg.get("max_open_trades", 3),
+                "max_usage": long_cfg.get("tradable_balance_ratio", 0.9) * 100,
+                "leverage": long_cfg.get("leverage", 10),
 
-                "stake_amount":
-                    long_cfg.get(
-                        "stake_amount",
-                        15
-                    ),
+                # ===== 失衡控制 =====
+                "imbalance_long_enable": long_cfg.get("imbalance_long_enable", False),
+                "imbalance_long_count": long_cfg.get("imbalance_long_count", 2),
 
-                "max_open_trades":
-                    long_cfg.get(
-                        "max_open_trades",
-                        3
-                    ),
-
-                "max_usage":
-                    long_cfg.get(
-                        "tradable_balance_ratio",
-                        0.9
-                    ) * 100,
-
-                "leverage":
-                    long_cfg.get("leverage", 10),
-
-                "pair_whitelist":
-                    long_cfg.get("exchange", {}).get("pair_whitelist", []),
-
-                "pair_blacklist":
-                    long_cfg["exchange"].get(
-                        "pair_blacklist",
-                        []
-                    )
+                "pair_whitelist": long_cfg.get("exchange", {}).get("pair_whitelist", []),
+                "pair_blacklist": long_cfg.get("exchange", {}).get("pair_blacklist", []),
             },
 
             "short": {
-                "dry_run_wallet":
-                    short_cfg.get(
-                        "dry_run_wallet",
-                        300
-                    ),
+                "dry_run_wallet": short_cfg.get("dry_run_wallet", 300),
+                "stake_amount": short_cfg.get("stake_amount", 15),
+                "max_open_trades": short_cfg.get("max_open_trades", 3),
+                "max_usage": short_cfg.get("tradable_balance_ratio", 0.9) * 100,
+                "leverage": short_cfg.get("leverage", 10),
 
-                "stake_amount":
-                    short_cfg.get(
-                        "stake_amount",
-                        15
-                    ),
+                # ===== 失衡控制 =====
+                "imbalance_short_enable": short_cfg.get("imbalance_short_enable", False),
+                "imbalance_short_count": short_cfg.get("imbalance_short_count", 2),
 
-                "max_open_trades":
-                    short_cfg.get(
-                        "max_open_trades",
-                        3
-                    ),
-
-                "max_usage":
-                    short_cfg.get(
-                        "tradable_balance_ratio",
-                        0.9
-                    ) * 100,
-
-                "leverage":
-                    short_cfg.get("leverage", 10),
-
-                "pair_whitelist":
-                    short_cfg["exchange"].get(
-                        "pair_whitelist",
-                        []
-                    ),
-
-                "pair_blacklist":
-                    short_cfg["exchange"].get(
-                        "pair_blacklist",
-                        []
-                    )
+                "pair_whitelist": short_cfg.get("exchange", {}).get("pair_whitelist", []),
+                "pair_blacklist": short_cfg.get("exchange", {}).get("pair_blacklist", []),
             }
         }
 
@@ -148,7 +94,23 @@ class ConfigService:
         if "leverage" in data:
             cfg["leverage"] = data["leverage"]
 
-        # ✅ 防止 exchange 不存在
+        # ===== 失衡控制：写入 config 文件 =====
+        if data["side"] == "long":
+            imbalance_keys = [
+                "imbalance_long_enable",
+                "imbalance_long_count",
+            ]
+        else:
+            imbalance_keys = [
+                "imbalance_short_enable",
+                "imbalance_short_count",
+            ]
+
+        for key in imbalance_keys:
+            if key in data:
+                cfg[key] = data[key]
+
+        # 防止 exchange 不存在
         exchange = cfg.setdefault("exchange", {})
 
         exchange["pair_whitelist"] = data.get("pair_whitelist", [])

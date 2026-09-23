@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from app.api.chart import cache_refresh_loop
 from app.services.risk_service import RiskService
 from app.services.risk_config_service import RiskConfigService
-
+from app.api.risk import router as risk_router
 from app.api.trade import router as trade_router
 from app.api.control import router as control_router
 from app.api.system import router as system_router
@@ -156,6 +156,12 @@ app.include_router(
     strategy.router,
     prefix="/strategy",
     tags=["strategy"]
+)
+
+app.include_router(
+    risk_router,
+    prefix="/api/risk",
+    tags=["risk"]
 )
 
 app.include_router(
