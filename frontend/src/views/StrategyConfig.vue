@@ -46,7 +46,6 @@ import { onMounted } from "vue"
 import { ElMessage } from "element-plus"
 
 import StrategyPanel from '@features/strategy/components/StrategyPanel.vue'
-
 import { useStrategyConfig } from '@features/strategy/composables/useStrategyConfig.js'
 
 const {
@@ -59,33 +58,42 @@ const {
 } = useStrategyConfig()
 
 const saveLong = async () => {
+    try {
+        const res = await saveConfig("long", longConfig.value)
 
-    await saveConfig(
-        "long",
-        longConfig.value
-    )
+        if (res.error) return   // 校验失败，saveConfig 内已提示
 
-    ElMessage.success(
-        "多头策略已保存"
-    )
+        if (res.changed) {
+            ElMessage.success("正在重新加载...")
+            await loadConfig()
+        } else {
+            ElMessage.info("已保存")
+        }
+    } catch (e) {
+        ElMessage.error("多头策略保存失败")
+    }
 }
 
 const saveShort = async () => {
+    try {
+        const res = await saveConfig("short", shortConfig.value)
 
-    await saveConfig(
-        "short",
-        shortConfig.value
-    )
+        if (res.error) return
 
-    ElMessage.success(
-        "空头策略已保存"
-    )
+        if (res.changed) {
+            ElMessage.success("，正在重新加载...")
+            await loadConfig()
+        } else {
+            ElMessage.info("已保存")
+        }
+    } catch (e) {
+        ElMessage.error("空头策略保存失败")
+    }
 }
 
 onMounted(loadConfig)
 
 </script>
-
 
 <style scoped>
 

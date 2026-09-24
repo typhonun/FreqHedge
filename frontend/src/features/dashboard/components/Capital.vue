@@ -306,8 +306,12 @@ const {
 
 const saveLong = async () => {
     try {
-        await saveConfig("long")
-        ElMessage.success("多头配置已保存")
+        const res = await saveConfig("long")
+        if (res.changed) {
+            ElMessage.success("重新加载配置...")
+        } else {
+            ElMessage.info("已保存")
+        }
     } catch {
         ElMessage.error("多头保存失败")
     }
@@ -315,8 +319,12 @@ const saveLong = async () => {
 
 const saveShort = async () => {
     try {
-        await saveConfig("short")
-        ElMessage.success("空头配置已保存")
+        const res = await saveConfig("short")
+        if (res.changed) {
+            ElMessage.success("重新加载配置...")
+        } else {
+            ElMessage.info("已保存")
+        }
     } catch {
         ElMessage.error("空头保存失败")
     }

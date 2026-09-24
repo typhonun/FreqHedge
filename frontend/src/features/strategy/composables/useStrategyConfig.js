@@ -1,6 +1,7 @@
 import axios from "axios"
 import {ref, computed} from "vue"
 import merge from "lodash.merge"
+import { ElMessage } from "element-plus"
 
 const API = "http://localhost:9000"
 
@@ -660,7 +661,7 @@ const normalizeEntry = (config) => {
 }
 
 const loadConfig = async () => {
-    const res = await axios.get(`${API}/strategy`)
+    const res = await axios.get(`${API}/strategy/`)
 
     longConfig.value = normalizeEntry(
         normalizeAmountMode(
@@ -687,64 +688,58 @@ const loadConfig = async () => {
     )
 }
 
-    const saveConfig = async(
-        side,
-        config
-    )=>{
+    /**
+     * 判断当前 config 与已保存快照是否有差异
+     */
+    const hasChanges = (side, config) => {
+        const saved = side === "long"
+            ? savedLongConfig.value
+            : savedShortConfig.value
 
+        if (!saved) return true
 
-        if(
+        return JSON.stringify(config) !== JSON.stringify(saved)
+    }
+
+    const saveConfig = async (side, config) => {
+
+        // 开仓信号校验（保留原逻辑）
+        if (
             !config.entry.rsi.enable &&
             !config.entry.macd.enable &&
             !config.entry.bb.enable
-        ){
-
-            ElMessage.error(
-                "开仓信号不能为空"
-            )
-
-            return
+        ) {
+            ElMessage.error("开仓信号不能为空")
+            return { changed: false, error: "entry_empty" }
         }
 
-
+        // 无改动：不提交、不重载
+        if (!hasChanges(side, config)) {
+            return { changed: false }
+        }
 
         const res = await axios.post(
-            `${API}/strategy`,
+            `${API}/strategy/`,
             {
                 side,
-                config
+                config,
+                ...config          // ← 同时平铺一份，兼容后端读顶层字段
             }
-        )
+)
 
-
-        // 保存成功后更新概览
-
-        if(side==="long"){
-
-            savedLongConfig.value =
-                JSON.parse(
-                    JSON.stringify(config)
-                )
-
+        // 保存成功后更新快照
+        if (side === "long") {
+            savedLongConfig.value = JSON.parse(JSON.stringify(config))
         }
 
-
-        if(side==="short"){
-
-            savedShortConfig.value =
-                JSON.parse(
-                    JSON.stringify(config)
-                )
-
+        if (side === "short") {
+            savedShortConfig.value = JSON.parse(JSON.stringify(config))
         }
 
-
-        return res
-
+        return { changed: true, data: res.data }
     }
 
     return {
-
         longConfig,
         shortConfig,
 
@@ -755,6 +750,7 @@ const loadConfig = async () => {
         shortTradeInfo,
 
         loadConfig,
-        saveConfig
+        saveConfig,
+        hasChanges
     }
 }

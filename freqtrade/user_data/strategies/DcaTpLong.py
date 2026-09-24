@@ -67,7 +67,7 @@ class DcaTpLong(IStrategy):
 
         logger.info(
             "\n"
-            f"==================== 策略配置概览 ====================\n"
+            f"==================== 多头配置概览 ====================\n"
             f"初始资金          : {dry_run_wallet} USDT\n"
             f"开仓金额          : {stake_amount} USDT\n"
             f"最大持仓          : {max_open_trades}\n"
@@ -78,6 +78,179 @@ class DcaTpLong(IStrategy):
             f"------------------------------------------------------\n"
             f"持仓差上限        : {'开启' if imbalance_enable else '关闭'}, 上限={imbalance_count}\n"
             f"======================================================"
+        )
+
+        # ==================== 运行时策略配置详情 ====================
+        try:
+            cfg = self.get_runtime_config() or {}
+        except Exception as e:
+            logger.error(f"读取运行时策略配置失败: {e}")
+            return
+
+        side = str(cfg.get("side", "long")).lower()
+        amount_mode = str(cfg.get("amount_mode", "percent")).lower()
+
+        def _fmt(v, digits=4):
+            if isinstance(v, bool):
+                return "开" if v else "关"
+            if isinstance(v, float):
+                return f"{v:.{digits}f}"
+            if v is None:
+                return "(空)"
+            return str(v)
+
+        def _section(title):
+            logger.info(
+                f"\n-------------------- {title} --------------------"
+            )
+
+        # ========== 1. 金额模式 ==========
+        _section("金额模式")
+        logger.info(
+            f"amount_mode       : {amount_mode} "
+            f"({'百分比' if amount_mode == 'percent' else '固定金额 USDT'})"
+        )
+
+        # ========== 2. 指标配置 ==========
+        _section("指标配置")
+        ind = cfg.get("indicator", {}) or {}
+        macd = ind.get("macd", {}) or {}
+        kdj = ind.get("kdj", {}) or {}
+        ema = ind.get("ema", {}) or {}
+        rsi = ind.get("rsi", {}) or {}
+        bb = ind.get("bb", {}) or {}
+        logger.info(
+            f"MACD              : fast={_fmt(macd.get('fast'))}, "
+            f"slow={_fmt(macd.get('slow'))}, "
+            f"signal={_fmt(macd.get('signal'))}\n"
+            f"KDJ               : fastk={_fmt(kdj.get('fastk'))}, "
+            f"slowk={_fmt(kdj.get('slowk'))}, "
+            f"slowd={_fmt(kdj.get('slowd'))}\n"
+            f"EMA               : fast={_fmt(ema.get('fast'))}, "
+            f"mid={_fmt(ema.get('mid'))}, "
+            f"slow={_fmt(ema.get('slow'))}\n"
+            f"RSI.period        : {_fmt(rsi.get('period'))}\n"
+            f"BB                : period={_fmt(bb.get('period'))}, "
+            f"std={_fmt(bb.get('std'), 2)}"
+        )
+
+        # ========== 3. ROI止盈规则 ==========
+        _section("ROI止盈规则")
+        tp_cfg = cfg.get("tp", {}) or {}
+        roi_levels = tp_cfg.get("roi_levels", []) or []
+        if roi_levels:
+            for i, lv in enumerate(roi_levels, start=1):
+                logger.info(
+                    f"  [{i}] minutes={_fmt(lv.get('minutes'))}, "
+                    f"roi={_fmt(lv.get('roi'), 2)}%"
+                )
+        else:
+            logger.info("  (空)")
+
+        # ========== 4. 开仓信号 ==========
+        _section("开仓信号")
+        entry = cfg.get("entry", {}) or {}
+        e_rsi = entry.get("rsi", {}) or {}
+        e_macd = entry.get("macd", {}) or {}
+        e_bb = entry.get("bb", {}) or {}
+        logger.info(
+            f"condition         : {entry.get('condition', 'and')}\n"
+            f"RSI  enable={_fmt(e_rsi.get('enable'))}, "
+            f"value={_fmt(e_rsi.get('value'))}\n"
+            f"MACD enable={_fmt(e_macd.get('enable'))}\n"
+            f"BB   enable={_fmt(e_bb.get('enable'))}"
+        )
+
+        # ========== 5. TP止盈 + 止损 ==========
+        _section("TP止盈")
+        logger.info(
+            f"rebuy_enable         : {_fmt(tp_cfg.get('rebuy_enable'))}\n"
+            f"reduce_amount        : {_fmt(tp_cfg.get('reduce_amount'), 2)}\n"
+            f"reduce_percent       : {_fmt(tp_cfg.get('reduce_percent'))}\n"
+            f"target_wallet_amount : {_fmt(tp_cfg.get('target_wallet_amount'), 2)}\n"
+            f"target_wallet_percent: {_fmt(tp_cfg.get('target_wallet_percent'), 2)}"
+        )
+
+        _section("止损配置")
+        sl = cfg.get("sl", {}) or {}
+        logger.info(
+            f"enable            : {_fmt(sl.get('enable'))}\n"
+            f"stoploss          : {_fmt(sl.get('stoploss'))}%"
+        )
+
+        # ========== 6. DCA配置 ==========
+        _section("DCA配置")
+        dca = cfg.get("dca", {}) or {}
+        logger.info(
+            f"enable            : {_fmt(dca.get('enable'))}\n"
+            f"amount_mode       : {dca.get('amount_mode', 'auto')}\n"
+            f"condition         : {dca.get('condition', 'or')}\n"
+            f"max_count         : {_fmt(dca.get('max_count'))}\n"
+            f"cooldown_minutes  : {_fmt(dca.get('cooldown_minutes'))}\n"
+            f"price_offset      : {_fmt(dca.get('price_offset'), 2)}\n"
+            f"price_multiplier  : {_fmt(dca.get('price_multiplier'), 2)}\n"
+            f"base_amount       : {_fmt(dca.get('base_amount'), 2)}\n"
+            f"base_percent      : {_fmt(dca.get('base_percent'), 2)}\n"
+            f"amount_multiplier : {_fmt(dca.get('amount_multiplier'), 2)}"
+        )
+        dca_levels = dca.get("levels", []) or []
+        if dca_levels:
+            for i, lv in enumerate(dca_levels, start=1):
+                logger.info(
+                    f"  level[{i}] amount={_fmt(lv.get('amount'), 2)}, "
+                    f"percent={_fmt(lv.get('percent'), 2)}, "
+                    f"rsi_limit={_fmt(lv.get('rsi_limit'))}, "
+                    f"j_limit={_fmt(lv.get('j_limit'))}"
+                )
+        else:
+            logger.info("  levels: (空)")
+
+        # ========== 7. 浮亏止盈 ==========
+        _section("浮亏止盈")
+        loss_tp = cfg.get("loss_tp", {}) or {}
+        logger.info(
+            f"enable               : {_fmt(loss_tp.get('enable'))}\n"
+            f"dca_tp_profit        : {_fmt(loss_tp.get('dca_tp_profit'), 2)}%\n"
+            f"close_all            : {_fmt(loss_tp.get('close_all'))}\n"
+            f"target_wallet_amount : {_fmt(loss_tp.get('target_wallet_amount'), 2)}\n"
+            f"target_wallet_percent: {_fmt(loss_tp.get('target_wallet_percent'), 2)}"
+        )
+
+        # ========== 8. 趋势加仓 ==========
+        _section("趋势加仓")
+        trend = cfg.get("trend_add", {}) or {}
+        kdj_reduce = trend.get("kdj_reduce", {}) or {}
+        logger.info(
+            f"enable            : {_fmt(trend.get('enable'))}\n"
+            f"amount_amount     : {_fmt(trend.get('amount_amount'), 2)}\n"
+            f"amount_percent    : {_fmt(trend.get('amount_percent'), 2)}\n"
+            f"condition         : {trend.get('condition', 'and')}\n"
+            f"macd_enable       : {_fmt(trend.get('macd_enable'))}\n"
+            f"kdj_enable        : {_fmt(trend.get('kdj_enable'))}\n"
+            f"ema_enable        : {_fmt(trend.get('ema_enable'))}\n"
+            f"KDJ减仓 enable    : {_fmt(kdj_reduce.get('enable'))}\n"
+            f"KDJ减仓 reduce_amount : {_fmt(kdj_reduce.get('reduce_amount'), 2)}\n"
+            f"KDJ减仓 reduce_percent: {_fmt(kdj_reduce.get('reduce_percent'))}"
+        )
+
+        # ========== 9. 网格配置 ==========
+        _section("网格配置")
+        grid = cfg.get("grid", {}) or {}
+        logger.info(
+            f"enable            : {_fmt(grid.get('enable'))}\n"
+            f"max_count         : {_fmt(grid.get('max_count'))}\n"
+            f"cooldown_minutes  : {_fmt(grid.get('cooldown_minutes'))}\n"
+            f"grid_lower        : {_fmt(grid.get('grid_lower'), 2)}%\n"
+            f"grid_upper        : {_fmt(grid.get('grid_upper'), 2)}%\n"
+            f"buy_amount        : {_fmt(grid.get('buy_amount'), 2)}\n"
+            f"buy_percent       : {_fmt(grid.get('buy_percent'), 2)}\n"
+            f"sell_amount       : {_fmt(grid.get('sell_amount'), 2)}\n"
+            f"sell_percent      : {_fmt(grid.get('sell_percent'), 2)}\n"
+            f"order_scale       : {_fmt(grid.get('order_scale'), 2)}"
+        )
+
+        logger.info(
+            f"\n==================== 策略配置详情结束 ====================\n"
         )
 
     def get_runtime_config(self):

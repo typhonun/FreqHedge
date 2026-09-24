@@ -14,6 +14,32 @@ export function useCapital() {
     const shortWhitelist = ref("")
     const shortBlacklist = ref("")
 
+    // 加载时的原始快照，用于判断是否有改动
+    const longSnapshot = ref(null)
+    const shortSnapshot = ref(null)
+
+    const _normalizeList = (text) =>
+        String(text || "")
+            .split("\n")
+            .map(s => s.trim())
+            .filter(Boolean)
+
+    const _buildSnapshot = (config, whitelist, blacklist) => {
+        return JSON.stringify({
+            dry_run_wallet: config.dry_run_wallet ?? null,
+            stake_amount: config.stake_amount ?? null,
+            max_open_trades: config.max_open_trades ?? null,
+            max_usage: config.max_usage ?? null,
+            leverage: config.leverage ?? null,
+            imbalance_long_enable: config.imbalance_long_enable ?? null,
+            imbalance_long_count: config.imbalance_long_count ?? null,
+            imbalance_short_enable: config.imbalance_short_enable ?? null,
+            imbalance_short_count: config.imbalance_short_count ?? null,
+            pair_whitelist: _normalizeList(whitelist),
+            pair_blacklist: _normalizeList(blacklist),
+        })
+    }
+
     const loadConfig = async () => {
         const res = await axios.get(`${API}/control/config`)
 
@@ -27,7 +53,6 @@ export function useCapital() {
             max_usage: longData.max_usage,
             leverage: longData.leverage ?? 10,
 
-            // 只保留多头失衡字段
             imbalance_long_enable: longData.imbalance_long_enable ?? false,
             imbalance_long_count: longData.imbalance_long_count ?? 2,
         }
@@ -39,7 +64,6 @@ export function useCapital() {
             max_usage: shortData.max_usage,
             leverage: shortData.leverage ?? 10,
 
-            // 只保留空头失衡字段
             imbalance_short_enable: shortData.imbalance_short_enable ?? false,
             imbalance_short_count: shortData.imbalance_short_count ?? 2,
         }
@@ -49,13 +73,46 @@ export function useCapital() {
 
         shortWhitelist.value = (shortData.pair_whitelist || []).join("\n")
         shortBlacklist.value = (shortData.pair_blacklist || []).join("\n")
+
+        // 记录快照
+        longSnapshot.value = _buildSnapshot(
+            longConfig.value,
+            longWhitelist.value,
+            longBlacklist.value
+        )
+        shortSnapshot.value = _buildSnapshot(
+            shortConfig.value,
+            shortWhitelist.value,
+            shortBlacklist.value
+        )
+    }
+
+    /**
+     * 判断当前是否有改动
+     * @returns {boolean}
+     */
+    const hasChanges = (side) => {
+        const isLong = side === "long"
+        const config = isLong ? longConfig.value : shortConfig.value
+        const whitelist = isLong ? longWhitelist.value : shortWhitelist.value
+        const blacklist = isLong ? longBlacklist.value : shortBlacklist.value
+        const snapshot = isLong ? longSnapshot.value : shortSnapshot.value
+
+        if (!snapshot) return true  // 没快照，强制走保存
+
+        return _buildSnapshot(config, whitelist, blacklist) !== snapshot
     }
 
     const saveConfig = async (side) => {
         const isLong = side === "long"
+
+        // 无改动直接返回
+        if (!hasChanges(side)) {
+            return { changed: false }
+        }
+
         const config = isLong ? longConfig.value : shortConfig.value
 
-        // 只提交自己 side 的 imbalance 字段
         const imbalance = isLong
             ? {
                 imbalance_long_enable: config.imbalance_long_enable,
@@ -78,7 +135,24 @@ export function useCapital() {
                 .split("\n").filter(Boolean)
         }
 
-        return axios.post(`${API}/control/config`, payload)
+        const res = await axios.post(`${API}/control/config`, payload)
+
+        // 保存成功后刷新快照，避免重复提交
+        if (isLong) {
+            longSnapshot.value = _buildSnapshot(
+                longConfig.value,
+                longWhitelist.value,
+                longBlacklist.value
+            )
+        } else {
+            shortSnapshot.value = _buildSnapshot(
+                shortConfig.value,
+                shortWhitelist.value,
+                shortBlacklist.value
+            )
+        }
+
+        return { changed: true, data: res.data }
     }
 
     return {
@@ -89,6 +163,7 @@ export function useCapital() {
         shortWhitelist,
         shortBlacklist,
         loadConfig,
-        saveConfig
+        saveConfig,
+        hasChanges
     }
 }
