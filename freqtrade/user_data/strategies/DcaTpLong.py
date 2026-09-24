@@ -61,6 +61,10 @@ class DcaTpLong(IStrategy):
         pair_whitelist = exchange_cfg.get("pair_whitelist", []) or []
         pair_blacklist = exchange_cfg.get("pair_blacklist", []) or []
 
+        # ===== 失衡控制（多头侧） =====
+        imbalance_enable = ft_cfg.get("imbalance_long_enable", False)
+        imbalance_count = ft_cfg.get("imbalance_long_count", 2)
+
         logger.info(
             "\n"
             f"==================== 策略配置概览 ====================\n"
@@ -71,6 +75,8 @@ class DcaTpLong(IStrategy):
             f"持仓杠杆          : {leverage}x\n"
             f"白名单            : {', '.join(pair_whitelist) if pair_whitelist else '(空)'}\n"
             f"黑名单            : {', '.join(pair_blacklist) if pair_blacklist else '(空)'}\n"
+            f"------------------------------------------------------\n"
+            f"持仓差上限        : {'开启' if imbalance_enable else '关闭'}, 上限={imbalance_count}\n"
             f"======================================================"
         )
 
@@ -712,24 +718,25 @@ class DcaTpLong(IStrategy):
                 or entry_tag_str in ("manual", "manual_entry")
         )
 
-        # 手动开仓跳过失衡闸门
+        # 手动开仓跳过持仓差闸门
         if not is_manual:
-            state = self._get_direction_state()
-            if state:
-                if side == "long" and state.get("block_long"):
-                    logger.info(
-                        f"[{pair}] {YELLOW}多空失衡，暂停开多{RESET} "
-                        f"(多={state['long_count']}, 空={state['short_count']}, "
-                        f"diff={state['direction_diff']})"
-                    )
-                    return False
-                if side == "short" and state.get("block_short"):
-                    logger.info(
-                        f"[{pair}] {YELLOW}多空失衡，暂停开空{RESET} "
-                        f"(多={state['long_count']}, 空={state['short_count']}, "
-                        f"diff={state['direction_diff']})"
-                    )
-                    return False
+            imbalance_enable = self.config.get("imbalance_long_enable", False)
+            imbalance_count = self.config.get("imbalance_long_count", 2)
+
+            if imbalance_enable:
+                state = self._get_direction_state()
+                if state:
+                    long_count = int(state.get("long_count", 0) or 0)
+                    short_count = int(state.get("short_count", 0) or 0)
+                    direction_diff = long_count - short_count
+
+                    if direction_diff >= imbalance_count:
+                        logger.info(
+                            f"[{pair}] {YELLOW}持仓差超限，暂停开多{RESET} "
+                            f"(多={long_count}, 空={short_count}, "
+                            f"差={direction_diff}, 上限={imbalance_count})"
+                        )
+                        return False
 
         try:
             lev = float(self.leverage(pair) or 1.0)

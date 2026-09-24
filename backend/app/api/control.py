@@ -7,7 +7,8 @@ from pydantic import BaseModel
 from app.services.position_service import PositionService
 from app.services.risk_config_service import RiskConfigService
 from app.services.event_service import record_event
-
+from requests.exceptions import Timeout, ConnectionError
+import requests
 from datetime import datetime, timezone
 
 from app.services.freqtrade_client import FreqtradeClient
@@ -92,40 +93,7 @@ def get_config():
 
 @router.post("/config")
 def save_config(data: dict):
-    result = ConfigService.save_config(data)
-
-    side = data.get("side")
-
-    if side == "long":
-        imbalance_keys = [
-            "imbalance_long_enable",
-            "imbalance_long_count",
-        ]
-    elif side == "short":
-        imbalance_keys = [
-            "imbalance_short_enable",
-            "imbalance_short_count",
-        ]
-    else:
-        imbalance_keys = []
-
-    updated = False
-    for key in imbalance_keys:
-        if key in data:
-            runtime.GLOBAL_RISK[key] = data[key]
-            updated = True
-
-    if updated:
-        RiskConfigService.save(runtime.GLOBAL_RISK)
-        print(
-            f"[control] 失衡控制已同步 side={side}: "
-            f"long=(enable={runtime.GLOBAL_RISK.get('imbalance_long_enable')}, "
-            f"count={runtime.GLOBAL_RISK.get('imbalance_long_count')}), "
-            f"short=(enable={runtime.GLOBAL_RISK.get('imbalance_short_enable')}, "
-            f"count={runtime.GLOBAL_RISK.get('imbalance_short_count')})"
-        )
-
-    return result
+    return ConfigService.save_config(data)
 
 
 @router.get("/available_pairs/{side}")
@@ -136,28 +104,52 @@ def available_pairs(side: str):
 
 
 @router.post("/force_enter")
-def force_enter(
-        data: ForceEnterRequest
-):
-    result = PositionService.force_enter(
-        side=data.side,
-        pair=data.pair,
-        stakeamount=data.stakeamount
-    )
-
+def force_enter(data: ForceEnterRequest):
     try:
+        result = PositionService.force_enter(
+            side=data.side,
+            pair=data.pair,
+            stakeamount=data.stakeamount
+        )
+    except Timeout:
+        return {
+            "success": False,
+            "rejected": False,
+            "reason": "Freqtrade 响应超时，可能网络或交易所不可用",
+            "message": "开仓超时，请检查网络后重试",
+        }
+    except ConnectionError:
+        return {
+            "success": False,
+            "rejected": False,
+            "reason": "无法连接 Freqtrade",
+            "message": "Freqtrade 离线，请先启动机器人",
+        }
+    except requests.exceptions.HTTPError as e:
+        err_msg = str(e)
+        return {
+            "success": False,
+            "rejected": True,
+            "reason": err_msg,
+            "message": f"开仓被拒绝: {err_msg}",
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "rejected": False,
+            "reason": str(e),
+            "message": f"开仓异常: {e}",
+        }
 
+    # ===== 成功，记录事件 =====
+    try:
         strategy = (
             "DcaTpLong"
             if data.side == "long"
-            else
-            "DcaTpShort"
+            else "DcaTpShort"
         )
 
-        from config.settings import (
-            LONG_URL,
-            SHORT_URL
-        )
+        from config.settings import LONG_URL, SHORT_URL
 
         url = (
             LONG_URL
@@ -165,55 +157,47 @@ def force_enter(
             else SHORT_URL
         )
 
-        trades = FreqtradeClient.get_status(
-            url
-        )
+        trade = None
 
-        trade = next(
-            (
-                t
-                for t in trades
-                if t["pair"] == data.pair
-            ),
-            None
-        )
+        try:
+            trades = FreqtradeClient.get_status(url)
+
+            if isinstance(trades, dict):
+                trades = trades.get("trades", []) or []
+            elif not isinstance(trades, list):
+                trades = []
+
+            trade = next(
+                (
+                    t
+                    for t in trades
+                    if isinstance(t, dict) and t.get("pair") == data.pair
+                ),
+                None
+            )
+        except Exception as e:
+            print(f"[force_enter] 查询 trade 失败: {e}")
 
         record_event(
-
             strategy=strategy,
-
             pair=data.pair,
-
-            trade_id=
-            trade["trade_id"]
-            if trade else 0,
-
+            trade_id=trade.get("trade_id", 0) if trade else 0,
             event_type="manual_entry",
-
             side=data.side,
-
-            price=
-            trade["open_rate"]
-            if trade else None,
-
+            price=trade.get("open_rate") if trade else None,
             amount=data.stakeamount,
-
             message="手动开仓",
-
-            current_time=datetime.now(
-                timezone.utc
-            )
+            current_time=datetime.now(timezone.utc)
         )
-
 
     except Exception as e:
+        print("manual entry event error:", e)
 
-        print(
-            "manual entry event error:",
-            e
-        )
-
-    return result
+    return {
+        "success": True,
+        "rejected": False,
+        "result": result,
+    }
 
 
 @router.post("/close_all")

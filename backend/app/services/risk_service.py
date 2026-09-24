@@ -47,8 +47,23 @@ class RiskService:
     @classmethod
     def calc_round_profit(cls):
 
+        # ===== 只取一次 snapshot =====
+        snapshot = PositionService.get_snapshot()
+
+        # ===== 从同一份 snapshot 派生 =====
+        long_positions = PositionService._extract_trades(snapshot["long_status"])
+        short_positions = PositionService._extract_trades(snapshot["short_status"])
+        long_trades = PositionService._extract_trades(snapshot["long_trades"])
+        short_trades = PositionService._extract_trades(snapshot["short_trades"])
+
         try:
-            closed = PositionService.get_closed_profit_summary()
+            closed = PositionService.get_closed_profit_summary(
+                snapshot,
+                long_trades=long_trades,
+                short_trades=short_trades,
+                long_status=long_positions,
+                short_status=short_positions,
+            )
         except Exception as e:
             print(f"[Risk] get_closed_profit_summary 失败: {e}")
             closed = {
@@ -58,7 +73,11 @@ class RiskService:
             }
 
         try:
-            floating = PositionService.get_floating_profit()
+            floating = PositionService.get_floating_profit(
+                snapshot,
+                long_positions=long_positions,
+                short_positions=short_positions,
+            )
         except Exception as e:
             print(f"[Risk] get_floating_profit 失败: {e}")
             floating = {
@@ -67,6 +86,7 @@ class RiskService:
                 "total_float": 0.0
             }
 
+        # ===== 下面保持不变 =====
         start_long_closed = runtime.ROUND_INFO.get("start_long_closed") or 0.0
         start_short_closed = runtime.ROUND_INFO.get("start_short_closed") or 0.0
         start_balance = runtime.ROUND_INFO.get("start_balance") or 0.0
@@ -116,7 +136,7 @@ class RiskService:
 
     @classmethod
     def calc_direction_imbalance(cls):
-        """计算多空失衡状态（数量差），写入 runtime.ROUND_INFO"""
+        """只计算多空持仓数，写入 runtime.ROUND_INFO"""
 
         try:
             positions = PositionService.get_all_positions()
@@ -133,29 +153,8 @@ class RiskService:
             if str(p.get("side", "")).upper() == "SHORT"
         )
 
-        risk = runtime.GLOBAL_RISK
-
-        # ---------- 多头侧 ----------
-        long_enable = bool(risk.get("imbalance_long_enable", False))
-        block_long = False
-        if long_enable:
-            threshold = int(risk.get("imbalance_long_count", 2) or 2)
-            if long_count - short_count >= threshold:
-                block_long = True
-
-        # ---------- 空头侧 ----------
-        short_enable = bool(risk.get("imbalance_short_enable", False))
-        block_short = False
-        if short_enable:
-            threshold = int(risk.get("imbalance_short_count", 2) or 2)
-            if short_count - long_count >= threshold:
-                block_short = True
-
         runtime.ROUND_INFO["long_count"] = long_count
         runtime.ROUND_INFO["short_count"] = short_count
-        runtime.ROUND_INFO["direction_diff"] = long_count - short_count
-        runtime.ROUND_INFO["block_long"] = block_long
-        runtime.ROUND_INFO["block_short"] = block_short
 
     @classmethod
     def force_exit_all(cls, reason: str = None):

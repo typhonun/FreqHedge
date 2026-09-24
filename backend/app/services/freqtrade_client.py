@@ -44,7 +44,7 @@ class FreqtradeClient:
             f"{base_url}{endpoint}",
             json=payload,
             auth=cls.AUTH,
-            timeout=10
+            timeout=30
         )
 
         r.raise_for_status()

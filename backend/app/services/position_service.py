@@ -698,23 +698,33 @@ class PositionService:
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
+        # ===== 只 extract 一次，后续全部复用 =====
         long_positions = PositionService._extract_trades(snapshot["long_status"])
         short_positions = PositionService._extract_trades(snapshot["short_status"])
 
+        long_trades = PositionService._extract_trades(snapshot["long_trades"])
+        short_trades = PositionService._extract_trades(snapshot["short_trades"])
+
+        # ===== 浮盈：从同一份 status 算 =====
         long_float = sum(
             float(trade.get("profit_abs", 0) or 0)
             for trade in long_positions
         )
-
         short_float = sum(
             float(trade.get("profit_abs", 0) or 0)
             for trade in short_positions
         )
 
-        # 当前历史全部已平仓
-        closed = PositionService.get_closed_profit_summary(snapshot)
+        # ===== 已关闭：传入已解析的 trades/status，避免重复 extract =====
+        closed = PositionService.get_closed_profit_summary(
+            snapshot,
+            long_trades=long_trades,
+            short_trades=short_trades,
+            long_status=long_positions,
+            short_status=short_positions,
+        )
 
-        # 本轮开始时已平仓（重启后 ROUND_INFO 可能是 None，兜底 0）
+        # ===== 本轮基准 =====
         start_long_closed = runtime.ROUND_INFO.get("start_long_closed")
         start_short_closed = runtime.ROUND_INFO.get("start_short_closed")
 
@@ -723,16 +733,14 @@ class PositionService:
         if start_short_closed is None:
             start_short_closed = closed["short_closed_profit"]
 
-        # 本轮已平仓 = 当前 - 本轮基准
         long_closed_round = closed["long_closed_profit"] - start_long_closed
         short_closed_round = closed["short_closed_profit"] - start_short_closed
 
-        # 本轮累计 = 浮盈 + 本轮已平仓
+        # ===== 本轮累计 =====
         long_round = long_float + long_closed_round
         short_round = short_float + short_closed_round
         total_round = long_round + short_round
 
-        # 本轮开始总资金（方案 A 分母）
         start_balance = runtime.ROUND_INFO.get("start_balance") or 0.0
 
         if start_balance:
@@ -744,33 +752,28 @@ class PositionService:
             long_ratio = 0.0
             short_ratio = 0.0
 
+        # ===== 返回 =====
         return {
-            # 本轮累计
             "long_profit": round(long_round, 2),
             "short_profit": round(short_round, 2),
             "total_profit": round(total_round, 2),
 
-            # 浮盈
             "long_float": round(long_float, 2),
             "short_float": round(short_float, 2),
 
-            # 本轮已平仓
             "long_closed": round(long_closed_round, 2),
             "short_closed": round(short_closed_round, 2),
 
-            # 本轮收益率
             "round_ratio": round(round_ratio, 2),
             "long_ratio": round(long_ratio, 2),
             "short_ratio": round(short_ratio, 2),
 
-            # 持仓数量（前端控制显隐）
             "position_count": {
                 "long": len(long_positions),
                 "short": len(short_positions),
                 "total": len(long_positions) + len(short_positions),
             },
 
-            # 新增
             "global_tp_count": runtime.ROUND_INFO.get("global_tp_count", 0),
             "global_sl_count": runtime.ROUND_INFO.get("global_sl_count", 0),
         }
@@ -780,20 +783,24 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_floating_profit(snapshot=None):
-
+    def get_floating_profit(
+            snapshot=None,
+            long_positions=None,
+            short_positions=None,
+    ):
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
-        long_positions = PositionService._extract_trades(snapshot["long_status"])
-        short_positions = PositionService._extract_trades(snapshot["short_status"])
+        if long_positions is None:
+            long_positions = PositionService._extract_trades(snapshot["long_status"])
+        if short_positions is None:
+            short_positions = PositionService._extract_trades(snapshot["short_status"])
 
         long_float = 0.0
         short_float = 0.0
 
         for trade in long_positions:
             profit = trade.get("profit_abs")
-
             if profit is None:
                 try:
                     open_rate = float(trade.get("open_rate", 0) or 0)
@@ -802,12 +809,10 @@ class PositionService:
                     profit = (current_rate - open_rate) * amount
                 except Exception:
                     profit = 0.0
-
             long_float += float(profit or 0)
 
         for trade in short_positions:
             profit = trade.get("profit_abs")
-
             if profit is None:
                 try:
                     open_rate = float(trade.get("open_rate", 0) or 0)
@@ -816,7 +821,6 @@ class PositionService:
                     profit = (open_rate - current_rate) * amount
                 except Exception:
                     profit = 0.0
-
             short_float += float(profit or 0)
 
         return {
@@ -866,18 +870,32 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_closed_profit_summary(snapshot=None):
+    def get_closed_profit_summary(
+            snapshot=None,
+            long_trades=None,
+            short_trades=None,
+            long_status=None,
+            short_status=None,
+    ):
+        """计算已关闭利润
 
+        支持两种用法：
+        1. 只传 snapshot：内部自己 extract（旧行为，兼容）
+        2. 传已解析的 trades/status：避免重复 extract，保证数据源一致
+        """
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
-        long_trades = PositionService._extract_trades(snapshot["long_trades"])
-        short_trades = PositionService._extract_trades(snapshot["short_trades"])
+        if long_trades is None:
+            long_trades = PositionService._extract_trades(snapshot["long_trades"])
+        if short_trades is None:
+            short_trades = PositionService._extract_trades(snapshot["short_trades"])
+        if long_status is None:
+            long_status = PositionService._extract_trades(snapshot["long_status"])
+        if short_status is None:
+            short_status = PositionService._extract_trades(snapshot["short_status"])
 
-        long_status = PositionService._extract_trades(snapshot["long_status"])
-        short_status = PositionService._extract_trades(snapshot["short_status"])
-
-        # 用 status 的 realized_profit（当前持仓，包括部分平仓）
+        # 下面保持不变
         long_open_realized = sum(
             float(t.get("realized_profit", 0) or 0)
             for t in long_status
@@ -887,7 +905,6 @@ class PositionService:
             for t in short_status
         )
 
-        # 用 trades 的 close_profit_abs（完全平仓）
         long_closed = sum(
             float(t.get("close_profit_abs", 0) or 0)
             for t in long_trades
@@ -931,57 +948,42 @@ class PositionService:
         if snapshot is None:
             snapshot = PositionService.get_snapshot()
 
-        current_profit = (
-            PositionService.get_profit_summary(
-                snapshot
-            )
+        long_positions = PositionService._extract_trades(snapshot["long_status"])
+        short_positions = PositionService._extract_trades(snapshot["short_status"])
+        long_trades = PositionService._extract_trades(snapshot["long_trades"])
+        short_trades = PositionService._extract_trades(snapshot["short_trades"])
+
+        current_profit = PositionService.get_profit_summary(snapshot)
+
+        closed_profit = PositionService.get_closed_profit_summary(
+            snapshot,
+            long_trades=long_trades,
+            short_trades=short_trades,
+            long_status=long_positions,
+            short_status=short_positions,
         )
 
-        closed_profit = (
-            PositionService.get_closed_profit_summary(
-                snapshot
-            )
-        )
-
+        # ===== 累计总收益 = 当前浮盈 + 历史全部已平仓 =====
         long_total = (
-                current_profit["long_profit"]
-                +
-                closed_profit["long_closed_profit"]
+                current_profit["long_float"]
+                + closed_profit["long_closed_profit"]
         )
 
         short_total = (
-                current_profit["short_profit"]
-                +
-                closed_profit["short_closed_profit"]
+                current_profit["short_float"]
+                + closed_profit["short_closed_profit"]
         )
 
         return {
+            "long_total_profit": round(long_total, 2),
+            "short_total_profit": round(short_total, 2),
+            "total_profit": round(long_total + short_total, 2),
 
-            "long_total_profit":
-                round(long_total, 2),
+            "long_float": current_profit["long_float"],
+            "short_float": current_profit["short_float"],
 
-            "short_total_profit":
-                round(short_total, 2),
-
-            "total_profit":
-                round(
-                    long_total
-                    +
-                    short_total,
-                    2
-                ),
-
-            "long_float":
-                current_profit["long_profit"],
-
-            "short_float":
-                current_profit["short_profit"],
-
-            "long_closed":
-                closed_profit["long_closed_profit"],
-
-            "short_closed":
-                closed_profit["short_closed_profit"]
+            "long_closed": closed_profit["long_closed_profit"],
+            "short_closed": closed_profit["short_closed_profit"]
         }
 
     @staticmethod

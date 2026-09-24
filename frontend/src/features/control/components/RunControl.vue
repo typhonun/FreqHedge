@@ -263,7 +263,7 @@
             <el-input-number
               v-if="globalSlMode === 'amount'"
               v-model="globalSlAmount"
-              :min="5"
+              :min="0"
               :step="1"
               @change="saveRiskConfig"
             />

@@ -153,7 +153,7 @@ onMounted(()=>{
         loadStatus()
 
 
-    },3000)
+    },5000)
 
 
 })

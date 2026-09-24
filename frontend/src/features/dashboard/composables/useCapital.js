@@ -21,19 +21,27 @@ export function useCapital() {
         const shortData = res.data.short || {}
 
         longConfig.value = {
-            leverage: 10,
-            // 多头失衡控制默认值
-            imbalance_long_enable: false,
-            imbalance_long_count: 2,
-            ...longData
+            dry_run_wallet: longData.dry_run_wallet,
+            stake_amount: longData.stake_amount,
+            max_open_trades: longData.max_open_trades,
+            max_usage: longData.max_usage,
+            leverage: longData.leverage ?? 10,
+
+            // 只保留多头失衡字段
+            imbalance_long_enable: longData.imbalance_long_enable ?? false,
+            imbalance_long_count: longData.imbalance_long_count ?? 2,
         }
 
         shortConfig.value = {
-            leverage: 10,
-            // 空头失衡控制默认值
-            imbalance_short_enable: false,
-            imbalance_short_count: 2,
-            ...shortData
+            dry_run_wallet: shortData.dry_run_wallet,
+            stake_amount: shortData.stake_amount,
+            max_open_trades: shortData.max_open_trades,
+            max_usage: shortData.max_usage,
+            leverage: shortData.leverage ?? 10,
+
+            // 只保留空头失衡字段
+            imbalance_short_enable: shortData.imbalance_short_enable ?? false,
+            imbalance_short_count: shortData.imbalance_short_count ?? 2,
         }
 
         longWhitelist.value = (longData.pair_whitelist || []).join("\n")
@@ -45,10 +53,23 @@ export function useCapital() {
 
     const saveConfig = async (side) => {
         const isLong = side === "long"
+        const config = isLong ? longConfig.value : shortConfig.value
+
+        // 只提交自己 side 的 imbalance 字段
+        const imbalance = isLong
+            ? {
+                imbalance_long_enable: config.imbalance_long_enable,
+                imbalance_long_count: config.imbalance_long_count,
+            }
+            : {
+                imbalance_short_enable: config.imbalance_short_enable,
+                imbalance_short_count: config.imbalance_short_count,
+            }
 
         const payload = {
             side,
-            ...(isLong ? longConfig.value : shortConfig.value),
+            ...config,
+            ...imbalance,
 
             pair_whitelist: (isLong ? longWhitelist.value : shortWhitelist.value)
                 .split("\n").filter(Boolean),

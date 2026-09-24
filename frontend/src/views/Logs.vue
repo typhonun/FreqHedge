@@ -193,7 +193,7 @@ const searchFocus = (e) => {
 onMounted(() => {
   load()
   window.addEventListener("keydown", searchFocus)
-  timer.value = setInterval(load, 3000)
+  timer.value = setInterval(load, 5000)
 })
 
 onUnmounted(() => {

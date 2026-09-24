@@ -46,19 +46,6 @@
                 <el-row :gutter="20">
 
                     <el-col :span="12">
-                        <el-form-item label="最大持仓">
-                            <el-input-number
-                                v-model="longConfig.max_open_trades"
-                                style="width:100%"
-                                :min="1"
-                                :max="50"
-                                :step="1"
-                                :precision="0"
-                            />
-                        </el-form-item>
-                    </el-col>
-
-                    <el-col :span="12">
                         <el-form-item label="资金利用率">
                             <el-input-number
                                 v-model="longConfig.max_usage"
@@ -84,14 +71,28 @@
                         </el-form-item>
                     </el-col>
 
+                    <el-col :span="12">
+                        <el-form-item label="最大持仓">
+                            <el-input-number
+                                v-model="longConfig.max_open_trades"
+                                style="width:100%"
+                                :min="1"
+                                :max="50"
+                                :step="1"
+                                :precision="0"
+                            />
+                        </el-form-item>
+                    </el-col>
+
+
                     <el-divider content-position="left">多空失衡控制</el-divider>
 
-                    <el-form-item label="启用失衡闸门">
+                    <el-form-item label="启用持仓差限制">
                         <el-switch v-model="longConfig.imbalance_long_enable" />
                     </el-form-item>
 
                     <el-form-item
-                        label="数量差阈值"
+                        label="持仓差上限"
                         v-if="longConfig.imbalance_long_enable"
                     >
                         <el-input-number
@@ -102,7 +103,7 @@
                             :step="1"
                             :precision="0"
                         />
-                        <div class="form-tip">多单 - 空单 ≥ 该值时，暂停开多</div>
+                        <div class="form-tip">多单比空单多 {{ longConfig.imbalance_long_count }} 个时，暂停开多</div>
                     </el-form-item>
 
                 </el-row>
@@ -186,19 +187,6 @@
                 <el-row :gutter="20">
 
                     <el-col :span="12">
-                        <el-form-item label="最大持仓">
-                            <el-input-number
-                                v-model="shortConfig.max_open_trades"
-                                style="width:100%"
-                                :min="1"
-                                :max="50"
-                                :step="1"
-                                :precision="0"
-                            />
-                        </el-form-item>
-                    </el-col>
-
-                    <el-col :span="12">
                         <el-form-item label="资金利用率">
                             <el-input-number
                                 v-model="shortConfig.max_usage"
@@ -224,14 +212,28 @@
                         </el-form-item>
                     </el-col>
 
+                    <el-col :span="12">
+                        <el-form-item label="最大持仓">
+                            <el-input-number
+                                v-model="shortConfig.max_open_trades"
+                                style="width:100%"
+                                :min="1"
+                                :max="50"
+                                :step="1"
+                                :precision="0"
+                            />
+                        </el-form-item>
+                    </el-col>
+
+
                     <el-divider content-position="left">多空失衡控制</el-divider>
 
-                    <el-form-item label="启用失衡闸门">
+                    <el-form-item label="启用持仓差限制">
                         <el-switch v-model="shortConfig.imbalance_short_enable" />
                     </el-form-item>
 
                     <el-form-item
-                        label="数量差阈值"
+                        label="持仓差上限"
                         v-if="shortConfig.imbalance_short_enable"
                     >
                         <el-input-number
@@ -242,7 +244,7 @@
                             :step="1"
                             :precision="0"
                         />
-                        <div class="form-tip">空单 - 多单 ≥ 该值时，暂停开空</div>
+                        <div class="form-tip">空单比多单多 {{ shortConfig.imbalance_short_count }} 个时，暂停开空</div>
                     </el-form-item>
 
                 </el-row>
