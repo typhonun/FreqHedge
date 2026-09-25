@@ -2,6 +2,9 @@ import json
 from app.db import get_conn
 from app.core.config_manager import ConfigManager
 
+from app.services.freqtrade_client import FreqtradeClient
+from config.settings import LONG_URL, SHORT_URL
+
 
 class StrategyService:
 
@@ -81,9 +84,26 @@ class StrategyService:
         conn.commit()
         conn.close()
 
+        # 内存配置刷新
         ConfigManager.force_reload(side)
+
+        # ===== 热重载 Freqtrade =====
+        reload_ok = False
+        reload_err = None
+
+        try:
+            if side == "long":
+                FreqtradeClient.send_command(LONG_URL, "reload_config")
+            elif side == "short":
+                FreqtradeClient.send_command(SHORT_URL, "reload_config")
+            reload_ok = True
+        except Exception as e:
+            reload_err = str(e)
+            print(f"[strategy save] reload_config failed: {e}")
 
         return {
             "success": True,
-            "side": side
+            "side": side,
+            "reload_ok": reload_ok,
+            "reload_err": reload_err,
         }

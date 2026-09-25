@@ -61,15 +61,23 @@ const saveLong = async () => {
     try {
         const res = await saveConfig("long", longConfig.value)
 
-        if (res.error) return   // 校验失败，saveConfig 内已提示
+        if (res.error) return
 
         if (res.changed) {
-            ElMessage.success("正在重新加载...")
+            const reloadOk = res?.data?.data?.reload_ok
+            if (reloadOk === false) {
+                const err = res?.data?.data?.reload_err
+                ElMessage.warning(
+                    "策略已保存，但热重载失败" + (err ? `：${err}` : "，请检查机器人状态")
+                )
+            } else {
+                ElMessage.success("策略已保存并重载")
+            }
             await loadConfig()
         } else {
-            ElMessage.info("已保存")
+            ElMessage.info("策略无变更")
         }
-    } catch (e) {
+    } catch {
         ElMessage.error("多头策略保存失败")
     }
 }
@@ -81,12 +89,20 @@ const saveShort = async () => {
         if (res.error) return
 
         if (res.changed) {
-            ElMessage.success("，正在重新加载...")
+            const reloadOk = res?.data?.data?.reload_ok
+            if (reloadOk === false) {
+                const err = res?.data?.data?.reload_err
+                ElMessage.warning(
+                    "策略已保存，但热重载失败" + (err ? `：${err}` : "，请检查机器人状态")
+                )
+            } else {
+                ElMessage.success("策略已保存并重载")
+            }
             await loadConfig()
         } else {
-            ElMessage.info("已保存")
+            ElMessage.info("策略无变更")
         }
-    } catch (e) {
+    } catch {
         ElMessage.error("空头策略保存失败")
     }
 }

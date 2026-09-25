@@ -4,64 +4,63 @@
          运行模式
     ====================== -->
     <div class="panel-grid">
-      <el-card class="inner-card">
-        <template #header>
-          <div class="card-title">
-            🚀 运行模式
-          </div>
-        </template>
+        <el-card class="inner-card">
+          <template #header>
+            <div class="card-title">
+              🚀 运行模式
+            </div>
+          </template>
 
-        <div class="action-row">
-          <el-button
-            type="primary"
-            size="large"
-            @click="confirmStart"
-          >
-            ▶ 启动机器人
-          </el-button>
+          <div class="switch-grid">
+            <div class="switch-item">
+              <span>📈 多头交易</span>
 
-          <el-button
-            type="danger"
-            size="large"
-            @click="confirmStop"
-          >
-            ■ 停止机器人
-          </el-button>
+              <el-button
+                :type="longRunning ? 'warning' : 'success'"
+                size="default"
+                @click="toggleSide('long')"
+              >
+                <el-icon style="margin-right: 4px;">
+                  <VideoPause v-if="longRunning" />
+                  <VideoPlay v-else />
+                </el-icon>
+                {{ longRunning ? "停止" : "启动" }}
+              </el-button>
+            </div>
 
-          <el-button
-            type="success"
-            size="large"
-            @click="confirmReload"
-          >
-            ↻ 重载配置
-          </el-button>
+            <div class="switch-item">
+              <span>📉 空头交易</span>
 
-          <el-button
-            type="warning"
-            size="large"
-            @click="confirmDeleteTrade"
-          >
-            🗑 删除数据库
-          </el-button>
-        </div>
+              <el-button
+                :type="shortRunning ? 'warning' : 'success'"
+                size="default"
+                @click="toggleSide('short')"
+              >
+                <el-icon style="margin-right: 4px;">
+                  <VideoPause v-if="shortRunning" />
+                  <VideoPlay v-else />
+                </el-icon>
+                {{ shortRunning ? "停止" : "启动" }}
+              </el-button>
+            </div>
 
-        <div class="switch-grid">
-          <div class="switch-item">
-            <span>📈 多头交易</span>
-            <el-switch v-model="enableLong" />
-          </div>
-
-          <div class="switch-item">
-            <span>📉 空头交易</span>
-            <el-switch v-model="enableShort" />
+            <div class="switch-item">
+              <span>🧪 Dry Run</span>
+              <el-switch v-model="dryRun" />
+            </div>
           </div>
 
-          <div class="switch-item">
-            <span>🧪 Dry Run</span>
-            <el-switch v-model="dryRun" />
+          <!-- 只留删除数据库 -->
+          <div class="action-row">
+            <el-button
+              type="warning"
+              size="large"
+              @click="confirmDeleteTrade"
+            >
+              🗑 删除数据库
+            </el-button>
           </div>
-        </div>
-      </el-card>
+        </el-card>
 
       <!-- ======================
             手动交易
@@ -350,28 +349,31 @@
 </template>
 
 <script setup>
-import { useRunControl } from '@features/control/composables/useRunControl.js'
 import { onMounted } from "vue"
+import { VideoPlay, VideoPause } from "@element-plus/icons-vue"
+import { useRunControl } from '@features/control/composables/useRunControl.js'
 
 const {
-  enableLong,
-  enableShort,
   dryRun,
-  stopLongEntry,
-  stopShortEntry,
-  confirmStart,
-  confirmStop,
-  confirmReload,
+
+  longRunning,
+  shortRunning,
+  toggleSide,
+  loadRunningStatus,
+
   confirmDeleteTrade,
+
   openForceEnter,
   confirmCloseAll,
   updateStopEntry,
+
   forceEnterVisible,
   pairList,
   selectedPair,
   stakeAmount,
   submitForceEnter,
   loadStopEntryStatus,
+
   globalTpEnabled,
   globalSlEnabled,
   globalTpAmount,
@@ -391,6 +393,7 @@ const {
 } = useRunControl()
 
 onMounted(async () => {
+  await loadRunningStatus()
   await loadStopEntryStatus()
   await loadRiskConfig()
 })

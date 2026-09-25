@@ -6,8 +6,6 @@ const API = "http://localhost:9000"
 
 export function useRunControl() {
 
-    const enableLong = ref(true)
-    const enableShort = ref(true)
     const dryRun = ref(false)
 
     const forceEnterVisible = ref(false)
@@ -62,31 +60,66 @@ export function useRunControl() {
     const post = (url, data = {}) =>
         axios.post(`${API}${url}`, data)
 
-    const confirmStart = async () => {
+    // ========== 多空运行状态 ==========
+    const longRunning = ref(false)
+    const shortRunning = ref(false)
+
+    // 从后端拉真实状态
+    const loadRunningStatus = async () => {
         try {
-            await ElMessageBox.confirm("确认启动策略？", "启动确认")
-
-            await post("/control/start", {
-                long: enableLong.value,
-                short: enableShort.value,
-                dry_run: dryRun.value
-            })
-
-            ElMessage.success("已启动")
-        } catch {}
+            const { data } = await axios.get(`${API}/control/status`)
+            longRunning.value = data.long === "RUNNING"
+            shortRunning.value = data.short === "RUNNING"
+        } catch (e) {
+            console.error("loadRunningStatus failed:", e)
+        }
     }
 
-    const confirmStop = async () => {
+    // 单 side 启停
+    const toggleSide = async (side) => {
+        const isLong = side === "long"
+        const runningRef = isLong ? longRunning : shortRunning
+
+        const nextRunning = !runningRef.value
+        const actionName = nextRunning ? "启动" : "停止"
+        const sideName = isLong ? "多头" : "空头"
+
         try {
-            await ElMessageBox.confirm("确认停止策略？", "停止确认")
+            await ElMessageBox.confirm(
+                `确认${actionName}${sideName}交易？`,
+                `${actionName}确认`
+            )
+        } catch {
+            return  // 用户取消
+        }
 
-            await post("/control/stop", {
-                long: enableLong.value,
-                short: enableShort.value
-            })
+        try {
+            if (nextRunning) {
+                // 只启动这一侧；另一侧保持原状
+                const otherRunning = isLong
+                    ? shortRunning.value
+                    : longRunning.value
 
-            ElMessage.success("已停止")
-        } catch {}
+                await post("/control/start", {
+                    long: isLong ? true : otherRunning,
+                    short: isLong ? otherRunning : true,
+                    dry_run: dryRun.value
+                })
+            } else {
+                await post("/control/stop", {
+                    long: isLong,
+                    short: !isLong
+                })
+            }
+
+            // 重新从后端同步（比本地猜测更可靠）
+            await loadRunningStatus()
+
+            ElMessage.success(`${sideName}已${actionName}`)
+        } catch (e) {
+            ElMessage.error(`${sideName}${actionName}失败`)
+            await loadRunningStatus()
+        }
     }
 
     const stopEntryLoading = ref(false)
@@ -496,16 +529,15 @@ export function useRunControl() {
 
     return {
 
-        enableLong,
-        enableShort,
         dryRun,
+
+        longRunning,
+        shortRunning,
+        toggleSide,
+        loadRunningStatus,
 
         stopLongEntry,
         stopShortEntry,
-
-        confirmStart,
-        confirmStop,
-        confirmReload,
 
         confirmCloseAll,
 

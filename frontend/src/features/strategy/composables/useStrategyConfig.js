@@ -1,6 +1,5 @@
 import axios from "axios"
 import {ref, computed} from "vue"
-import merge from "lodash.merge"
 import { ElMessage } from "element-plus"
 
 const API = "http://localhost:9000"
@@ -23,6 +22,40 @@ const roiLevels = [
     { minutes: 20, roi: 28 },
     { minutes: 0, roi: 30 }
 ]
+
+const isPlainObject = (v) =>
+    v !== null && typeof v === "object" && !Array.isArray(v)
+
+/**
+ * 深合并 default 与 incoming。
+ * 规则：
+ *  - incoming 中的数组 → 整体替换 default
+ *  - incoming 中的对象 → 递归合并
+ *  - incoming 中的原始值 → 覆盖 default
+ *  - incoming 中不存在的 key → 保留 default
+ */
+const mergeConfig = (defaults, incoming) => {
+    if (!isPlainObject(defaults) || !isPlainObject(incoming)) {
+        return incoming === undefined ? defaults : incoming
+    }
+
+    const result = { ...defaults }
+
+    for (const key of Object.keys(incoming)) {
+        const dv = defaults[key]
+        const iv = incoming[key]
+
+        if (Array.isArray(iv)) {
+            result[key] = iv
+        } else if (isPlainObject(dv) && isPlainObject(iv)) {
+            result[key] = mergeConfig(dv, iv)
+        } else {
+            result[key] = iv
+        }
+    }
+
+    return result
+}
 
 const buildTradeInfo = (side, config) => {
 
@@ -666,7 +699,7 @@ const loadConfig = async () => {
     longConfig.value = normalizeEntry(
         normalizeAmountMode(
             normalizeDca(
-                merge(defaultLongConfig(), res.data.long)
+                mergeConfig(defaultLongConfig(), res.data.long)
             )
         )
     )
@@ -674,7 +707,7 @@ const loadConfig = async () => {
     shortConfig.value = normalizeEntry(
         normalizeAmountMode(
             normalizeDca(
-                merge(defaultShortConfig(), res.data.short)
+                mergeConfig(defaultShortConfig(), res.data.short)
             )
         )
     )
