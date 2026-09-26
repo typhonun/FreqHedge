@@ -25,6 +25,17 @@ class ProcessService:
 
         return False
 
+    @staticmethod
+    def _port_of(url):
+        """
+        从 http://127.0.0.1:8011 里解析出 8011
+        """
+        try:
+            from urllib.parse import urlparse
+            return urlparse(url).port
+        except Exception:
+            return None
+
     @classmethod
     def start_freqtrade(cls):
         BASE_DIR = Path(FREQTRADE_DIR)
@@ -34,10 +45,27 @@ class ProcessService:
             exist_ok=True
         )
 
+        # ================= LONG =================
         if not FreqtradeClient.is_freqtrade_alive(LONG_URL):
 
             if runtime.LONG_PROCESS is None or \
                     runtime.LONG_PROCESS.poll() is not None:
+
+                # ★ 起新进程前先清端口，避免"API 挂 + 进程对象丢失"起出多个
+                long_port = cls._port_of(LONG_URL)
+                old_pids = cls.get_port_pids(long_port)
+
+                if old_pids:
+                    print(
+                        f"[start_freqtrade] LONG 端口 {long_port} "
+                        f"被占用，先清理: {old_pids}"
+                    )
+                    for pid in old_pids:
+                        cls.terminate_pid(pid, "LONG")
+
+                    # 给系统一点时间释放端口
+                    time.sleep(1)
+
                 runtime.LONG_PROCESS = subprocess.Popen(
                     [
                         sys.executable,
@@ -60,10 +88,25 @@ class ProcessService:
                     runtime.LONG_PROCESS.pid
                 )
 
+        # ================= SHORT =================
         if not FreqtradeClient.is_freqtrade_alive(SHORT_URL):
 
             if runtime.SHORT_PROCESS is None or \
                     runtime.SHORT_PROCESS.poll() is not None:
+
+                short_port = cls._port_of(SHORT_URL)
+                old_pids = cls.get_port_pids(short_port)
+
+                if old_pids:
+                    print(
+                        f"[start_freqtrade] SHORT 端口 {short_port} "
+                        f"被占用，先清理: {old_pids}"
+                    )
+                    for pid in old_pids:
+                        cls.terminate_pid(pid, "SHORT")
+
+                    time.sleep(1)
+
                 runtime.SHORT_PROCESS = subprocess.Popen(
                     [
                         sys.executable,

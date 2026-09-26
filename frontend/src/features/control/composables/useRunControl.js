@@ -64,14 +64,27 @@ export function useRunControl() {
     const longRunning = ref(false)
     const shortRunning = ref(false)
 
+    const longAlive = ref(false)
+    const shortAlive = ref(false)
+
     // 从后端拉真实状态
     const loadRunningStatus = async () => {
         try {
             const { data } = await axios.get(`${API}/control/status`)
+
             longRunning.value = data.long === "RUNNING"
             shortRunning.value = data.short === "RUNNING"
+
+            // ★ 存活状态
+            longAlive.value = data.long_alive === true
+            shortAlive.value = data.short_alive === true
+
         } catch (e) {
             console.error("loadRunningStatus failed:", e)
+            longRunning.value = false
+            shortRunning.value = false
+            longAlive.value = false
+            shortAlive.value = false
         }
     }
 
@@ -94,22 +107,29 @@ export function useRunControl() {
         }
 
         try {
+            let res
+
             if (nextRunning) {
                 // 只启动这一侧；另一侧保持原状
                 const otherRunning = isLong
                     ? shortRunning.value
                     : longRunning.value
 
-                await post("/control/start", {
+                res = await post("/control/start", {
                     long: isLong ? true : otherRunning,
                     short: isLong ? otherRunning : true,
                     dry_run: dryRun.value
                 })
             } else {
-                await post("/control/stop", {
+                res = await post("/control/stop", {
                     long: isLong,
                     short: !isLong
                 })
+            }
+
+            // ★ 检查后端是否真的成功
+            if (res?.data?.success === false) {
+                throw new Error(res.data.error || "操作失败")
             }
 
             // 重新从后端同步（比本地猜测更可靠）
@@ -117,7 +137,13 @@ export function useRunControl() {
 
             ElMessage.success(`${sideName}已${actionName}`)
         } catch (e) {
-            ElMessage.error(`${sideName}${actionName}失败`)
+            // ★ 优先展示后端返回的错误信息
+            const msg =
+                e?.message ||
+                e?.response?.data?.error ||
+                `${sideName}${actionName}失败`
+
+            ElMessage.error(msg)
             await loadRunningStatus()
         }
     }
@@ -533,6 +559,8 @@ export function useRunControl() {
 
         longRunning,
         shortRunning,
+        longAlive,
+        shortAlive,
         toggleSide,
         loadRunningStatus,
 

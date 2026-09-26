@@ -10,7 +10,7 @@ from app.services.event_service import record_event
 from requests.exceptions import Timeout, ConnectionError
 import requests
 from datetime import datetime, timezone
-
+from app.services.health_monitor import get_health_state
 from app.services.freqtrade_client import FreqtradeClient
 from app.services.delete_service import DeleteService
 
@@ -94,6 +94,11 @@ def get_config():
 @router.post("/config")
 def save_config(data: dict):
     return ConfigService.save_config(data)
+
+
+@router.get("/health")
+def health_state():
+    return get_health_state()
 
 
 @router.get("/available_pairs/{side}")

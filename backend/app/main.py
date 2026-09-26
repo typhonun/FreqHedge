@@ -18,7 +18,10 @@ from app.api.config import router as config_router
 from app.api.chart import router as chart_router
 from app.api import logs
 from app.api import strategy
-
+from app.services.health_monitor import (
+    start_health_monitor,
+    stop_health_monitor,
+)
 from app.database import Base, engine
 
 # 重要：确保模型被导入
@@ -73,6 +76,9 @@ async def lifespan(app: FastAPI):
         daemon=True
     ).start()
 
+    # ★ 启动健康监控
+    start_health_monitor()
+
     print("Application started.")
 
     yield
@@ -80,6 +86,9 @@ async def lifespan(app: FastAPI):
     # =====================================================
     # 6. 关闭 scheduler
     # =====================================================
+
+    # ★ 停止健康监控
+    stop_health_monitor()
 
     stop_scheduler()
 

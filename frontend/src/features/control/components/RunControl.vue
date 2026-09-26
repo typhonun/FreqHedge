@@ -15,33 +15,57 @@
             <div class="switch-item">
               <span>📈 多头交易</span>
 
-              <el-button
-                :type="longRunning ? 'warning' : 'success'"
-                size="default"
-                @click="toggleSide('long')"
-              >
-                <el-icon style="margin-right: 4px;">
-                  <VideoPause v-if="longRunning" />
-                  <VideoPlay v-else />
-                </el-icon>
-                {{ longRunning ? "停止" : "启动" }}
-              </el-button>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <!-- ★ 意图运行中但实际离线 → 警告 -->
+                <el-tag
+                  v-if="longRunning && !longAlive"
+                  type="danger"
+                  size="small"
+                  effect="plain"
+                >
+                  离线
+                </el-tag>
+
+                <el-button
+                  :type="longRunning ? 'warning' : 'success'"
+                  size="default"
+                  @click="toggleSide('long')"
+                >
+                  <el-icon style="margin-right: 4px;">
+                    <VideoPause v-if="longRunning" />
+                    <VideoPlay v-else />
+                  </el-icon>
+                  {{ longRunning ? "停止" : "启动" }}
+                </el-button>
+              </div>
             </div>
 
             <div class="switch-item">
-              <span>📉 空头交易</span>
+              <span>📈 空头交易</span>
 
-              <el-button
-                :type="shortRunning ? 'warning' : 'success'"
-                size="default"
-                @click="toggleSide('short')"
-              >
-                <el-icon style="margin-right: 4px;">
-                  <VideoPause v-if="shortRunning" />
-                  <VideoPlay v-else />
-                </el-icon>
-                {{ shortRunning ? "停止" : "启动" }}
-              </el-button>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <!-- ★ 意图运行中但实际离线 → 警告 -->
+                <el-tag
+                  v-if="shortRunning && !shortAlive"
+                  type="danger"
+                  size="small"
+                  effect="plain"
+                >
+                  离线
+                </el-tag>
+
+                <el-button
+                  :type="shortRunning ? 'warning' : 'success'"
+                  size="default"
+                  @click="toggleSide('short')"
+                >
+                  <el-icon style="margin-right: 4px;">
+                    <VideoPause v-if="shortRunning" />
+                    <VideoPlay v-else />
+                  </el-icon>
+                  {{ shortRunning ? "停止" : "启动" }}
+                </el-button>
+              </div>
             </div>
 
             <div class="switch-item">
@@ -349,7 +373,7 @@
 </template>
 
 <script setup>
-import { onMounted } from "vue"
+import { onMounted, onUnmounted } from "vue"
 import { VideoPlay, VideoPause } from "@element-plus/icons-vue"
 import { useRunControl } from '@features/control/composables/useRunControl.js'
 
@@ -358,6 +382,8 @@ const {
 
   longRunning,
   shortRunning,
+  longAlive,
+  shortAlive,
   toggleSide,
   loadRunningStatus,
 
@@ -396,6 +422,12 @@ onMounted(async () => {
   await loadRunningStatus()
   await loadStopEntryStatus()
   await loadRiskConfig()
+
+  // ★ 每 5s 刷新运行状态
+  const timer = setInterval(loadRunningStatus, 5000)
+
+  // 组件卸载时清理
+  onUnmounted(() => clearInterval(timer))
 })
 </script>
 
