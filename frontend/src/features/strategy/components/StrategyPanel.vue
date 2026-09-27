@@ -55,6 +55,13 @@
                     {{ tradeInfo.entrySignal }}
                 </el-descriptions-item>
 
+                <el-descriptions-item
+                    v-if="tradeInfo.pumpProtectSignal"
+                    label="Pump 保护"
+                    :span="2">
+                    {{ tradeInfo.pumpProtectSignal }}
+                </el-descriptions-item>
+
                 <el-descriptions-item label="TP减仓" :span="2">
                     <span v-if="tradeInfo.tpSignal">{{ tradeInfo.tpSignal }}</span>
                     <span v-else class="empty-placeholder"></span>
@@ -84,6 +91,11 @@
                     <span v-if="tradeInfo.pairMaxPositionSignal">
                         {{ tradeInfo.pairMaxPositionSignal }}
                     </span>
+                    <span v-else class="empty-placeholder"></span>
+                </el-descriptions-item>
+
+                <el-descriptions-item label="HTF 趋势过滤" :span="2">
+                    <span v-if="tradeInfo.htfTrendSignal">{{ tradeInfo.htfTrendSignal }}</span>
                     <span v-else class="empty-placeholder"></span>
                 </el-descriptions-item>
 
@@ -516,6 +528,21 @@
                         <el-switch
                             :model-value="config.entry.bb.enable"
                             @change="val => changeEntrySignal('bb', val)"
+                        />
+                    </div>
+                </section>
+
+                <section class="signal-card">
+                    <div class="signal-head">
+                        <div>
+                            <div class="signal-name">Pump 保护</div>
+                            <div class="signal-subtitle">
+                                开启后，检测到 Pump 行情时暂停开仓
+                            </div>
+                        </div>
+                        <el-switch
+                            :model-value="config.entry.pump_protect.enable"
+                            @change="val => changeEntrySignal('pump_protect', val)"
                         />
                     </div>
                 </section>
@@ -1394,6 +1421,100 @@
             </el-form>
         </el-card>
 
+        <!-- ==================== HTF 趋势过滤 ==================== -->
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">HTF 趋势过滤</span>
+                    <span class="card-head__meta">
+                        <el-text type="info" size="small">
+                            大周期趋势不利时暂停买入
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+            <el-alert
+                class="section-alert"
+                type="warning"
+                :closable="false"
+                show-icon>
+                {{ config.side === 'long'
+                    ? 'HTF 空头排列（快<中<慢）时暂停买入；减仓、止损不受影响'
+                    : 'HTF 多头排列（快>中>慢）时暂停买入；减仓、止损不受影响' }}
+                （EMA 参数复用「指标配置」中的快/中/慢）
+            </el-alert>
+
+            <el-form class="compact-form" label-width="140px" size="small">
+                <el-row :gutter="12">
+                    <el-col :span="8">
+                        <el-form-item label="启用">
+                            <el-switch v-model="config.htf_trend_filter.enable" />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="HTF 周期">
+                            <el-select
+                                v-model="config.htf_trend_filter.timeframe"
+                                class="field-input"
+                                :disabled="!config.htf_trend_filter.enable">
+                                <el-option label="4h" value="4h" />
+                                <el-option label="12h" value="12h" />
+                                <el-option label="1d" value="1d" />
+                            </el-select>
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+
+                <el-divider content-position="left">保护范围</el-divider>
+
+                <el-row :gutter="12">
+                    <el-col :span="8">
+                        <el-form-item label="开仓">
+                            <el-switch
+                                v-model="config.htf_trend_filter.protect_entry"
+                                :disabled="!config.htf_trend_filter.enable" />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="DCA 加仓">
+                            <el-switch
+                                v-model="config.htf_trend_filter.protect_dca"
+                                :disabled="!config.htf_trend_filter.enable" />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="网格加仓">
+                            <el-switch
+                                v-model="config.htf_trend_filter.protect_grid"
+                                :disabled="!config.htf_trend_filter.enable" />
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+
+                <el-row :gutter="12">
+                    <el-col :span="8">
+                        <el-form-item label="浮盈回补">
+                            <el-switch
+                                v-model="config.htf_trend_filter.protect_rebuy"
+                                :disabled="!config.htf_trend_filter.enable" />
+                        </el-form-item>
+                    </el-col>
+
+                    <el-col :span="8">
+                        <el-form-item label="趋势加仓">
+                            <el-switch
+                                v-model="config.htf_trend_filter.protect_trend"
+                                :disabled="!config.htf_trend_filter.enable" />
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+            </el-form>
+        </el-card>
+
         <!-- ==================== 保存 ==================== -->
         <div class="save-bar">
             <el-button
@@ -1422,6 +1543,15 @@ const emit = defineEmits(['save'])
 
 const changeEntrySignal = (type, val) => {
     const entry = props.config.entry
+
+    // Pump 保护是独立开关，不参与“至少保留一个”校验
+    if (type === "pump_protect") {
+        if (!entry.pump_protect) {
+            entry.pump_protect = { enable: false }
+        }
+        entry.pump_protect.enable = val
+        return
+    }
 
     if (!val) {
         const remain = ["rsi", "macd", "bb"]

@@ -11,6 +11,7 @@ if str(USER_DATA_DIR) not in sys.path:
 
 from core.config_manager import ConfigManager
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import informative
 from freqtrade.persistence import Trade, Order
 from pandas import DataFrame, Timestamp
 import pandas as pd
@@ -42,10 +43,43 @@ class DcaTpLong(IStrategy):
     position_adjustment_enable = True
     use_custom_stoploss = False
 
+    # ============================================================
+    # HTF 数据（4h / 12h / 1d）用于趋势过滤
+    # 注：EMA 参数复用 indicator.ema，不单独配置
+    # ============================================================
+    @informative('4h')
+    def populate_indicators_4h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        return self._calc_htf_ema(dataframe)
+
+    @informative('12h')
+    def populate_indicators_12h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        return self._calc_htf_ema(dataframe)
+
+    @informative('1d')
+    def populate_indicators_1d(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
+        return self._calc_htf_ema(dataframe)
+
+    def _calc_htf_ema(self, dataframe: DataFrame) -> DataFrame:
+        """HTF EMA 计算，EMA 参数复用 indicator.ema"""
+        cfg = self.get_runtime_config()
+        ema_cfg = self._cfg(cfg, "indicator", "ema", default={}) or {}
+
+        ema_fast = self._cfg_int(ema_cfg, "fast", 9)
+        ema_mid = self._cfg_int(ema_cfg, "mid", 21)
+        ema_slow = self._cfg_int(ema_cfg, "slow", 99)
+
+        dataframe['ema_fast'] = ta.EMA(dataframe['close'], timeperiod=ema_fast)
+        dataframe['ema_mid'] = ta.EMA(dataframe['close'], timeperiod=ema_mid)
+        dataframe['ema_slow'] = ta.EMA(dataframe['close'], timeperiod=ema_slow)
+
+        return dataframe
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._stop_loss_logged = set()
         self._pair_limit_logged = set()
+        self._htf_block_logged = set()
+        self._pump_block_logged = set()
 
     def bot_start(self, **kwargs) -> None:
         """策略启动时打印一次配置概览"""
@@ -155,12 +189,14 @@ class DcaTpLong(IStrategy):
         e_rsi = entry.get("rsi", {}) or {}
         e_macd = entry.get("macd", {}) or {}
         e_bb = entry.get("bb", {}) or {}
+        e_pump = entry.get("pump_protect", {}) or {}
         logger.info(
             f"condition         : {entry.get('condition', 'and')}\n"
             f"RSI  enable={_fmt(e_rsi.get('enable'))}, "
             f"value={_fmt(e_rsi.get('value'))}\n"
             f"MACD enable={_fmt(e_macd.get('enable'))}\n"
-            f"BB   enable={_fmt(e_bb.get('enable'))}"
+            f"BB   enable={_fmt(e_bb.get('enable'))}\n"
+            f"Pump 保护 enable={_fmt(e_pump.get('enable'))}"
         )
 
         # ========== 5. TP止盈 + 止损 ==========
@@ -266,6 +302,23 @@ class DcaTpLong(IStrategy):
 
         logger.info(
             f"\n==================== 策略配置详情结束 ====================\n"
+        )
+
+        # ========== 11. HTF 趋势过滤 ==========
+        _section("HTF 趋势过滤")
+        htf = cfg.get("htf_trend_filter", {}) or {}
+        ema_cfg_print = ind.get("ema", {}) or {}
+        logger.info(
+            f"enable            : {_fmt(htf.get('enable'))}\n"
+            f"HTF 周期          : {htf.get('timeframe', '4h')}\n"
+            f"EMA 参数          : {_fmt(ema_cfg_print.get('fast'))} / "
+            f"{_fmt(ema_cfg_print.get('mid'))} / "
+            f"{_fmt(ema_cfg_print.get('slow'))}（复用指标配置）\n"
+            f"保护开仓          : {_fmt(htf.get('protect_entry'))}\n"
+            f"保护 DCA          : {_fmt(htf.get('protect_dca'))}\n"
+            f"保护网格          : {_fmt(htf.get('protect_grid'))}\n"
+            f"保护浮盈回补      : {_fmt(htf.get('protect_rebuy'))}\n"
+            f"保护趋势加仓      : {_fmt(htf.get('protect_trend'))}"
         )
 
     def get_runtime_config(self):
@@ -495,10 +548,10 @@ class DcaTpLong(IStrategy):
             if trade.id not in self._stop_loss_logged:
                 self._stop_loss_logged.add(trade.id)
                 logger.info(
-                    f"[{trade.pair}] {RED}触发时间止损{RESET} "
+                    f"{YELLOW} [{trade.pair}] {RED}触发时间止损{RESET} "
                     f"未成交时长={elapsed_hours:.2f}h (阈值={hours}h), "
                     f"累计收益={profit_display} (阈值<{threshold_display}), "
-                    f"当前价={rate:.4f}"
+                    f"当前价={rate:.4f} {RESET}"
                 )
                 self._record_chart_marker(
                     event_type="time_stop",
@@ -899,6 +952,19 @@ class DcaTpLong(IStrategy):
         dataframe['bb_lowerband'] = lower
         dataframe['rsi'] = ta.RSI(dataframe['close'], timeperiod=rsi_period)
 
+        # ============================
+        # Pump 保护派生指标
+        # ============================
+        # 当前 K 线成交量 / 过去 20 根均量
+        vol_sma20 = ta.SMA(dataframe['volume'], timeperiod=20)
+        dataframe['vol_sma20'] = vol_sma20
+        dataframe['vol_ratio'] = dataframe['volume'] / vol_sma20
+
+        # 最近 3 根累计涨幅
+        dataframe['ret_3'] = (
+            dataframe['close'] / dataframe['close'].shift(3) - 1.0
+        )
+
         df_tf = dataframe.copy()
 
         if not df_tf.empty:
@@ -1041,6 +1107,33 @@ class DcaTpLong(IStrategy):
 
         # 手动开仓跳过持仓差闸门
         if not is_manual:
+
+            # ===== Pump 保护 =====
+            try:
+                cfg = self.get_runtime_config()
+                entry_cfg = self._cfg(cfg, "entry", default={}) or {}
+                pump_cfg = entry_cfg.get("pump_protect", {}) or {}
+                if bool(pump_cfg.get("enable", False)):
+                    df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                    if df is not None and not df.empty:
+                        last = df.iloc[-1]
+                        if self._pump_protect_blocks(pair, last):
+                            return False
+            except Exception as e:
+                logger.warning(f"[{pair}] Pump 保护检测失败: {e}")
+
+            try:
+                cfg = self.get_runtime_config()
+                htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}
+                if bool(htf_cfg.get("enable", False)) and bool(htf_cfg.get("protect_entry", False)):
+                    df, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                    if df is not None and not df.empty:
+                        last = df.iloc[-1]
+                        if self._htf_trend_blocks(trade=None, last=last, htf_cfg=htf_cfg):
+                            return False
+            except Exception as e:
+                logger.warning(f"[{pair}] HTF 趋势过滤检测失败: {e}")
+
             imbalance_enable = self.config.get("imbalance_long_enable", False)
             imbalance_count = self.config.get("imbalance_long_count", 2)
 
@@ -1367,16 +1460,115 @@ class DcaTpLong(IStrategy):
             if trade.id not in self._pair_limit_logged:
                 self._pair_limit_logged.add(trade.id)
                 logger.info(
-                    f"[{trade.pair}] {YELLOW}单交易对持仓超限{RESET} "
+                    f"[{trade.pair}] {YELLOW}单交易对持仓超限 "
                     f"保证金={margin:.2f}, 总资金={collateral:.2f}, "
                     f"占比={used_percent:.2f}% >= 上限={limit_percent:.2f}%，"
-                    f"停止逆势加仓（DCA / 网格 / 浮盈回补 / DCA止盈回补）"
+                    f"停止逆势加仓（DCA / 网格 / 浮盈回补 / DCA止盈回补）{RESET}"
                 )
             return True
 
         # ⬇️ 不再超限 → 清掉去重标记，下次超限可再次打印
         self._pair_limit_logged.discard(trade.id)
         return False
+
+    def _htf_trend_blocks(self, trade: Trade, last, htf_cfg: dict = None) -> bool:
+        """判断 HTF 趋势是否禁止操作（多头：空头排列禁止；空头：多头排列禁止）
+
+        返回 True 表示 HTF 趋势不利，应暂停买入行为。
+        """
+        if htf_cfg is None:
+            cfg = self.get_runtime_config()
+            htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}
+
+        if not bool(htf_cfg.get("enable", False)):
+            return False
+
+        htf_tf = str(htf_cfg.get("timeframe", "4h")).lower()
+        if htf_tf not in ("4h", "12h", "1d"):
+            htf_tf = "4h"
+
+        try:
+            ema_f = float(last.get(f'ema_fast_{htf_tf}'))
+            ema_m = float(last.get(f'ema_mid_{htf_tf}'))
+            ema_s = float(last.get(f'ema_slow_{htf_tf}'))
+        except Exception:
+            return False
+
+        if pd.isna(ema_f) or pd.isna(ema_m) or pd.isna(ema_s):
+            return False
+
+        # 按方向判断
+        if self.can_short:
+            adverse = (ema_f > ema_m) and (ema_m > ema_s)
+            trend_text = "多头排列"
+        else:
+            adverse = (ema_f < ema_m) and (ema_m < ema_s)
+            trend_text = "空头排列"
+
+        if adverse:
+            # ⬇️ trade 可能为 None（confirm_trade_entry 场景）
+            pair_name = getattr(trade, "pair", None) or "(entry)"
+            key = (pair_name, htf_tf)
+
+            if key not in self._htf_block_logged:
+                self._htf_block_logged.add(key)
+                logger.info(
+                    f"[{pair_name}] {YELLOW} [HTF 过滤] {htf_tf} {trend_text} "
+                    f"fast={ema_f:.4f}, mid={ema_m:.4f}, slow={ema_s:.4f}，暂停买入 {RESET}"
+                )
+            else:
+                logger.debug(
+                    f"[{pair_name}] [HTF 过滤] {htf_tf} {trend_text}（已记录）"
+                )
+            return True
+
+        # 该 pair 不再被拦 → 只清它自己的记录
+        pair_name = getattr(trade, "pair", None) or "(entry)"
+        self._htf_block_logged.discard((pair_name, htf_tf))
+        return False
+
+    def _pump_protect_blocks(self, pair: str, last) -> bool:
+        """Pump 保护：最近 3 根累计涨幅 >= 10% 且 量比 >= 3 且 RSI >= 75
+
+        返回 True 表示检测到 Pump，应暂停开仓（Long 开多 / Short 开空都拦）。
+        """
+        try:
+            ret_3 = float(last.get('ret_3'))
+            vol_ratio = float(last.get('vol_ratio'))
+            rsi = float(last.get('rsi'))
+        except Exception:
+            return False
+
+        if pd.isna(ret_3) or pd.isna(vol_ratio) or pd.isna(rsi):
+            return False
+
+        # 三条同时满足才判定为 Pump
+        triggered = (ret_3 >= 0.10) and (vol_ratio >= 3.0) and (rsi >= 75.0)
+
+        if not triggered:
+            # 不再触发 → 清掉该 pair 的去重记录
+            self._pump_block_logged.discard(pair)
+            return False
+
+        # 触发：每个 pair 只打一次 INFO
+        if pair not in self._pump_block_logged:
+            self._pump_block_logged.add(pair)
+            logger.info(
+                f"[{pair}] {YELLOW} [Pump 保护] 3根累计涨幅={ret_3 * 100:.2f}%, "
+                f"量比={vol_ratio:.2f}, RSI={rsi:.2f}，暂停开仓 {RESET}"
+            )
+        else:
+            logger.debug(
+                f"[{pair}] [Pump 保护] 已触发（已记录）"
+            )
+
+        return True
+
+    def _htf_protect_field(self, field: str) -> bool:
+        """读取 htf_trend_filter 配置里的某个 protect_xxx 字段"""
+        cfg = self.get_runtime_config()
+        htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}
+        return bool(htf_cfg.get(field, False))
 
     def _amount_mode(self):
         """全局金额模式：percent / amount"""
@@ -2197,7 +2389,7 @@ class DcaTpLong(IStrategy):
                 lev = 1.0
 
             if price is None or price <= 0 or lev <= 0:
-                logger.warning(...)
+                logger.warning(f"[{trade.pair}] [浮亏 DCA 止盈跳过] 无效 price/lev (price={price}, lev={lev})")
                 return None
 
             margin_val = margin
@@ -2328,7 +2520,7 @@ class DcaTpLong(IStrategy):
         return float(sell_amt), tp_tag
 
     def grid_single(self, trade: Trade, last: dict, current_time: datetime, current_rate: float,
-                    margin: float = None):
+                    margin: float = None, htf_blocks: bool = False, htf_cfg: dict = None):
 
         cfg = self.get_runtime_config()
         grid_cfg = self._cfg(cfg, "grid", default={}) or {}
@@ -2408,6 +2600,10 @@ class DcaTpLong(IStrategy):
         if price <= grid_lower:
 
             if self._pair_position_exceeded(trade, price):
+                return None
+
+            # ⬇️ 新增：HTF 趋势过滤（只拦加仓）
+            if htf_blocks and htf_cfg and bool(htf_cfg.get("protect_grid", True)):
                 return None
 
             if max_w > 0 and w >= max_w:
@@ -2588,30 +2784,42 @@ class DcaTpLong(IStrategy):
             logger.warning(f"[{trade.pair}] 无法获取有效 candle_ts，跳过")
             return None
 
-        # 1) 趋势加仓
-        res = self.trend_add(trade, last, margin, collateral, current_time, current_profit, candle_ts)
-        if res:
-            return res
+        # ⬇️ 新增：HTF 趋势状态（只算一次，复用）
+        cfg = self.get_runtime_config()
+        htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}
+        htf_blocks = self._htf_trend_blocks(trade=trade, last=last, htf_cfg=htf_cfg)
+
+        # 1) 趋势加仓（HTF 拦了就不执行）
+        if not (htf_blocks and bool(htf_cfg.get("protect_trend", False))):
+            res = self.trend_add(trade, last, margin, collateral, current_time, current_profit, candle_ts)
+            if res:
+                return res
 
         # 2) DCA 加仓
-        res = self.dca_add(trade, df, last, current_time, current_rate)
-        if res:
-            return res
+        if not (htf_blocks and bool(htf_cfg.get("protect_dca", True))):
+            res = self.dca_add(trade, df, last, current_time, current_rate)
+            if res:
+                return res
 
         # 3) 浮盈加仓
-        res = self.profit_rebuy(trade, last, collateral)
-        if res:
-            return res
+        if not (htf_blocks and bool(htf_cfg.get("protect_rebuy", True))):
+            res = self.profit_rebuy(trade, last, collateral)
+            if res:
+                return res
 
-        # 4) tp 止盈
+        # 4) tp 止盈（不受 HTF 影响）
         res = self.tp_reduce(trade, last, current_profit, margin, current_rate, current_time)
         if res:
             return res
 
-        # 5) 网格
-        res = self.grid_single(trade, last, current_time, current_rate, margin)
+        # 5) 网格（内部按 protect_grid 决定是否拦加仓）
+        res = self.grid_single(
+            trade, last, current_time, current_rate, margin,
+            htf_blocks=htf_blocks, htf_cfg=htf_cfg
+        )
         if res:
             return res
+
         return None
 
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):

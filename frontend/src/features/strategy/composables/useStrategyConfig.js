@@ -118,6 +118,12 @@ const buildTradeInfo = (side, config) => {
             return signals.join(joiner)
         })(),
 
+        // Pump 保护兜底
+        pumpProtectSignal:
+            config.entry?.pump_protect?.enable
+                ? "Pump 保护：开启"
+                : null,
+
 
 
         // TP减仓
@@ -226,6 +232,20 @@ const buildTradeInfo = (side, config) => {
             return `${ts.hours.toFixed(1)}h 未成交且收益 < ${ts.profit_threshold}${modeText} 触发`
         })(),
 
+        htfTrendSignal: (() => {
+            if (!config.htf_trend_filter?.enable) return null
+            const h = config.htf_trend_filter
+            const parts = []
+            if (h.protect_entry) parts.push("开仓")
+            if (h.protect_dca) parts.push("DCA")
+            if (h.protect_grid) parts.push("网格")
+            if (h.protect_rebuy) parts.push("浮盈回补")
+            if (h.protect_trend) parts.push("趋势加仓")
+            const protectText = parts.length ? parts.join(" / ") : "无"
+            const dirText = isLong ? "空头排列" : "多头排列"
+            return `${h.timeframe} ${dirText} 时暂停：${protectText}`
+        })(),
+
 
         roiLevels:
 
@@ -269,6 +289,10 @@ const defaultLongConfig = () => ({
 
         bb:{
             enable:true
+        },
+
+        pump_protect: {
+            enable: false
         }
 
     },
@@ -302,6 +326,17 @@ const defaultLongConfig = () => ({
     pair_max_position: {
         enable: false,
         percent: 30
+    },
+
+    // HTF 趋势过滤
+    htf_trend_filter: {
+        enable: false,
+        timeframe: "4h",
+        protect_entry: false,
+        protect_dca: true,
+        protect_grid: true,
+        protect_rebuy: true,
+        protect_trend: false
     },
 
     indicator:{
@@ -442,6 +477,10 @@ const defaultShortConfig = () => ({
 
         bb:{
             enable:true
+        },
+
+        pump_protect: {
+            enable: false
         }
 
     },
@@ -473,6 +512,17 @@ const defaultShortConfig = () => ({
     pair_max_position: {
         enable: false,
         percent: 30
+    },
+
+    // HTF 趋势过滤
+    htf_trend_filter: {
+        enable: false,
+        timeframe: "4h",
+        protect_entry: false,
+        protect_dca: true,
+        protect_grid: true,
+        protect_rebuy: true,
+        protect_trend: false
     },
 
     indicator:{
@@ -754,6 +804,26 @@ const normalizeAmountMode = (config) => {
         config.pair_max_position.percent = 30
     }
 
+    // HTF 趋势过滤兜底
+    if (!config.htf_trend_filter) {
+        config.htf_trend_filter = {
+            enable: false,
+            timeframe: "4h",
+            protect_entry: false,
+            protect_dca: true,
+            protect_grid: true,
+            protect_rebuy: true,
+            protect_trend: false
+        }
+    }
+    if (config.htf_trend_filter.enable == null) config.htf_trend_filter.enable = false
+    if (!config.htf_trend_filter.timeframe) config.htf_trend_filter.timeframe = "4h"
+    if (config.htf_trend_filter.protect_entry == null) config.htf_trend_filter.protect_entry = false
+    if (config.htf_trend_filter.protect_dca == null) config.htf_trend_filter.protect_dca = true
+    if (config.htf_trend_filter.protect_grid == null) config.htf_trend_filter.protect_grid = true
+    if (config.htf_trend_filter.protect_rebuy == null) config.htf_trend_filter.protect_rebuy = true
+    if (config.htf_trend_filter.protect_trend == null) config.htf_trend_filter.protect_trend = false
+
     // timeframe 兜底
     if (!config.timeframe) {
         config.timeframe = "30m"
@@ -767,6 +837,15 @@ const normalizeEntry = (config) => {
     if (!config.entry.condition) {
         config.entry.condition = "and"
     }
+
+    // 新增：Pump 保护兜底
+    if (!config.entry.pump_protect) {
+        config.entry.pump_protect = { enable: false }
+    }
+    if (config.entry.pump_protect.enable == null) {
+        config.entry.pump_protect.enable = false
+    }
+
     return config
 }
 
