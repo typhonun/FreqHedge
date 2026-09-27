@@ -219,6 +219,13 @@ const buildTradeInfo = (side, config) => {
                 ? `单交易对持仓上限 ${config.pair_max_position.percent}%（超限停止 DCA 与网格加仓）`
                 : null,
 
+        timeStopSignal: (() => {
+            if (!config.sl?.time_stop?.enable) return null
+            const ts = config.sl.time_stop
+            const modeText = ts.mode === "amount" ? "USDT" : "%"
+            return `${ts.hours.toFixed(1)}h 未成交且收益 < ${ts.profit_threshold}${modeText} 触发`
+        })(),
+
 
         roiLevels:
 
@@ -281,7 +288,14 @@ const defaultLongConfig = () => ({
 
     sl: {
         enable: true,
-        stoploss: -9
+        stoploss: -9,
+
+        time_stop: {
+            enable: false,
+            hours: 24.0,
+            profit_threshold: -5.0,
+            mode: "percent"
+        }
     },
 
     // 单交易对最大持仓限制（占总资金百分比）
@@ -405,6 +419,8 @@ const defaultLongConfig = () => ({
 const defaultShortConfig = () => ({
     side: "short",
 
+    timeframe: "30m",
+
     amount_mode: "percent",
 
     entry:{
@@ -445,7 +461,13 @@ const defaultShortConfig = () => ({
 
     sl: {
         enable: true,
-        stoploss: -9
+        stoploss: -9,
+        time_stop: {
+            enable: false,
+            hours: 24.0,
+            profit_threshold: -5.0,
+            mode: "percent"
+        }
     },
 
     pair_max_position: {
@@ -685,6 +707,30 @@ const normalizeAmountMode = (config) => {
         }
     }
 
+    // 时间止损兜底
+    if (config.sl) {
+        if (!config.sl.time_stop) {
+            config.sl.time_stop = {
+                enable: false,
+                hours: 24.0,
+                profit_threshold: -5.0,
+                mode: "percent"
+            }
+        }
+        if (config.sl.time_stop.enable == null) {
+            config.sl.time_stop.enable = false
+        }
+        if (config.sl.time_stop.hours == null) {
+            config.sl.time_stop.hours = 24.0
+        }
+        if (config.sl.time_stop.profit_threshold == null) {
+            config.sl.time_stop.profit_threshold = -5.0
+        }
+        if (!config.sl.time_stop.mode) {
+            config.sl.time_stop.mode = "percent"
+        }
+    }
+
     // loss_tp.close_all
     if (config.loss_tp && config.loss_tp.close_all == null) {
         config.loss_tp.close_all = false
@@ -708,6 +754,10 @@ const normalizeAmountMode = (config) => {
         config.pair_max_position.percent = 30
     }
 
+    // timeframe 兜底
+    if (!config.timeframe) {
+        config.timeframe = "30m"
+    }
     return config
 }
 

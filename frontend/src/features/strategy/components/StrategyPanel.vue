@@ -43,6 +43,11 @@
                     {{ tradeInfo.stoploss }}
                 </el-descriptions-item>
 
+                <el-descriptions-item label="时间止损" :span="2">
+                    <span v-if="tradeInfo.timeStopSignal">{{ tradeInfo.timeStopSignal }}</span>
+                    <span v-else class="empty-placeholder"></span>
+                </el-descriptions-item>
+
                 <el-descriptions-item
                     v-if="tradeInfo.entrySignal"
                     label="开仓信号"
@@ -116,6 +121,48 @@
                     </div>
                 </div>
             </el-alert>
+        </el-card>
+
+        <!-- ==================== 时间周期 ==================== -->
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">K 线时间周期</span>
+                    <span class="card-head__meta">
+                        <el-text type="info" size="small">
+                            修改后需重启策略生效
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+            <el-alert
+                class="section-alert"
+                type="warning"
+                :closable="false"
+                show-icon>
+                切换时间周期会改变指标计算和交易频率，保存后需要重启对应 bot 才能生效
+            </el-alert>
+
+            <el-form class="compact-form" label-width="120px" size="small">
+                <el-form-item label="时间周期">
+                    <el-select
+                        v-model="config.timeframe"
+                        class="field-input">
+                        <el-option label="1m"  value="1m" />
+                        <el-option label="3m"  value="3m" />
+                        <el-option label="5m"  value="5m" />
+                        <el-option label="15m" value="15m" />
+                        <el-option label="30m" value="30m" />
+                        <el-option label="1h"  value="1h" />
+                        <el-option label="2h"  value="2h" />
+                        <el-option label="4h"  value="4h" />
+                        <el-option label="6h"  value="6h" />
+                        <el-option label="12h" value="12h" />
+                        <el-option label="1d"  value="1d" />
+                    </el-select>
+                </el-form-item>
+            </el-form>
         </el-card>
 
         <!-- ==================== 金额模式 ==================== -->
@@ -610,6 +657,50 @@
                                 :max="0"
                                 :step="1"
                                 :precision="0"
+                            />
+                        </el-form-item>
+
+                        <!-- ⬇️ 新增：时间止损 -->
+                        <el-divider content-position="left">时间止损</el-divider>
+
+                        <el-form-item label="启用时间止损">
+                            <el-switch v-model="config.sl.time_stop.enable" />
+                        </el-form-item>
+
+                        <el-form-item label="未成交时长(小时)">
+                            <el-input-number
+                                v-model="config.sl.time_stop.hours"
+                                class="field-input"
+                                controls-position="right"
+                                :min="0.1"
+                                :max="720"
+                                :step="0.5"
+                                :precision="1"
+                                :disabled="!config.sl.time_stop.enable"
+                            />
+                        </el-form-item>
+
+                        <el-form-item label="收益阈值模式">
+                            <el-select
+                                v-model="config.sl.time_stop.mode"
+                                class="field-input"
+                                :disabled="!config.sl.time_stop.enable">
+                                <el-option label="百分比 %" value="percent" />
+                                <el-option label="固定金额 USDT" value="amount" />
+                            </el-select>
+                        </el-form-item>
+
+                        <el-form-item
+                            :label="config.sl.time_stop.mode === 'amount' ? '收益阈值(USDT)' : '收益阈值(%)'">
+                            <el-input-number
+                                v-model="config.sl.time_stop.profit_threshold"
+                                class="field-input"
+                                controls-position="right"
+                                :min="-9999"
+                                :max="0"
+                                :step="config.sl.time_stop.mode === 'amount' ? 1 : 0.5"
+                                :precision="config.sl.time_stop.mode === 'amount' ? 2 : 1"
+                                :disabled="!config.sl.time_stop.enable"
                             />
                         </el-form-item>
                     </el-form>

@@ -75,6 +75,7 @@ class DcaTpShort(IStrategy):
             f"最大持仓          : {max_open_trades}\n"
             f"资金利用率        : {tradable_balance_ratio}\n"
             f"持仓杠杆          : {leverage}x\n"
+            f"K线时间周期       : {self.timeframe}\n"
             f"白名单            : {', '.join(pair_whitelist) if pair_whitelist else '(空)'}\n"
             f"黑名单            : {', '.join(pair_blacklist) if pair_blacklist else '(空)'}\n"
             f"------------------------------------------------------\n"
@@ -174,9 +175,14 @@ class DcaTpShort(IStrategy):
 
         _section("止损配置")
         sl = cfg.get("sl", {}) or {}
+        ts = sl.get("time_stop", {}) or {}
         logger.info(
             f"enable            : {_fmt(sl.get('enable'))}\n"
-            f"stoploss          : {_fmt(sl.get('stoploss'))}%"
+            f"stoploss          : {_fmt(sl.get('stoploss'))}%\n"
+            f"时间止损 enable   : {_fmt(ts.get('enable'))}\n"
+            f"未成交时长        : {_fmt(ts.get('hours'), 1)}h\n"
+            f"收益阈值模式      : {ts.get('mode', 'percent')}\n"
+            f"收益阈值          : {_fmt(ts.get('profit_threshold'), 2)}"
         )
 
         # ========== 6. DCA配置 ==========
@@ -248,6 +254,14 @@ class DcaTpShort(IStrategy):
             f"sell_amount       : {_fmt(grid.get('sell_amount'), 2)}\n"
             f"sell_percent      : {_fmt(grid.get('sell_percent'), 2)}\n"
             f"order_scale       : {_fmt(grid.get('order_scale'), 2)}"
+        )
+
+        # ========== 10. 单交易对持仓限制 ==========
+        _section("单交易对持仓限制")
+        pm = cfg.get("pair_max_position", {}) or {}
+        logger.info(
+            f"enable            : {_fmt(pm.get('enable'))}\n"
+            f"percent           : {_fmt(pm.get('percent'), 2)}%"
         )
 
         logger.info(
@@ -371,6 +385,118 @@ class DcaTpShort(IStrategy):
         # 失败返回 None，调用方默认放行
         return None
 
+    def _time_stop_triggered(self, trade: Trade, current_time: datetime, current_rate: float) -> bool:
+        """判断是否触发时间止损（空头）。
+
+        条件：
+            1) 距最后成交时间 >= hours 小时
+            2) 累计收益 < profit_threshold
+        """
+        cfg = self.get_runtime_config()
+        sl_cfg = self._cfg(cfg, "sl", default={}) or {}
+        ts_cfg = sl_cfg.get("time_stop", {}) or {}
+
+        if not bool(ts_cfg.get("enable", False)):
+            return False
+
+        try:
+            hours = float(ts_cfg.get("hours", 24.0) or 24.0)
+        except Exception:
+            hours = 24.0
+        if hours <= 0:
+            return False
+
+        try:
+            threshold = float(ts_cfg.get("profit_threshold", -5.0) or -5.0)
+        except Exception:
+            threshold = -5.0
+
+        mode = str(ts_cfg.get("mode", "percent")).lower()
+        if mode not in ("percent", "amount"):
+            mode = "percent"
+
+        # ===== 1) 计算未成交时长 =====
+        last_fill = self._get_int(trade, 'last_fill_time', 0)
+
+        if last_fill <= 0:
+            try:
+                base_ts = int(trade.open_date_utc.timestamp())
+            except Exception:
+                base_ts = 0
+            if base_ts <= 0:
+                return False
+            last_fill = base_ts
+
+        now_ts = int(current_time.timestamp())
+        elapsed_hours = (now_ts - last_fill) / 3600.0
+
+        if elapsed_hours < hours:
+            return False
+
+        # ===== 2) 计算累计收益 =====
+        # 已平仓利润（realized）
+        try:
+            realized = float(getattr(trade, "realized_profit", 0) or 0)
+        except Exception:
+            realized = 0.0
+
+        # 浮盈（unrealized）—— 用 Freqtrade 官方方法，自动处理多空方向
+        try:
+            rate = float(current_rate or 0.0)
+        except Exception:
+            rate = 0.0
+
+        if rate > 0:
+            try:
+                unrealized = float(trade.calc_profit(rate))
+            except Exception:
+                unrealized = 0.0
+        else:
+            unrealized = 0.0
+
+        total_profit = realized + unrealized
+
+        # ===== 3) 换算成同单位比较 =====
+        if mode == "percent":
+            try:
+                stake = float(trade.stake_amount or 0.0)
+            except Exception:
+                stake = 0.0
+            if stake <= 0:
+                return False
+            profit_ratio = total_profit / stake
+            triggered = profit_ratio < (threshold / 100.0)
+            profit_display = f"{profit_ratio * 100:.2f}%"
+            threshold_display = f"{threshold}%"
+        else:
+            triggered = total_profit < threshold
+            profit_display = f"{total_profit:.2f} USDT"
+            threshold_display = f"{threshold} USDT"
+
+        if triggered:
+            if trade.id not in self._stop_loss_logged:
+                self._stop_loss_logged.add(trade.id)
+                logger.info(
+                    f"[{trade.pair}] {RED}触发时间止损{RESET} "
+                    f"未成交时长={elapsed_hours:.2f}h (阈值={hours}h), "
+                    f"累计收益={profit_display} (阈值<{threshold_display}), "
+                    f"当前价={rate:.4f}"
+                )
+                self._record_chart_marker(
+                    event_type="time_stop",
+                    pair=trade.pair,
+                    trade_id=trade.id,
+                    side="short",
+                    price=rate,
+                    amount=abs(float(trade.amount or 0)),
+                    current_time=current_time,
+                    message=f"时间止损 {elapsed_hours:.1f}h",
+                    candle_time=self._index_candle_key(current_time)
+                )
+            return True
+
+        return False
+
     def _record_chart_marker(
             self,
             *,
@@ -428,6 +554,11 @@ class DcaTpShort(IStrategy):
 
         # 新增：统一计算 K 线时间戳
         candle_ts = self._index_candle_key(current_time)
+
+        try:
+            self._set(trade, 'last_fill_time', self._safe_int(current_time.timestamp()))
+        except Exception as e:
+            logger.warning(f"[{pair}] 记录 last_fill_time 失败: {e}")
 
         if order.ft_order_side == "sell":
 
@@ -2375,6 +2506,7 @@ class DcaTpShort(IStrategy):
         if not bool(sl_cfg.get("enable", True)):
             return None
 
+        # ===== 1) 原有 ROI 止损 =====
         try:
             stoploss_roi = float(sl_cfg.get("stoploss", -50) or -50) / 100.0
         except Exception:
@@ -2398,9 +2530,13 @@ class DcaTpShort(IStrategy):
                     amount=abs(float(trade.amount or 0)),
                     current_time=current_time,
                     message="ROI止损",
-                    candle_time=self._index_candle_key(current_time)  # 新增
+                    candle_time=self._index_candle_key(current_time)
                 )
             return "stop_loss"
+
+        # ===== 2) 新增：时间止损 =====
+        if self._time_stop_triggered(trade, current_time, current_rate):
+            return "time_stop"
 
         return None
 
