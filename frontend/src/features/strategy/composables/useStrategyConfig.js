@@ -214,6 +214,11 @@ const buildTradeInfo = (side, config) => {
                 })()
                 : null,
 
+        pairMaxPositionSignal:
+            config.pair_max_position?.enable
+                ? `单交易对持仓上限 ${config.pair_max_position.percent}%（超限停止 DCA 与网格加仓）`
+                : null,
+
 
         roiLevels:
 
@@ -277,6 +282,12 @@ const defaultLongConfig = () => ({
     sl: {
         enable: true,
         stoploss: -9
+    },
+
+    // 单交易对最大持仓限制（占总资金百分比）
+    pair_max_position: {
+        enable: false,
+        percent: 30
     },
 
     indicator:{
@@ -435,6 +446,11 @@ const defaultShortConfig = () => ({
     sl: {
         enable: true,
         stoploss: -9
+    },
+
+    pair_max_position: {
+        enable: false,
+        percent: 30
     },
 
     indicator:{
@@ -679,6 +695,17 @@ const normalizeAmountMode = (config) => {
         if (config.trend_add.kdj_reduce.reduce_amount == null) {
             config.trend_add.kdj_reduce.reduce_amount = 10.0
         }
+    }
+
+    // 单交易对最大持仓限制兜底
+    if (!config.pair_max_position) {
+        config.pair_max_position = { enable: false, percent: 30 }
+    }
+    if (config.pair_max_position.enable == null) {
+        config.pair_max_position.enable = false
+    }
+    if (config.pair_max_position.percent == null) {
+        config.pair_max_position.percent = 30
     }
 
     return config

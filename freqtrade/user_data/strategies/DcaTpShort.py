@@ -46,6 +46,7 @@ class DcaTpShort(IStrategy):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._stop_loss_logged = set()
+        self._pair_limit_logged = set()
 
     def bot_start(self, **kwargs) -> None:
         """策略启动时打印一次配置概览"""
@@ -1145,6 +1146,77 @@ class DcaTpShort(IStrategy):
         except Exception:
             return 0.0
 
+    def _collateral_total(self) -> float:
+        try:
+            return float(self.wallets.get_total('USDT'))
+        except Exception:
+            return 0.0
+
+    def _pair_position_exceeded(self, trade: Trade, current_rate: float = None) -> bool:
+        """判断该交易对保证金是否超过单对持仓上限。
+
+        返回 True 表示超限，应停止该交易对的逆势加仓（DCA / 网格）。
+        """
+        cfg = self.get_runtime_config()
+        pm_cfg = self._cfg(cfg, "pair_max_position", default={}) or {}
+
+        if not bool(pm_cfg.get("enable", False)):
+            return False
+
+        try:
+            limit_percent = float(pm_cfg.get("percent", 30) or 30)
+        except Exception:
+            limit_percent = 30.0
+
+        if limit_percent <= 0:
+            return False
+
+        collateral = self._collateral_total()
+        if collateral <= 0:
+            return False
+
+        # ===== 当前该交易对实际占用保证金 =====
+        try:
+            qty = abs(float(trade.amount or 0.0))
+        except Exception:
+            qty = 0.0
+
+        # 优先用传入的当前价
+        if current_rate and float(current_rate) > 0:
+            eval_price = float(current_rate)
+        else:
+            # 退回开仓均价
+            try:
+                eval_price = float(trade.open_rate or 0.0)
+            except Exception:
+                eval_price = 0.0
+
+        try:
+            lev = float(self.leverage(trade.pair) or 1.0)
+        except Exception:
+            lev = 1.0
+        if lev <= 0:
+            lev = 1.0
+
+        margin = (qty * eval_price) / lev if eval_price > 0 else 0.0
+        used_percent = margin / collateral * 100.0
+
+        if used_percent >= limit_percent:
+            # ⬇️ 日志去重：每个 trade 只打印一次，直到不再超限
+            if trade.id not in self._pair_limit_logged:
+                self._pair_limit_logged.add(trade.id)
+                logger.info(
+                    f"[{trade.pair}] {YELLOW}单交易对持仓超限{RESET} "
+                    f"保证金={margin:.2f}, 总资金={collateral:.2f}, "
+                    f"占比={used_percent:.2f}% >= 上限={limit_percent:.2f}%，"
+                    f"停止逆势加仓（DCA / 网格）"
+                )
+            return True
+
+        # ⬇️ 不再超限 → 清掉去重标记，下次超限可再次打印
+        self._pair_limit_logged.discard(trade.id)
+        return False
+
     def _amount_mode(self):
         """全局金额模式：percent / amount"""
         try:
@@ -1463,6 +1535,10 @@ class DcaTpShort(IStrategy):
         cfg = self.get_runtime_config()
         dca_cfg = self._cfg(cfg, "dca", default={}) or {}
         if not bool(dca_cfg.get("enable", True)):
+            return None
+
+        # ⬇️ 新增：单交易对持仓超限 → 停止 DCA（逆势加仓）
+        if self._pair_position_exceeded(trade, current_rate):
             return None
 
         candle_key = self._get_candle_ts(df)
@@ -2091,6 +2167,11 @@ class DcaTpShort(IStrategy):
 
         # 做空：价格 >= grid_upper 时加仓
         if price >= grid_upper:
+
+            # ⬇️ 新增：单交易对持仓超限 → 停止网格加仓（逆势加仓）；网格减仓不受影响
+            if self._pair_position_exceeded(trade, price):
+                return None
+            
             if max_w > 0 and w >= max_w:
                 logger.debug(f"[{trade.pair}] 网格加仓达到上限 w={w} >= {max_w}，跳过")
                 return None

@@ -75,6 +75,13 @@
                     <span v-else class="empty-placeholder"></span>
                 </el-descriptions-item>
 
+                <el-descriptions-item label="单对持仓上限" :span="2">
+                    <span v-if="tradeInfo.pairMaxPositionSignal">
+                        {{ tradeInfo.pairMaxPositionSignal }}
+                    </span>
+                    <span v-else class="empty-placeholder"></span>
+                </el-descriptions-item>
+
                 <el-descriptions-item
                     v-if="tradeInfo.roiLevels.length"
                     label="ROI阶梯"
@@ -1250,6 +1257,51 @@
                 </el-card>
             </el-col>
         </el-row>
+        <!-- ==================== 单交易对持仓限制 ==================== -->
+        <el-card class="section-card">
+            <template #header>
+                <div class="card-head">
+                    <span class="card-head__title">单交易对持仓限制</span>
+                    <span class="card-head__meta">
+                        <el-text type="info" size="small">
+                            超限后仅停止该交易对的 DCA 与网格加仓
+                        </el-text>
+                    </span>
+                </div>
+            </template>
+
+            <el-alert
+                class="section-alert"
+                type="warning"
+                :closable="false"
+                show-icon>
+                该交易对保证金占用超过总资金比例后，停止 DCA 与网格加仓；止盈、止损、趋势加仓等逻辑不受影响
+            </el-alert>
+
+            <el-form class="compact-form" label-width="140px" size="small">
+                <el-row :gutter="12">
+                    <el-col :span="8">
+                        <el-form-item label="启用限制">
+                            <el-switch v-model="config.pair_max_position.enable" />
+                        </el-form-item>
+                    </el-col>
+                    <el-col :span="8">
+                        <el-form-item label="最大持仓占比%">
+                            <el-input-number
+                                v-model="config.pair_max_position.percent"
+                                class="field-input"
+                                controls-position="right"
+                                :min="1"
+                                :max="100"
+                                :step="1"
+                                :precision="2"
+                                :disabled="!config.pair_max_position.enable"
+                            />
+                        </el-form-item>
+                    </el-col>
+                </el-row>
+            </el-form>
+        </el-card>
 
         <!-- ==================== 保存 ==================== -->
         <div class="save-bar">
