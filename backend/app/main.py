@@ -18,6 +18,7 @@ from app.api.config import router as config_router
 from app.api.chart import router as chart_router
 from app.api import logs
 from app.api import strategy
+from app.api import bots
 from app.services.health_monitor import (
     start_health_monitor,
     stop_health_monitor,
@@ -165,6 +166,12 @@ app.include_router(
     strategy.router,
     prefix="/strategy",
     tags=["strategy"]
+)
+
+app.include_router(
+    bots.router,
+    prefix="/bots",
+    tags=["bots"]
 )
 
 app.include_router(

@@ -322,10 +322,14 @@ class DcaTpShort(IStrategy):
         )
 
     def get_runtime_config(self):
+        # 1) 优先读 Freqtrade 加载进来的 custom_params
+        custom = (self.config or {}).get("custom_params", {}) or {}
+        if "short" in custom and custom["short"]:
+            return custom["short"]
 
-        cfg = ConfigManager.get("short")
-
-        return cfg
+        # 2) 兜底：读旧的 ConfigManager（兼容旧单例模式）
+        from core.config_manager import ConfigManager
+        return ConfigManager.get("short")
 
     def _cfg(self, cfg: dict, *keys, default=None):
         cur = cfg
@@ -1096,7 +1100,7 @@ class DcaTpShort(IStrategy):
                             return False
             except Exception as e:
                 logger.warning(f"[{pair}] Pump 保护检测失败: {e}")
-                
+
             try:
                 cfg = self.get_runtime_config()
                 htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}

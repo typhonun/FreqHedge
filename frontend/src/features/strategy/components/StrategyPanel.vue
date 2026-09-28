@@ -1514,16 +1514,6 @@
                 </el-row>
             </el-form>
         </el-card>
-
-        <!-- ==================== 保存 ==================== -->
-        <div class="save-bar">
-            <el-button
-                type="primary"
-                size="large"
-                @click="emit('save')">
-                保存策略
-            </el-button>
-        </div>
     </div>
 </template>
 

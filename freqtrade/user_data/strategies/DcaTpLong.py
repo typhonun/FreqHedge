@@ -322,10 +322,14 @@ class DcaTpLong(IStrategy):
         )
 
     def get_runtime_config(self):
+        # 1) 优先读 Freqtrade 加载进来的 custom_params
+        custom = (self.config or {}).get("custom_params", {}) or {}
+        if "long" in custom and custom["long"]:
+            return custom["long"]
 
-        cfg = ConfigManager.get("long")
-
-        return cfg
+        # 2) 兜底：读旧的 ConfigManager（兼容旧单例模式）
+        from core.config_manager import ConfigManager
+        return ConfigManager.get("long")
 
     def _cfg(self, cfg: dict, *keys, default=None):
         cur = cfg

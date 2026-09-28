@@ -13,6 +13,9 @@ import Logs from "@/views/Logs.vue"
 
 import Settings from '@/views/Settings.vue'
 import SettingsProfile from '@/views/settings/Profile.vue'
+// ============ 新增多实例页面 ============
+import BotList from "@/views/bots/BotList.vue"
+import BotConfig from "@/views/bots/BotConfig.vue"
 
 const routes = [
     {
@@ -25,6 +28,25 @@ const routes = [
                 name: "Dashboard",
                 component: Dashboard,
                 meta: { title: "仪表盘" }     // ← 新增
+            },
+            // ============ 新增：多实例机器人管理 ============
+            {
+                path: "bots",
+                name: "BotList",
+                component: BotList,
+                meta: { title: "机器人管理" }
+            },
+            {
+                path: "bots/new",
+                name: "BotNew",
+                component: BotConfig,
+                meta: { title: "新建机器人" }
+            },
+            {
+                path: "bots/:id",
+                name: "BotDetail",
+                component: BotConfig,
+                meta: { title: "机器人配置" }
             },
             {
                 path: "control",

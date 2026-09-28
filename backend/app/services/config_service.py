@@ -1,15 +1,94 @@
 import json
 from app.services.freqtrade_client import FreqtradeClient
+from pathlib import Path
 
 from config.settings import (
     LONG_CONFIG,
     SHORT_CONFIG,
     LONG_URL,
-    SHORT_URL
+    SHORT_URL,
+    FREQTRADE_DIR,
 )
-
+FREQTRADE_ROOT = Path(FREQTRADE_DIR)
+USER_DATA = FREQTRADE_ROOT / "user_data"
+BOTS_DIR = USER_DATA / "bots"
+BASE_LONG = USER_DATA / "config_long.json"
+BASE_SHORT = USER_DATA / "config_short.json"
 
 class ConfigService:
+
+    # ================== 新增：多实例配置生成 ==================
+    @staticmethod
+    def generate_configs(bot_id: int, payload: dict):
+        """为 bot_id 生成 config_long.json / config_short.json"""
+        bot_dir = BOTS_DIR / str(bot_id)
+        bot_dir.mkdir(parents=True, exist_ok=True)
+        (bot_dir / "logs").mkdir(exist_ok=True)
+
+        base = payload["base"]
+
+        if base["enableLong"]:
+            cfg = ConfigService._build_config(
+                bot_id=bot_id,
+                side="long",
+                base=base,
+                strategy_params=payload.get("longConfig") or {},
+                template=BASE_LONG,
+            )
+            (bot_dir / "config_long.json").write_text(
+                json.dumps(cfg, indent=4, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+        if base["enableShort"]:
+            cfg = ConfigService._build_config(
+                bot_id=bot_id,
+                side="short",
+                base=base,
+                strategy_params=payload.get("shortConfig") or {},
+                template=BASE_SHORT,
+            )
+            (bot_dir / "config_short.json").write_text(
+                json.dumps(cfg, indent=4, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+    @staticmethod
+    def _build_config(bot_id, side, base, strategy_params, template):
+        cfg = ConfigService.read_json(template)
+
+        port = ConfigService._get_port(bot_id, side)
+        db_file = (Path(FREQTRADE_DIR) / f"user_data/bots/{bot_id}/tradesv3_{side}.sqlite").as_posix()
+
+        cfg["db_url"] = f"sqlite:///{db_file}"
+        cfg["api_server"]["listen_port"] = port
+        cfg["api_server"]["CORS_origins"] = ["*"]
+
+        # ★ 新字段生效
+        cfg["dry_run"] = bool(base.get("dryRun", True))
+        cfg["dry_run_wallet"] = base["capital"]
+        cfg["stake_amount"] = base.get("stakeAmount", 30)
+        cfg["leverage"] = base.get("leverage", 10)
+
+        cfg["bot_name"] = f"{base['name']}-{side}"
+        cfg.setdefault("exchange", {})
+        cfg["exchange"]["pair_whitelist"] = list(base["pair"])  # list
+
+        cfg["custom_params"] = {side: strategy_params}
+
+        return cfg
+
+    @staticmethod
+    def _get_port(bot_id, side):
+        base = 8011 + bot_id * 2
+        return base if side == "long" else base + 1
+
+    @staticmethod
+    def remove_bot_dir(bot_id: int):
+        import shutil
+        bot_dir = BOTS_DIR / str(bot_id)
+        if bot_dir.exists():
+            shutil.rmtree(bot_dir)
 
     @staticmethod
     def read_json(path):

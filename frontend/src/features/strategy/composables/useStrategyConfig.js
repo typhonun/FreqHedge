@@ -260,8 +260,6 @@ const buildTradeInfo = (side, config) => {
     }
 }
 
-export function useStrategyConfig() {
-
 const defaultLongConfig = () => ({
     side: "long",
 
@@ -449,7 +447,6 @@ const defaultLongConfig = () => ({
         cooldown_minutes: 30
     }
 })
-
 
 const defaultShortConfig = () => ({
     side: "short",
@@ -640,6 +637,16 @@ const defaultShortConfig = () => ({
         cooldown_minutes: 30
     }
 })
+
+export function getDefaultLongConfig() {
+    return JSON.parse(JSON.stringify(defaultLongConfig()))
+}
+
+export function getDefaultShortConfig() {
+    return JSON.parse(JSON.stringify(defaultShortConfig()))
+}
+
+export function useStrategyConfig() {
 
 const longConfig = ref(
     defaultLongConfig()

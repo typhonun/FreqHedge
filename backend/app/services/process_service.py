@@ -14,6 +14,78 @@ from pathlib import Path
 class ProcessService:
 
     @classmethod
+    def start_bot(cls, bot: dict):
+        import subprocess, sys, time
+
+        bot_id = bot["id"]
+        base_dir = Path(FREQTRADE_DIR)   # ← 用局部变量名，别叫 FREQTRADE_DIR
+
+        started = []
+
+        for side in ("long", "short"):
+            enabled = bot.get("enableLong") if side == "long" else bot.get("enableShort")
+            if not enabled:
+                continue
+
+            cfg = base_dir / f"user_data/bots/{bot_id}/config_{side}.json"
+            if not cfg.exists():
+                return {"success": False, "error": f"config {side} missing"}
+
+            port = cls._get_port(bot_id, side)
+            old_pids = cls.get_port_pids(port)
+            for pid in old_pids:
+                cls.terminate_pid(pid, f"bot{bot_id}-{side}")
+            time.sleep(0.5)
+
+            log_path = base_dir / f"user_data/bots/{bot_id}/logs/{side}.log"
+            strategy = "DcaTpLong" if side == "long" else "DcaTpShort"
+
+            proc = subprocess.Popen(
+                [
+                    sys.executable, "-m", "freqtrade", "trade",
+                    "--config", str(cfg),
+                    "--strategy", strategy,
+                    "--strategy-path", str(base_dir / "user_data/strategies"),
+                    "--logfile", str(log_path),
+                ],
+                cwd=str(base_dir),
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+            started.append((side, proc.pid))
+
+        for side, _ in started:
+            url = f"http://127.0.0.1:{cls._get_port(bot_id, side)}"
+            cls.wait_until_alive(url, timeout=30)
+
+        return {"success": True, "started": [s for s, _ in started]}
+
+    @classmethod
+    def stop_bot(cls, bot: dict):
+        bot_id = bot["id"]
+        stopped = []
+        for side in ("long", "short"):
+            port = cls._get_port(bot_id, side)
+            for pid in cls.get_port_pids(port):
+                cls.terminate_pid(pid, f"bot{bot_id}-{side}")
+                stopped.append(side)
+        return {"success": True, "stopped": stopped}
+
+    @classmethod
+    def status_bot(cls, bot: dict):
+        bot_id = bot["id"]
+        result = {}
+        for side in ("long", "short"):
+            port = cls._get_port(bot_id, side)
+            url = f"http://127.0.0.1:{port}"
+            result[side] = FreqtradeClient.is_freqtrade_alive(url)
+        return result
+
+    @staticmethod
+    def _get_port(bot_id, side):
+        base = 8011 + bot_id * 2
+        return base if side == "long" else base + 1
+
+    @classmethod
     def wait_until_alive(cls, url, timeout=30):
 
         for _ in range(timeout):

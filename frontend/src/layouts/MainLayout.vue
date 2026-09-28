@@ -1,7 +1,5 @@
-<!-- src/layouts/MainLayout.vue -->
 <template>
   <el-container class="layout">
-    <!-- 侧边栏 -->
     <el-aside width="280px" class="sidebar">
       <div class="logo">
         <span class="logo-text">DcaTp Manager</span>
@@ -19,14 +17,23 @@
           <el-icon :size="20"><Odometer /></el-icon>
           <span>仪表盘</span>
         </el-menu-item>
+
+        <!-- 新增：机器人管理 -->
+        <el-menu-item index="/bots">
+          <el-icon :size="20"><Monitor /></el-icon>
+          <span>机器人管理</span>
+        </el-menu-item>
+
+        <!-- 旧的入口暂时保留（可加个标记），等新功能稳定后删除 -->
         <el-menu-item index="/control">
           <el-icon :size="20"><Monitor /></el-icon>
-          <span>控制中心</span>
+          <span>控制中心（旧）</span>
         </el-menu-item>
         <el-menu-item index="/strategyConfig">
           <el-icon :size="20"><SetUp /></el-icon>
-          <span>策略配置</span>
+          <span>策略配置（旧）</span>
         </el-menu-item>
+
         <el-menu-item index="/charts">
           <el-icon :size="20"><TrendCharts /></el-icon>
           <span>K线分析</span>
@@ -42,9 +49,7 @@
       </el-menu>
     </el-aside>
 
-    <!-- 主内容区 -->
     <el-container>
-      <!-- 顶栏 -->
       <el-header class="topbar" height="72px">
         <div class="page-title">{{ pageTitle }}</div>
         <div class="topbar-right">
