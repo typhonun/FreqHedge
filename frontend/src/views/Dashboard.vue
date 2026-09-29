@@ -3,9 +3,12 @@
     <el-row :gutter="20">
       <el-col :span="16">
         <AccountCard
+          v-model="accountSelected"
           :summary="store.summary"
           :floating="store.floating"
           :balanceCurve="store.balanceCurve"
+          :botList="botList"
+          @change="onAccountChange"
         />
       </el-col>
       <el-col :span="8">
@@ -16,9 +19,13 @@
     <br />
     <ProfitCard :profit="store.profit" />
     <br />
-    <ClosedProfitCard :profit="store.closedProfit" />
-    <br /><br />
-    <ProfitCurve :data="store.profitCurve" />
+
+    <ProfitCurve
+      v-model="profitSelected"
+      :data="store.profitCurve"
+      :botList="botList"
+      @change="onProfitChange"
+    />
 
     <!-- ★ 快速跳转卡片 -->
     <el-row :gutter="20">
@@ -49,40 +56,63 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
+import { computed, onMounted, onUnmounted, onActivated, onDeactivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight } from '@element-plus/icons-vue'
 
 import AccountCard from '@features/dashboard/components/AccountCard.vue'
 import ProfitCard from '@features/dashboard/components/ProfitCard.vue'
 import ExposureCard from '@features/dashboard/components/ExposureCard.vue'
-import ClosedProfitCard from '@features/dashboard/components/ClosedProfitCard.vue'
 import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 
 import { useTradeStore } from '@/stores/tradeStore'
+import axios from 'axios'
 
+const API = 'http://localhost:9000'
 const router = useRouter()
 const store = useTradeStore()
 
+// 两个独立的下拉框
+const accountSelected = ref('__total__')
+const profitSelected = ref('__total__')
+
+const botList = ref([])
+
+const toBotId = (v) => (v === '__total__' ? null : v)
+
+// 快速跳转卡片
 const positionCount = computed(() => {
   const p = store.positions || {}
   return (p.long?.length || 0) + (p.short?.length || 0)
 })
-
 const closedCount = computed(() => {
   const p = store.closedPositions || {}
   return (p.long?.length || 0) + (p.short?.length || 0)
 })
-
 const goPositions = () => router.push({ name: 'Positions' })
 
+// 定时器
 let timer = null
 let historyTimer = null
 
+const refreshAccount = () =>
+  store.refreshAccount(toBotId(accountSelected.value))
+
+const refreshProfitCurve = () =>
+  store.refreshProfitCurve(toBotId(profitSelected.value))
+
 const startTimers = () => {
   stopTimers()
-  timer = setInterval(() => store.refresh(null), 5000)
-  historyTimer = setInterval(() => store.refreshHistory(null), 60000)
+  // 每 5 秒刷账户+收益曲线
+  timer = setInterval(async () => {
+    await refreshAccount()
+    await refreshProfitCurve()
+  }, 5000)
+  // 每 60 秒刷一次其它通用数据（持仓、已平仓）
+  historyTimer = setInterval(async () => {
+    await store.refresh(null)
+    await store.refreshHistory(null)
+  }, 60000)
 }
 
 const stopTimers = () => {
@@ -90,8 +120,28 @@ const stopTimers = () => {
   if (historyTimer) { clearInterval(historyTimer); historyTimer = null }
 }
 
+const loadBotList = async () => {
+  try {
+    const { data } = await axios.get(`${API}/bots`)
+    botList.value = data.map(b => ({ id: b.id, name: b.name }))
+  } catch (e) {
+    console.error('load bot list failed', e)
+  }
+}
+
+// 两个下拉框各自的 change 回调
+const onAccountChange = async () => {
+  await refreshAccount()
+}
+
+const onProfitChange = async () => {
+  await refreshProfitCurve()
+}
+
 onMounted(async () => {
-  store.setBotId(null)
+  await loadBotList()
+  await refreshAccount()
+  await refreshProfitCurve()
   await store.refresh(null)
   await store.refreshHistory(null)
   startTimers()
@@ -99,7 +149,11 @@ onMounted(async () => {
 
 onUnmounted(stopTimers)
 onDeactivated(stopTimers)
+
 onActivated(async () => {
+  await loadBotList()
+  await refreshAccount()
+  await refreshProfitCurve()
   await store.refresh(null)
   await store.refreshHistory(null)
   startTimers()

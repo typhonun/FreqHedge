@@ -221,7 +221,7 @@ class PositionService:
             if holding_minutes >= level.get("minutes", 0):
                 roi = level.get("roi", 0)
         return roi
-    
+
     # =========================================================
     # 时间计算
     # =========================================================
@@ -817,24 +817,51 @@ class PositionService:
     def record_metrics():
         db = SessionLocal()
         try:
+            now = int(time.time())
+
+            # 1) 全局
             snapshot = PositionService.get_snapshot(cache_seconds=0)
             summary = PositionService.get_account_summary(snapshot)
             floating = PositionService.get_floating_profit(snapshot)
             profit = PositionService.get_total_profit_summary(snapshot)
 
-            now = int(time.time())
-            wallet = summary["total_balance"]
-            fp = floating["total_float"]
-            equity = wallet + fp
+            equity = summary["total_balance"] + floating["total_float"]
+            db.add(EquityHistory(
+                bot_id=None, timestamp=now,
+                equity=round(equity, 2),
+                wallet=round(summary["total_balance"], 2),
+                profit=round(floating["total_float"], 2),
+            ))
+            db.add(ProfitHistory(
+                bot_id=None, timestamp=now,
+                total_profit=round(profit["total_profit"], 2),
+                long_profit=round(profit["long_total_profit"], 2),
+                short_profit=round(profit["short_total_profit"], 2),
+            ))
 
-            db.add(EquityHistory(timestamp=now, equity=round(equity, 2),
-                                 wallet=round(wallet, 2), profit=round(fp, 2)))
-            db.add(ProfitHistory(timestamp=now,
-                                 total_profit=round(profit["total_profit"], 2),
-                                 long_profit=round(profit["long_total_profit"], 2),
-                                 short_profit=round(profit["short_total_profit"], 2)))
+            # 2) 每个 running bot
+            for bot in list_running_bots():
+                bid = bot["id"]
+
+                snap = PositionService.get_snapshot(bot_id=bid, cache_seconds=0)
+                s = PositionService.get_account_summary(snap)
+                f = PositionService.get_floating_profit(snap)
+                p = PositionService.get_total_profit_summary(snap)
+
+                db.add(EquityHistory(
+                    bot_id=bid, timestamp=now,
+                    equity=round(s["total_balance"] + f["total_float"], 2),
+                    wallet=round(s["total_balance"], 2),
+                    profit=round(f["total_float"], 2),
+                ))
+                db.add(ProfitHistory(
+                    bot_id=bid, timestamp=now,
+                    total_profit=round(p["total_profit"], 2),
+                    long_profit=round(p["long_total_profit"], 2),
+                    short_profit=round(p["short_total_profit"], 2),
+                ))
+
             db.commit()
-            print(f"[Metrics] equity={equity:.2f} profit={profit['total_profit']:.2f}")
         except Exception as e:
             db.rollback()
             print("record metrics error:", e)
@@ -842,38 +869,43 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def get_balance_curve(period="1D"):
+    def get_balance_curve(period="1D", bot_id: int | None = None):
         db = SessionLocal()
         try:
             now = int(time.time())
             start_time = now - PositionService._period_seconds(period)
-            records = (
-                db.query(EquityHistory)
-                .filter(EquityHistory.timestamp >= start_time)
-                .order_by(EquityHistory.timestamp.asc())
-                .all()
-            )
+            q = db.query(EquityHistory).filter(EquityHistory.timestamp >= start_time)
+
+            if bot_id is None:
+                q = q.filter(EquityHistory.bot_id.is_(None))  # 全局
+            else:
+                q = q.filter(EquityHistory.bot_id == bot_id)
+
+            records = q.order_by(EquityHistory.timestamp.asc()).all()
             step = PositionService._sampling_step(period)
             records = records[::step]
             return [
-                {"time": r.timestamp, "balance": r.equity, "wallet": r.wallet, "profit": r.profit}
+                {"time": r.timestamp, "balance": r.equity,
+                 "wallet": r.wallet, "profit": r.profit}
                 for r in records
             ]
         finally:
             db.close()
 
     @staticmethod
-    def get_profit_curve(period="1D"):
+    def get_profit_curve(period="1D", bot_id: int | None = None):
         db = SessionLocal()
         try:
             now = int(time.time())
             start_time = now - PositionService._period_seconds(period)
-            records = (
-                db.query(ProfitHistory)
-                .filter(ProfitHistory.timestamp >= start_time)
-                .order_by(ProfitHistory.timestamp.asc())
-                .all()
-            )
+            q = db.query(ProfitHistory).filter(ProfitHistory.timestamp >= start_time)
+
+            if bot_id is None:
+                q = q.filter(ProfitHistory.bot_id.is_(None))
+            else:
+                q = q.filter(ProfitHistory.bot_id == bot_id)
+
+            records = q.order_by(ProfitHistory.timestamp.asc()).all()
             step = PositionService._sampling_step(period)
             records = records[::step]
             return [

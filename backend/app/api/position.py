@@ -63,24 +63,18 @@ def total_profit(bot_id: int | None = Query(None)):
 
 @router.get("/balance_curve")
 def get_balance_curve(
-
-    period: str = Query("1D")
-
+    period: str = Query("1D"),
+    bot_id: int | None = Query(None),
 ):
-    return PositionService.get_balance_curve(
-        period
-    )
+    return PositionService.get_balance_curve(period, bot_id=bot_id)
 
 
 @router.get("/profit_curve")
 def get_profit_curve(
-
-    period: str = Query("1D")
-
+    period: str = Query("1D"),
+    bot_id: int | None = Query(None),
 ):
-    return PositionService.get_profit_curve(
-        period
-    )
+    return PositionService.get_profit_curve(period, bot_id=bot_id)
 
 
 @router.get("/floating")

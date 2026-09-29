@@ -1,7 +1,25 @@
 <template>
   <el-card class="account-card">
     <template #header>
-      <h2>账户总览</h2>
+      <div class="card-header">
+        <h2>账户总览</h2>
+
+        <!-- 新增下拉框 -->
+        <el-select
+          v-model="selected"
+          size="small"
+          style="width: 180px"
+          @change="handleChange"
+        >
+          <el-option label="总资金" value="__total__" />
+          <el-option
+            v-for="bot in botList"
+            :key="bot.id"
+            :label="bot.name"
+            :value="bot.id"
+          />
+        </el-select>
+      </div>
     </template>
 
     <el-row :gutter="20">
@@ -56,6 +74,7 @@
 </template>
 
 <script setup>
+import { ref, watch } from 'vue'
 import BalanceCurve from './BalanceCurve.vue'
 
 const props = defineProps({
@@ -67,15 +86,25 @@ const props = defineProps({
     type: Object,
     default: () => ({})
   },
-  balanceCurve: {
-    type:Array,
-    default:()=>[]
-  }
+  balanceCurve: { type: Array, default: () => [] },
+  // 新增：机器人列表
+  botList: { type: Array, default: () => [] },
+  // 新增：当前选中值（受控，可选）
+  modelValue: { type: [String, Number], default: '__total__' }
 })
 
-const format = (value) => {
-  return Number(value || 0).toFixed(2)
+const emit = defineEmits(['update:modelValue', 'change'])
+
+const selected = ref(props.modelValue)
+
+watch(() => props.modelValue, v => { selected.value = v })
+
+const handleChange = (val) => {
+  emit('update:modelValue', val)
+  emit('change', val)   // 父组件监听这个事件去拉数据
 }
+
+const format = (value) => Number(value || 0).toFixed(2)
 </script>
 
 <style scoped>
@@ -101,5 +130,11 @@ const format = (value) => {
 
 .loss {
   color: #f56c6c;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 </style>
