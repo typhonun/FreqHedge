@@ -71,6 +71,23 @@ class ProcessService:
         return {"success": True, "stopped": stopped}
 
     @classmethod
+    def restart_bot_side(cls, bot_id: int, side: str):
+        """停掉指定 side，重新拉起"""
+        from app.services.bot_manager import BotManager
+        bot = BotManager.get(bot_id)
+        if not bot:
+            return {"success": False, "error": "bot not found"}
+
+        # 先停
+        port = cls._get_port(bot_id, side)
+        for pid in cls.get_port_pids(port):
+            cls.terminate_pid(pid, f"bot{bot_id}-{side}")
+        time.sleep(0.5)
+
+        # 只启指定 side
+        return cls._start_side(bot, side)
+
+    @classmethod
     def status_bot(cls, bot: dict):
         bot_id = bot["id"]
         result = {}

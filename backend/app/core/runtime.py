@@ -1,6 +1,8 @@
 LONG_PROCESS = None
 SHORT_PROCESS = None
 
+PROCESSES = {}
+
 RUNNING = {
     "long": False,
     "short": False
@@ -79,3 +81,5 @@ ROUND_INFO = {
     # ===== 追踪触发次数 =====
     "global_trail_count": 0,
 }
+
+ROUND_INFO_BY_BOT = {}

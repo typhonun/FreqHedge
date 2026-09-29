@@ -193,6 +193,14 @@ class BotManager:
             with _conn() as c:
                 c.execute("UPDATE bots SET status='running' WHERE id=?", (bot_id,))
                 c.commit()
+
+            # ★ 新增
+            try:
+                from app.services.risk_service import RiskService
+                RiskService.init_round(bot_id)
+            except Exception as e:
+                print(f"[BotManager] init_round 失败 bot={bot_id}: {e}")
+
         return result
 
     @staticmethod

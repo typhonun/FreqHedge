@@ -20,44 +20,43 @@ class PositionAction(BaseModel):
 
 
 @router.get("/open")
-def open_positions():
-    return PositionService.get_open_positions()
+def open_positions(bot_id: int | None = Query(None)):
+    return PositionService.get_open_positions(bot_id=bot_id)
 
 
 @router.get("/closed")
-def closed_positions():
-    return PositionService.get_closed_positions()
+def closed_positions(bot_id: int | None = Query(None)):
+    return PositionService.get_closed_positions(bot_id=bot_id)
 
 
 @router.get("/count")
-def count():
-    return PositionService.get_position_count()
+def count(bot_id: int | None = Query(None)):
+    return PositionService.get_position_count(bot_id=bot_id)
 
 
 @router.get("/summary")
-def summary():
-    return PositionService.get_account_summary()
+def summary(bot_id: int | None = Query(None)):
+    return PositionService.get_account_summary(bot_id=bot_id)
 
 
 @router.get("/profit")
-def profit():
-    return PositionService.get_profit_summary()
+def profit(bot_id: int | None = Query(None)):
+    return PositionService.get_profit_summary(bot_id=bot_id)
 
 
 @router.get("/profit_all")
-def profit_all():
-    return PositionService.get_closed_profit_summary()
+def profit_all(bot_id: int | None = Query(None)):
+    return PositionService.get_closed_profit_summary(bot_id=bot_id)
 
 
 @router.get("/closed_profit")
-def closed_profit():
-    return PositionService.get_closed_profit_summary()
+def closed_profit(bot_id: int | None = Query(None)):
+    return PositionService.get_closed_profit_summary(bot_id=bot_id)
 
 
 @router.get("/total_profit")
-def total_profit():
-
-    return PositionService.get_total_profit_summary()
+def total_profit(bot_id: int | None = Query(None)):
+    return PositionService.get_total_profit_summary(bot_id=bot_id)
 
 
 @router.get("/balance_curve")
@@ -83,23 +82,13 @@ def get_profit_curve(
 
 
 @router.get("/floating")
-def floating():
-    return PositionService.get_floating_profit()
+def floating(bot_id: int | None = Query(None)):
+    return PositionService.get_floating_profit(bot_id=bot_id)
 
 
 @router.post("/action")
-def position_action(
-        data: PositionAction
-):
+def position_action(data: PositionAction, bot_id: int | None = Query(None)):
     return PositionService.trade_action(
-
-        trade_id=data.trade_id,
-
-        side=data.side,
-
-        action=data.action,
-
-        amount=data.amount,
-
-        price=data.price
+        trade_id=data.trade_id, side=data.side, action=data.action,
+        amount=data.amount, price=data.price, bot_id=bot_id,
     )

@@ -11,6 +11,9 @@ LOG_FILES = {
     "short": BASE_DIR / "freqtrade/logs/short.log",
 }
 
+def _bot_log_path(bot_id: int, side: str):
+    return BASE_DIR / "freqtrade" / "user_data" / "bots" / str(bot_id) / "logs" / f"{side}.log"
+
 # 更稳健的 ANSI 转义序列正则（覆盖大多数控制序列）
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
@@ -61,8 +64,11 @@ class LogService:
         }
 
     @classmethod
-    def read(cls, source: str, limit: int = 200) -> list:
-        path = LOG_FILES.get(source)
+    def read(cls, source: str, limit: int = 200, bot_id: int = None) -> list:
+        if bot_id is not None and source in ("long", "short"):
+            path = _bot_log_path(bot_id, source)
+        else:
+            path = LOG_FILES.get(source)
         if not path or not path.exists():
             return []
 

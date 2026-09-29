@@ -1,241 +1,147 @@
-"""
-Freqtrade 健康监控
-
-策略：
-- 每 30s 检查一次 LONG / SHORT 是否存活
-- 只有该 side 存在未平仓交易（SQLite 里 is_open=1）时才探活，无持仓不管
-- 连续 N 次（默认 3 次）探活失败才重启，避免网络抖动误重启
-- 探活成功一次立刻清零失败计数
-- 重启时打日志，重启失败不抛出，等下一轮继续尝试
-"""
-
+# backend/app/services/health_monitor.py
 import threading
 import time
 import sqlite3
 import traceback
-
+from pathlib import Path
 from app.services.freqtrade_client import FreqtradeClient
 from app.services.process_service import ProcessService
-from config.settings import (
-    LONG_URL,
-    SHORT_URL,
-    LONG_DB,
-    SHORT_DB,
+from app.services.bot_runtime import (
+    list_running_bots, get_bot_url, get_bot_db_path, get_enabled_sides,
 )
 
-# =========================================================
-# 配置
-# =========================================================
-
-CHECK_INTERVAL = 30        # 检查周期（秒）
-FAIL_THRESHOLD = 3         # 连续失败多少次才重启
-PROBE_TIMEOUT = 3          # is_freqtrade_alive 内部超时
-
-# =========================================================
-# 运行状态
-# =========================================================
+CHECK_INTERVAL = 30
+FAIL_THRESHOLD = 3
 
 _health_thread = None
 _health_stop = threading.Event()
 
-_health_state = {
-    "long": {
-        "fail": 0,
-        "restarting": False,
-        "last_alive": None,       # True / False / None(未知)
-        "last_probe_ts": 0,
-        "last_restart_ts": 0,
-        "restart_count": 0,
-    },
-    "short": {
-        "fail": 0,
-        "restarting": False,
-        "last_alive": None,
-        "last_probe_ts": 0,
-        "last_restart_ts": 0,
-        "restart_count": 0,
-    },
-}
+# key = (bot_id, side)
+_health_state = {}
 
 
-# =========================================================
-# 内部工具
-# =========================================================
+def _state(bot_id, side):
+    return _health_state.setdefault((bot_id, side), {
+        "fail": 0, "restarting": False, "last_alive": None,
+        "last_probe_ts": 0, "last_restart_ts": 0, "restart_count": 0,
+    })
+
 
 def _has_open_trades(db_path) -> bool:
-    """
-    直接查 Freqtrade sqlite，判断该 side 是否有未平仓交易。
-    不用 get_open_positions，避免依赖 snapshot 缓存。
-    """
     if not db_path:
         return False
-
+    if not Path(db_path).exists():
+        return False
     try:
         conn = sqlite3.connect(db_path, timeout=3)
         cur = conn.cursor()
         cur.execute("SELECT COUNT(*) FROM trades WHERE is_open = 1")
         row = cur.fetchone()
         conn.close()
-
-        if not row:
-            return False
-
-        return int(row[0]) > 0
-
+        return bool(row and int(row[0]) > 0)
     except Exception as e:
         print(f"[health] check open trades failed ({db_path}): {e}")
         return False
 
 
-def _restart_side(side, url):    # ← 去掉 db_path
+def _restart_bot_side(bot_id: int, side: str, url: str):
     try:
-        print(f"[health] {side} 开始重启 ...")
-
-        ProcessService.start_freqtrade()
-
-        if not ProcessService.wait_until_alive(url):
-            print(f"[health] {side} 重启失败：API 启动超时")
+        print(f"[health] bot={bot_id} {side} 重启...")
+        ProcessService.restart_bot_side(bot_id, side)
+        if not ProcessService.wait_until_alive(url, timeout=30):
+            print(f"[health] bot={bot_id} {side} 重启失败")
             return False
-
         FreqtradeClient.start_bot(url)
 
+        # ★ 新增：重置 risk round
         try:
-            from app.services.state_service import StateService
-            state = StateService.load()
-            if side == "long":
-                state["long"] = True
-            else:
-                state["short"] = True
-            StateService.save(state["long"], state["short"])
+            from app.services.risk_service import RiskService
+            RiskService.init_round(bot_id)
         except Exception as e:
-            print(f"[health] StateService.save failed: {e}")
+            print(f"[health] init_round 失败 bot={bot_id}: {e}")
 
-        print(f"[health] {side} 重启成功")
         return True
-
     except Exception as e:
-        print(f"[health] {side} 重启异常: {e}")
+        print(f"[health] bot={bot_id} {side} 重启异常: {e}")
         traceback.print_exc()
         return False
 
 
-def _check_one(side: str, url: str, db_path) -> None:
-    state = _health_state[side]
-
+def _check_one(bot_id: int, side: str):
+    state = _state(bot_id, side)
     now = time.time()
     state["last_probe_ts"] = now
 
     if state["restarting"]:
         return
 
+    url = get_bot_url(bot_id, side)
+    db_path = get_bot_db_path(bot_id, side)
+
     try:
-        # ---------- 1) 无持仓 → 不探活 ----------
         if not _has_open_trades(db_path):
             state["fail"] = 0
             state["last_alive"] = None
             return
 
-        # ---------- 2) 探活 ----------
         try:
             alive = FreqtradeClient.is_freqtrade_alive(url)
-        except Exception as e:
-            print(f"[health] {side} 探活异常: {e}")
+        except Exception:
             alive = False
 
         state["last_alive"] = alive
 
-        # ---------- 3) 在线 → 清零 ----------
         if alive:
-            if state["fail"] > 0:
-                print(f"[health] {side} 已恢复在线")
             state["fail"] = 0
             return
 
-        # ---------- 4) 离线 + 有持仓 → 累加 ----------
         state["fail"] += 1
-
-        print(f"[health] {side} offline ({state['fail']}/{FAIL_THRESHOLD})")
+        print(f"[health] bot={bot_id} {side} offline ({state['fail']}/{FAIL_THRESHOLD})")
 
         if state["fail"] < FAIL_THRESHOLD:
             return
 
-        # ---------- 5) 达阈值 → 重启 ----------
         state["restarting"] = True
         state["fail"] = 0
-
         try:
-            ok = _restart_side(side, url)   # ← 注意：这行现在跟方案 A 对齐
-
-            if ok:
-                state["last_alive"] = True
-                state["restart_count"] += 1
-            else:
-                state["last_alive"] = False
-
+            ok = _restart_bot_side(bot_id, side, url)
+            state["last_alive"] = bool(ok)
+            state["restart_count"] += 1
             state["last_restart_ts"] = time.time()
-
         finally:
             state["restarting"] = False
-
     except Exception as e:
-        print(f"[health] {side} check_one error: {e}")
+        print(f"[health] check_one error bot={bot_id} side={side}: {e}")
         traceback.print_exc()
 
 
-# =========================================================
-# 主循环
-# =========================================================
-
 def _health_loop():
-    print(
-        f"[health] monitor started "
-        f"(interval={CHECK_INTERVAL}s, threshold={FAIL_THRESHOLD})"
-    )
-
+    print(f"[health] monitor started (interval={CHECK_INTERVAL}s)")
     while not _health_stop.is_set():
-
-        # ---------- LONG ----------
         try:
-            _check_one("long", LONG_URL, LONG_DB)
+            for bot in list_running_bots():
+                for side in get_enabled_sides(bot):
+                    try:
+                        _check_one(bot["id"], side)
+                    except Exception as e:
+                        print(f"[health] loop error bot={bot['id']} side={side}: {e}")
         except Exception as e:
-            print(f"[health] long loop error: {e}")
+            print(f"[health] main loop error: {e}")
             traceback.print_exc()
 
-        # ---------- SHORT ----------
-        try:
-            _check_one("short", SHORT_URL, SHORT_DB)
-        except Exception as e:
-            print(f"[health] short loop error: {e}")
-            traceback.print_exc()
-
-        # ---------- 可中断 sleep ----------
         for _ in range(CHECK_INTERVAL):
             if _health_stop.is_set():
                 break
             time.sleep(1)
-
     print("[health] monitor stopped")
 
 
-# =========================================================
-# 对外入口
-# =========================================================
-
 def start_health_monitor():
     global _health_thread
-
     if _health_thread and _health_thread.is_alive():
-        print("[health] monitor already running")
         return
-
     _health_stop.clear()
-
-    _health_thread = threading.Thread(
-        target=_health_loop,
-        name="freqtrade-health",
-        daemon=True,
-    )
-
+    _health_thread = threading.Thread(target=_health_loop, name="freqtrade-health", daemon=True)
     _health_thread.start()
 
 
@@ -244,8 +150,4 @@ def stop_health_monitor():
 
 
 def get_health_state():
-    """可选：给 /control/health 用的快照"""
-    return {
-        "long": dict(_health_state["long"]),
-        "short": dict(_health_state["short"]),
-    }
+    return {f"{bid}:{side}": dict(s) for (bid, side), s in _health_state.items()}
