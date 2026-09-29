@@ -1,32 +1,5 @@
 <template>
   <div class="dashboard-page">
-    <!-- 顶部 bot 选择器 -->
-    <el-card class="bot-selector-card" shadow="never">
-      <div class="selector-row">
-        <span class="selector-label">数据视图</span>
-        <el-select
-          v-model="selectedBotId"
-          clearable
-          placeholder="全部机器人（聚合）"
-          style="width: 260px"
-        >
-          <el-option
-            v-for="b in bots"
-            :key="b.id"
-            :label="`${b.name} (#${b.id})`"
-            :value="b.id"
-          />
-        </el-select>
-
-        <el-tag v-if="selectedBotId == null" type="info" size="small">
-          聚合视图
-        </el-tag>
-        <el-tag v-else type="success" size="small">
-          单 bot 视图
-        </el-tag>
-      </div>
-    </el-card>
-
     <el-row :gutter="20">
       <el-col :span="16">
         <AccountCard
@@ -35,12 +8,10 @@
           :balanceCurve="store.balanceCurve"
         />
       </el-col>
+      <el-col :span="8">
+        <ExposureCard :summary="store.summary" />
+      </el-col>
     </el-row>
-
-    <br />
-    <el-col :span="8">
-      <ExposureCard :summary="store.summary" />
-    </el-col>
 
     <br />
     <ProfitCard :profit="store.profit" />
@@ -49,70 +20,89 @@
     <br /><br />
     <ProfitCurve :data="store.profitCurve" />
 
-    <el-card>
-      <h2>目前持仓</h2>
-      <PositionTableCommon :positions="store.positions" />
-    </el-card>
-
-    <br />
-    <ClosedTradeTable :positions="store.closedPositions" />
+    <!-- ★ 快速跳转卡片 -->
+    <el-row :gutter="20">
+      <el-col :span="12">
+        <el-card class="jump-card" shadow="hover" @click="goPositions">
+          <div class="jump-inner">
+            <div>
+              <div class="jump-title">当前持仓</div>
+              <div class="jump-value">{{ positionCount }}</div>
+            </div>
+            <el-icon class="jump-arrow"><ArrowRight /></el-icon>
+          </div>
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card class="jump-card" shadow="hover" @click="goPositions">
+          <div class="jump-inner">
+            <div>
+              <div class="jump-title">已平仓交易</div>
+              <div class="jump-value">{{ closedCount }}</div>
+            </div>
+            <el-icon class="jump-arrow"><ArrowRight /></el-icon>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
+import { useRouter } from 'vue-router'
+import { ArrowRight } from '@element-plus/icons-vue'
 
 import AccountCard from '@features/dashboard/components/AccountCard.vue'
 import ProfitCard from '@features/dashboard/components/ProfitCard.vue'
 import ExposureCard from '@features/dashboard/components/ExposureCard.vue'
-import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
-import ClosedTradeTable from '@features/dashboard/components/ClosedTradeTable.vue'
 import ClosedProfitCard from '@features/dashboard/components/ClosedProfitCard.vue'
 import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 
 import { useTradeStore } from '@/stores/tradeStore'
-import { useBotStore } from '@/stores/botStore'
 
+const router = useRouter()
 const store = useTradeStore()
-const botStore = useBotStore()
 
-const bots = ref([])
-const selectedBotId = ref(null)
+const positionCount = computed(() => {
+  const p = store.positions || {}
+  return (p.long?.length || 0) + (p.short?.length || 0)
+})
+
+const closedCount = computed(() => {
+  const p = store.closedPositions || {}
+  return (p.long?.length || 0) + (p.short?.length || 0)
+})
+
+const goPositions = () => router.push({ name: 'Positions' })
 
 let timer = null
 let historyTimer = null
 
-const loadBots = async () => {
-  await botStore.fetchBots()
-  bots.value = botStore.state.bots
+const startTimers = () => {
+  stopTimers()
+  timer = setInterval(() => store.refresh(null), 5000)
+  historyTimer = setInterval(() => store.refreshHistory(null), 60000)
 }
 
-const reload = async () => {
-  await store.refresh(selectedBotId.value)
-  await store.refreshHistory(selectedBotId.value)
+const stopTimers = () => {
+  if (timer) { clearInterval(timer); timer = null }
+  if (historyTimer) { clearInterval(historyTimer); historyTimer = null }
 }
-
-watch(selectedBotId, async (id) => {
-  store.setBotId(id)
-  await reload()
-})
 
 onMounted(async () => {
-  await loadBots()
-  await reload()
-
-  timer = setInterval(() => {
-    store.refresh(selectedBotId.value)
-  }, 5000)
-
-  historyTimer = setInterval(() => {
-    store.refreshHistory(selectedBotId.value)
-  }, 60000)
+  store.setBotId(null)
+  await store.refresh(null)
+  await store.refreshHistory(null)
+  startTimers()
 })
 
-onUnmounted(() => {
-  if (timer) clearInterval(timer)
-  if (historyTimer) clearInterval(historyTimer)
+onUnmounted(stopTimers)
+onDeactivated(stopTimers)
+onActivated(async () => {
+  await store.refresh(null)
+  await store.refreshHistory(null)
+  startTimers()
 })
 </script>
 
@@ -123,13 +113,35 @@ onUnmounted(() => {
   gap: 12px;
 }
 
-.bot-selector-card {
+.jump-card {
+  cursor: pointer;
   border-radius: 12px;
+  transition: transform 0.2s;
+}
+.jump-card:hover {
+  transform: translateY(-2px);
 }
 
-.selector-row {
+.jump-inner {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+}
+
+.jump-title {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.jump-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-main, #303133);
+}
+
+.jump-arrow {
+  font-size: 20px;
+  color: var(--el-text-color-placeholder);
 }
 </style>

@@ -10,7 +10,7 @@ import StrategyConfig from "@/views/StrategyConfig.vue"
 import Charts from "@/views/Charts.vue"
 import Control from "@/views/Control.vue"
 import Logs from "@/views/Logs.vue"
-
+import Positions from '@/views/Positions.vue'
 import Settings from '@/views/Settings.vue'
 import SettingsProfile from '@/views/settings/Profile.vue'
 // ============ 新增多实例页面 ============
@@ -59,6 +59,12 @@ const routes = [
                 name: "StrategyConfig",
                 component: StrategyConfig,
                 meta: { title: "策略配置" }    // ← 新增
+            },
+            {
+              path: 'positions',
+              name: 'Positions',
+              component: Positions,
+              meta: { title: '持仓管理' }
             },
             {
                 path: "charts",

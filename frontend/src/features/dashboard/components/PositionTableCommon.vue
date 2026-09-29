@@ -410,25 +410,14 @@ const submitAction = async () => {
     try {
 
         await axios.post(
-
             `${API}/position/action`,
-
             {
-
-                trade_id:
-                    currentTrade.value.trade_id,
-
-                side:
-                    currentTrade.value.side,
-
-                action:
-                    actionForm.value.action,
-
-                amount:
-                    actionForm.value.amount,
-
-                price:
-                    actionForm.value.price
+                trade_id: currentTrade.value.trade_id,
+                side:     currentTrade.value.side,
+                action:   actionForm.value.action,
+                amount:   actionForm.value.amount,
+                price:    actionForm.value.price,
+                bot_id:   currentTrade.value.bot_id,   // ★ 新增
             }
         )
 

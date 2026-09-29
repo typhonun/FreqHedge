@@ -53,20 +53,21 @@ export const useTradeStore = defineStore("trade", {
 
     async refreshHistory(botId = undefined) {
       const q = _q(botId !== undefined ? botId : this.currentBotId)
-      try {
-        const [closed, closedProfit, profitCurve, balanceCurve] = await Promise.all([
-          axios.get(`${API}/position/closed${q}`),
-          axios.get(`${API}/position/closed_profit${q}`),
-          axios.get(`${API}/position/profit_curve`),   // 曲线暂时全局
-          axios.get(`${API}/position/balance_curve`),  // 曲线暂时全局
-        ])
-        this.closedPositions = closed.data
-        this.closedProfit = closedProfit.data
-        this.profitCurve = profitCurve.data
-        this.balanceCurve = balanceCurve.data
-      } catch (e) {
-        console.error("history error", e.response?.data || e)
+      const results = await Promise.allSettled([
+        axios.get(`${API}/position/closed${q}`),
+        axios.get(`${API}/position/closed_profit${q}`),
+        axios.get(`${API}/position/profit_curve`),
+        axios.get(`${API}/position/balance_curve`),
+      ])
+      if (results[0].status === 'fulfilled') this.closedPositions = results[0].value.data
+      if (results[1].status === 'fulfilled') this.closedProfit = results[1].value.data
+      if (results[2].status === 'fulfilled') this.profitCurve = results[2].value.data
+      if (results[3].status === 'fulfilled') this.balanceCurve = results[3].value.data
+      for (const r of results) {
+        if (r.status === 'rejected') {
+          console.error('history error', r.reason?.response?.data || r.reason)
+        }
       }
-    },
+    }
   },
 })

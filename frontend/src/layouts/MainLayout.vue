@@ -24,6 +24,11 @@
           <span>机器人管理</span>
         </el-menu-item>
 
+        <el-menu-item index="/positions">
+          <el-icon><List /></el-icon>
+          <span>持仓管理</span>
+        </el-menu-item>
+
         <!-- 旧的入口暂时保留（可加个标记），等新功能稳定后删除 -->
         <el-menu-item index="/control">
           <el-icon :size="20"><Monitor /></el-icon>
@@ -68,7 +73,7 @@
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  Odometer, Monitor, SetUp, TrendCharts, Document, Setting
+  Odometer, Monitor, SetUp, TrendCharts, Document, Setting, List
 } from '@element-plus/icons-vue'
 import UserMenu from '@components/layout/UserMenu.vue'
 

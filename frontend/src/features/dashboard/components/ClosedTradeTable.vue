@@ -1,74 +1,66 @@
 <template>
 
-<el-card>
+<el-table
+    :data="tableData"
+    border
+    row-key="trade_id"
+>
 
-    <h2>已平仓交易</h2>
+    <el-table-column
+        prop="pair"
+        label="交易對"
+    />
 
-    <el-table
-        :data="tableData"
-        border
-        row-key="trade_id"
-    >
+    <el-table-column
+        prop="side"
+        label="方向"
+    />
 
-        <el-table-column
-            prop="pair"
-            label="交易對"
-        />
+    <el-table-column
+        prop="stake_amount"
+        label="平仓金额 (USDT)"
+        :formatter="formatNumber"
+    />
 
-        <el-table-column
-            prop="side"
-            label="方向"
-        />
+    <el-table-column
+        prop="open_date"
+        label="開倉時間"
+        :formatter="formatOpenDate"
+    />
 
-        <el-table-column
-            prop="stake_amount"
-            label="平仓金额 (USDT)"
-            :formatter="formatNumber"
-        />
+    <el-table-column
+        prop="close_date"
+        label="平倉時間"
+        :formatter="formatCloseDate"
+    />
 
-        <el-table-column
-            prop="open_date"
-            label="開倉時間"
-            :formatter="formatOpenDate"
-        />
+    <el-table-column label="收益%">
+        <template #default="{ row }">
+            <span
+                :style="{
+                    color: row.profit_pct >= 0
+                        ? '#67C23A'
+                        : '#F56C6C'
+                }"
+            >
+                {{ Number(row.profit_pct || 0).toFixed(2) }}%
+            </span>
+        </template>
+    </el-table-column>
 
-        <el-table-column
-            prop="close_date"
-            label="平倉時間"
-            :formatter="formatCloseDate"
-        />
+    <el-table-column
+        prop="profit_abs"
+        label="收益 (USDT)"
+        :formatter="formatNumber"
+    />
 
-        <el-table-column label="收益%">
-            <template #default="{ row }">
+    <el-table-column
+        prop="exit_reason"
+        label="平倉原因"
+        :formatter="formatExitReason"
+    />
 
-                <span
-                    :style="{
-                        color: row.profit_pct >= 0
-                            ? '#67C23A'
-                            : '#F56C6C'
-                    }"
-                >
-                    {{ Number(row.profit_pct || 0).toFixed(2) }}%
-                </span>
-
-            </template>
-        </el-table-column>
-
-        <el-table-column
-            prop="profit_abs"
-            label="收益 (USDT)"
-            :formatter="formatNumber"
-        />
-
-        <el-table-column
-            prop="exit_reason"
-            label="平倉原因"
-            :formatter="formatExitReason"
-        />
-
-    </el-table>
-
-</el-card>
+</el-table>
 
 </template>
 

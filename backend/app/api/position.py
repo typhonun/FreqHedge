@@ -18,6 +18,8 @@ class PositionAction(BaseModel):
 
     price: float | None = None
 
+    bot_id: int | None = None
+
 
 @router.get("/open")
 def open_positions(bot_id: int | None = Query(None)):
@@ -87,8 +89,12 @@ def floating(bot_id: int | None = Query(None)):
 
 
 @router.post("/action")
-def position_action(data: PositionAction, bot_id: int | None = Query(None)):
+def position_action(data: PositionAction):
     return PositionService.trade_action(
-        trade_id=data.trade_id, side=data.side, action=data.action,
-        amount=data.amount, price=data.price, bot_id=bot_id,
+        trade_id=data.trade_id,
+        side=data.side,
+        action=data.action,
+        amount=data.amount,
+        price=data.price,
+        bot_id=data.bot_id,
     )
