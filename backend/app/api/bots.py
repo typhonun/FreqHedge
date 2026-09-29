@@ -10,7 +10,7 @@ router = APIRouter(tags=["bots"])       # ← 去掉 prefix
 
 
 class BotBaseInfo(BaseModel):
-    
+
     name: str
     pair: list[str]              # ← 从 str 改为 list
     capital: float
@@ -21,8 +21,32 @@ class BotBaseInfo(BaseModel):
     enableShort: bool
 
 
+class BotRiskConfig(BaseModel):
+    tp_enabled: bool = False
+    tp_mode: str = "amount"        # 'amount' | 'ratio'
+    tp_amount: float = 0
+    tp_ratio: float = 0
+
+    sl_enabled: bool = False
+    sl_mode: str = "amount"
+    sl_amount: float = 0
+    sl_ratio: float = 0
+
+    trail_enabled: bool = False
+    trail_mode: str = "ratio"
+    trail_activate_amount: float = 0
+    trail_activate_ratio: float = 0
+    trail_drawdown_amount: float = 0
+    trail_drawdown_ratio: float = 0
+
+    auto_stop_on_tp: bool = True
+    auto_stop_on_sl: bool = True
+    auto_stop_on_trail: bool = True
+
+    
 class BotPayload(BaseModel):
     base: BotBaseInfo
+    risk: Optional[BotRiskConfig] = None
     longConfig: Optional[dict] = None
     shortConfig: Optional[dict] = None
 

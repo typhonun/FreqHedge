@@ -1,26 +1,19 @@
 <template>
   <div class="bot-list-page">
-    <!-- 顶部操作栏 -->
+    <!-- 顶部操作栏（不变） -->
     <div class="page-header">
       <div class="header-left">
         <h2 class="page-title">机器人管理</h2>
-        <el-text type="info" size="small">
-          共 {{ bots.length }} 个机器人
-        </el-text>
+        <el-text type="info" size="small">共 {{ bots.length }} 个机器人</el-text>
       </div>
       <div class="header-right">
-        <el-button
-          type="primary"
-          size="large"
-          :icon="Plus"
-          @click="goCreate"
-        >
+        <el-button type="primary" size="large" :icon="Plus" @click="goCreate">
           新建机器人
         </el-button>
       </div>
     </div>
 
-    <!-- 筛选 -->
+    <!-- 筛选（不变） -->
     <el-card class="filter-card" shadow="never">
       <el-radio-group v-model="filterStatus" size="default">
         <el-radio-button value="all">全部</el-radio-button>
@@ -36,8 +29,8 @@
         :key="bot.id"
         class="bot-card"
         shadow="hover"
-        @click="goDetail(bot.id)"
       >
+        <!-- 头部：名称 + 状态 + 更多菜单 -->
         <div class="bot-card__header">
           <div class="bot-name">
             <span class="bot-name__text">{{ bot.name }}</span>
@@ -49,25 +42,26 @@
               {{ bot.status === 'running' ? '运行中' : '已停止' }}
             </el-tag>
           </div>
+
+          <!-- 更多菜单：@click.stop 放在 dropdown 外层包裹 -->
           <el-dropdown
             trigger="click"
             @command="(cmd) => handleCommand(cmd, bot)"
-            @click.stop
           >
-            <el-icon class="more-icon"><MoreFilled /></el-icon>
+            <el-icon class="more-icon" @click.stop><MoreFilled /></el-icon>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="edit">编辑</el-dropdown-item>
-                <el-dropdown-item command="toggle">
-                  {{ bot.status === 'running' ? '停止' : '启动' }}
-                </el-dropdown-item>
+                <el-dropdown-item command="edit">编辑配置</el-dropdown-item>
+                <el-dropdown-item command="copy">复制配置</el-dropdown-item>
+                <el-dropdown-item command="logs">查看日志</el-dropdown-item>
                 <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
               </el-dropdown-menu>
             </template>
           </el-dropdown>
         </div>
 
-        <div class="bot-card__body">
+        <!-- 卡片主体信息（不变） -->
+        <div class="bot-card__body" @click="goDetail(bot.id)">
           <div class="info-row">
             <span class="info-label">交易对</span>
             <span class="info-value">
@@ -75,17 +69,17 @@
             </span>
           </div>
           <div class="info-row">
-              <span class="info-label">模式</span>
-              <span class="info-value">
-                <el-tag :type="bot.dryRun ? 'info' : 'warning'" size="small">
-                  {{ bot.dryRun ? 'Dry Run' : '实盘' }}
-                </el-tag>
-              </span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">杠杆</span>
-              <span class="info-value">{{ bot.leverage }}x</span>
-            </div>
+            <span class="info-label">模式</span>
+            <span class="info-value">
+              <el-tag :type="bot.dryRun ? 'info' : 'warning'" size="small">
+                {{ bot.dryRun ? 'Dry Run' : '实盘' }}
+              </el-tag>
+            </span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">杠杆</span>
+            <span class="info-value">{{ bot.leverage }}x</span>
+          </div>
           <div class="info-row">
             <span class="info-label">方向</span>
             <span class="info-value">
@@ -99,28 +93,66 @@
           </div>
           <div class="info-row">
             <span class="info-label">当前盈亏</span>
-            <span
-              class="info-value"
-              :class="bot.pnl >= 0 ? 'profit' : 'loss'"
-            >
-              {{ bot.pnl >= 0 ? '+' : '' }}{{ bot.pnl }} USDT
+            <span class="info-value" :class="bot.pnl >= 0 ? 'profit' : 'loss'">
+              {{ bot.pnl >= 0 ? '+' : '' }}{{ bot.pnl ?? 0 }} USDT
             </span>
           </div>
         </div>
 
+        <!-- 底部：创建时间 + 操作按钮组 -->
         <div class="bot-card__footer">
-          <el-text type="info" size="small">
+          <el-text type="info" size="small" class="created-at">
             创建于 {{ bot.createdAt }}
           </el-text>
+
+          <div class="action-buttons" @click.stop>
+            <!-- 启动 / 停止 -->
+            <el-button
+              v-if="bot.status !== 'running'"
+              type="success"
+              size="small"
+              :icon="VideoPlay"
+              :loading="loadingIds.has(bot.id)"
+              @click="handleToggle(bot)"
+            >
+              启动
+            </el-button>
+            <el-button
+              v-else
+              type="warning"
+              size="small"
+              :icon="VideoPause"
+              :loading="loadingIds.has(bot.id)"
+              @click="handleToggle(bot)"
+            >
+              停止
+            </el-button>
+
+            <!-- 编辑 -->
+            <el-button
+              size="small"
+              :icon="Setting"
+              @click="goDetail(bot.id)"
+            >
+              编辑
+            </el-button>
+
+            <!-- 删除 -->
+            <el-button
+              type="danger"
+              size="small"
+              :icon="Delete"
+              plain
+              @click="handleDelete(bot)"
+            >
+              删除
+            </el-button>
+          </div>
         </div>
       </el-card>
     </div>
 
-    <!-- 空状态 -->
-    <el-empty
-      v-else
-      description="暂无机器人，点击右上角新建"
-    >
+    <el-empty v-else description="暂无机器人，点击右上角新建">
       <el-button type="primary" @click="goCreate">新建机器人</el-button>
     </el-empty>
   </div>
@@ -129,7 +161,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Plus, MoreFilled } from '@element-plus/icons-vue'
+import {
+  Plus, MoreFilled, VideoPlay, VideoPause, Setting, Delete
+} from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBotStore } from '@/stores/botStore.js'
 
@@ -139,42 +173,77 @@ const filterStatus = ref('all')
 const { state, fetchBots, toggleBot, deleteBot } = useBotStore()
 const bots = computed(() => state.bots)
 
+// 每个 bot 独立 loading，避免全局 loading 导致所有按钮转圈
+const loadingIds = ref(new Set())
+
 const filteredBots = computed(() => {
   if (filterStatus.value === 'all') return bots.value
   return bots.value.filter(b => b.status === filterStatus.value)
 })
 
-
 // ============ 跳转 ============
-const goCreate = () => {
-  router.push({ name: 'BotNew' })
+const goCreate = () => router.push({ name: 'BotNew' })
+const goDetail = (id) => router.push({ name: 'BotDetail', params: { id } })
+
+// ============ 启动 / 停止 ============
+const handleToggle = async (bot) => {
+  loadingIds.value.add(bot.id)
+  try {
+    await toggleBot(bot.id, bot.status)
+    ElMessage.success(bot.status === 'running' ? '已停止' : '已启动')
+    await fetchBots()   // 刷新最新状态
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.error || '操作失败')
+  } finally {
+    loadingIds.value.delete(bot.id)
+  }
 }
 
-const goDetail = (id) => {
-  router.push({ name: 'BotDetail', params: { id } })
+// ============ 删除 ============
+const handleDelete = async (bot) => {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除机器人「${bot.name}」？该操作不可恢复。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+    )
+  } catch {
+    return   // 用户取消
+  }
+
+  loadingIds.value.add(bot.id)
+  try {
+    // 如果正在运行，先停止
+    if (bot.status === 'running') {
+      await toggleBot(bot.id, 'running')
+    }
+    await deleteBot(bot.id)
+    ElMessage.success('已删除')
+    await fetchBots()
+  } catch (e) {
+    ElMessage.error(e?.response?.data?.error || '删除失败')
+  } finally {
+    loadingIds.value.delete(bot.id)
+  }
 }
 
-// ============ 操作 ============
+// ============ 更多菜单 ============
 const handleCommand = async (cmd, bot) => {
-  if (cmd === 'edit') {
-    goDetail(bot.id)
-    } else if (cmd === 'toggle') {
-      try {
-        await toggleBot(bot.id, bot.status)
-        ElMessage.success(bot.status === 'running' ? '已停止' : '已启动')
-      } catch (e) {
-        ElMessage.error('切换失败')
-      }
-    } else if (cmd === 'delete') {
-    try {
-      await ElMessageBox.confirm(
-        `确认删除机器人「${bot.name}」？`,
-        '删除确认',
-        { type: 'warning' }
-      )
-      deleteBot(bot.id)
-      ElMessage.success('已删除')
-    } catch {}
+  switch (cmd) {
+    case 'edit':
+      goDetail(bot.id)
+      break
+    case 'copy':
+      // 复制配置：跳转到新建页并带上预填数据（后续实现）
+      router.push({ name: 'BotNew', query: { copyFrom: bot.id } })
+      break
+    case 'logs':
+      // 打开日志抽屉或跳转日志页
+      router.push({ name: 'BotLogs', params: { id: bot.id } })
+      break
+    case 'delete':
+      await handleDelete(bot)
+      break
   }
 }
 
@@ -291,5 +360,29 @@ onMounted(fetchBots)
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--border-color);
+}
+
+.bot-card__footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-color);
+}
+
+.created-at {
+  font-size: 12px;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.action-buttons .el-button {
+  flex: 1;
+  min-width: 72px;
 }
 </style>

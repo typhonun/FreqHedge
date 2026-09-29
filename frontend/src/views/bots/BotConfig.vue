@@ -102,6 +102,130 @@
       </el-form>
     </el-card>
 
+    <!-- 止盈止损 -->
+    <el-card class="risk-config-card">
+      <template #header>
+        <span class="card-title">🎯 止盈止损</span>
+      </template>
+
+      <div class="risk-grid">
+        <!-- 止盈 -->
+        <div class="risk-item">
+          <div class="risk-label">
+            <span>启用止盈</span>
+            <p>达到目标自动平仓并停止机器人</p>
+          </div>
+          <el-switch v-model="botRisk.tp_enabled" />
+        </div>
+
+        <div class="risk-item">
+          <div class="risk-label"><span>止盈阈值</span></div>
+          <div class="risk-input">
+            <el-radio-group v-model="botRisk.tp_mode" size="small">
+              <el-radio-button label="amount">金额</el-radio-button>
+              <el-radio-button label="ratio">百分比</el-radio-button>
+            </el-radio-group>
+
+            <el-input-number
+              v-if="botRisk.tp_mode === 'amount'"
+              v-model="botRisk.tp_amount"
+              :min="0" :step="1"
+              :disabled="!botRisk.tp_enabled"
+            />
+            <el-input-number
+              v-else
+              v-model="botRisk.tp_ratio"
+              :min="0" :step="0.1" :precision="2"
+              suffix="%"
+              :disabled="!botRisk.tp_enabled"
+            />
+          </div>
+        </div>
+
+        <!-- 止损 -->
+        <div class="risk-item">
+          <div class="risk-label">
+            <span>启用止损</span>
+            <p>达到亏损限制自动平仓并停止机器人</p>
+          </div>
+          <el-switch v-model="botRisk.sl_enabled" />
+        </div>
+
+        <div class="risk-item">
+          <div class="risk-label"><span>止损阈值</span></div>
+          <div class="risk-input">
+            <el-radio-group v-model="botRisk.sl_mode" size="small">
+              <el-radio-button label="amount">金额</el-radio-button>
+              <el-radio-button label="ratio">百分比</el-radio-button>
+            </el-radio-group>
+
+            <el-input-number
+              v-if="botRisk.sl_mode === 'amount'"
+              v-model="botRisk.sl_amount"
+              :min="0" :step="1"
+              :disabled="!botRisk.sl_enabled"
+            />
+            <el-input-number
+              v-else
+              v-model="botRisk.sl_ratio"
+              :min="0" :step="0.1" :precision="2"
+              suffix="%"
+              :disabled="!botRisk.sl_enabled"
+            />
+          </div>
+        </div>
+
+        <!-- 追踪止损 -->
+        <div class="risk-item">
+          <div class="risk-label">
+            <span>启用追踪止损</span>
+            <p>回撤/反弹到触发线自动平仓并停止机器人</p>
+          </div>
+          <el-switch v-model="botRisk.trail_enabled" />
+        </div>
+
+        <div class="risk-item">
+          <div class="risk-label"><span>追踪参数</span></div>
+          <div class="risk-input">
+            <el-radio-group v-model="botRisk.trail_mode" size="small">
+              <el-radio-button label="amount">金额</el-radio-button>
+              <el-radio-button label="ratio">百分比</el-radio-button>
+            </el-radio-group>
+
+            <template v-if="botRisk.trail_mode === 'amount'">
+              <el-input-number v-model="botRisk.trail_activate_amount"
+                :step="1" :disabled="!botRisk.trail_enabled"
+                placeholder="触发盈亏" />
+              <el-input-number v-model="botRisk.trail_drawdown_amount"
+                :min="0" :step="1" :disabled="!botRisk.trail_enabled"
+                placeholder="追踪止损" />
+            </template>
+            <template v-else>
+              <el-input-number v-model="botRisk.trail_activate_ratio"
+                :step="0.1" :precision="2" :disabled="!botRisk.trail_enabled"
+                placeholder="触发盈亏" />
+              <el-input-number v-model="botRisk.trail_drawdown_ratio"
+                :min="0" :step="0.1" :precision="2" :disabled="!botRisk.trail_enabled"
+                placeholder="追踪止损" />
+            </template>
+          </div>
+        </div>
+
+        <!-- 触发后行为 -->
+        <div class="risk-item risk-item--full">
+          <div class="risk-label">
+            <span>触发后自动停止机器人</span>
+            <p>止盈/止损后不再入场（不会删除，可手动重启）</p>
+          </div>
+          <div style="display:flex; gap:12px;">
+            <el-checkbox v-model="botRisk.auto_stop_on_tp">止盈后</el-checkbox>
+            <el-checkbox v-model="botRisk.auto_stop_on_sl">止损后</el-checkbox>
+            <el-checkbox v-model="botRisk.auto_stop_on_trail">追踪止损后</el-checkbox>
+          </div>
+        </div>
+      </div>
+    </el-card>
+
     <!-- 策略配置区（多空卡片） -->
     <div class="strategy-columns">
       <!-- 多头 -->
@@ -265,6 +389,26 @@ const loadBotDetail = async () => {
       enableShort: !!data.enableShort,
     }
 
+    botRisk.value = {
+      tp_enabled: !!data.tp_enabled,
+      tp_mode: data.tp_mode || 'amount',
+      tp_amount: data.tp_amount ?? 0,
+      tp_ratio: data.tp_ratio ?? 0,
+      sl_enabled: !!data.sl_enabled,
+      sl_mode: data.sl_mode || 'amount',
+      sl_amount: data.sl_amount ?? 0,
+      sl_ratio: data.sl_ratio ?? 0,
+      trail_enabled: !!data.trail_enabled,
+      trail_mode: data.trail_mode || 'ratio',
+      trail_activate_amount: data.trail_activate_amount ?? 10,
+      trail_activate_ratio: data.trail_activate_ratio ?? 1,
+      trail_drawdown_amount: data.trail_drawdown_amount ?? 5,
+      trail_drawdown_ratio: data.trail_drawdown_ratio ?? 0.5,
+      auto_stop_on_tp: data.auto_stop_on_tp !== false,
+      auto_stop_on_sl: data.auto_stop_on_sl !== false,
+      auto_stop_on_trail: data.auto_stop_on_trail !== false,
+    }
+
     const longCfg = parseCfg(data.longConfig)
     const shortCfg = parseCfg(data.shortConfig)
 
@@ -282,6 +426,29 @@ const loadBotDetail = async () => {
   }
 }
 
+const botRisk = ref({
+  tp_enabled: false,
+  tp_mode: 'amount',
+  tp_amount: 0,
+  tp_ratio: 0,
+
+  sl_enabled: false,
+  sl_mode: 'amount',
+  sl_amount: 0,
+  sl_ratio: 0,
+
+  trail_enabled: false,
+  trail_mode: 'ratio',
+  trail_activate_amount: 10,
+  trail_activate_ratio: 1,
+  trail_drawdown_amount: 5,
+  trail_drawdown_ratio: 0.5,
+
+  auto_stop_on_tp: true,
+  auto_stop_on_sl: true,
+  auto_stop_on_trail: true,
+})
+
 // ============ 保存 ============
 const buildPayload = () => ({
   base: {
@@ -294,6 +461,7 @@ const buildPayload = () => ({
     enableLong: botBaseInfo.value.enableLong,
     enableShort: botBaseInfo.value.enableShort,
   },
+  risk: botRisk.value,
   longConfig: localConfig.value.long,
   shortConfig: localConfig.value.short,
 })

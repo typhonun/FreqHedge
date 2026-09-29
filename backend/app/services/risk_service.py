@@ -148,6 +148,35 @@ class RiskService:
         return False
 
     @classmethod
+    def _get_bot_risk(cls, bot_id: int) -> dict:
+        from app.services.bot_manager import BotManager
+        bot = BotManager.get(bot_id)
+        if not bot:
+            return {}
+        return {
+            "tp_enabled": bot.get("tp_enabled"),
+            "tp_mode": bot.get("tp_mode", "amount"),
+            "tp_amount": bot.get("tp_amount", 0),
+            "tp_ratio": bot.get("tp_ratio", 0),
+
+            "sl_enabled": bot.get("sl_enabled"),
+            "sl_mode": bot.get("sl_mode", "amount"),
+            "sl_amount": bot.get("sl_amount", 0),
+            "sl_ratio": bot.get("sl_ratio", 0),
+
+            "trail_enabled": bot.get("trail_enabled"),
+            "trail_mode": bot.get("trail_mode", "ratio"),
+            "trail_activate_amount": bot.get("trail_activate_amount", 0),
+            "trail_activate_ratio": bot.get("trail_activate_ratio", 0),
+            "trail_drawdown_amount": bot.get("trail_drawdown_amount", 0),
+            "trail_drawdown_ratio": bot.get("trail_drawdown_ratio", 0),
+
+            "auto_stop_on_tp": bot.get("auto_stop_on_tp", True),
+            "auto_stop_on_sl": bot.get("auto_stop_on_sl", True),
+            "auto_stop_on_trail": bot.get("auto_stop_on_trail", True),
+        }
+
+    @classmethod
     def check_risk(cls, bot_id: int):
         info = cls._round_info(bot_id)
         if info.get("exiting"):
@@ -156,58 +185,64 @@ class RiskService:
         position_count = PositionService.get_position_count(bot_id=bot_id)
         if position_count["total"] == 0:
             return
-
         if time.time() - (info.get("last_tp_time", 0) or 0) < 60:
             return
 
         cls.calc_round_profit(bot_id)
 
-        risk = runtime.GLOBAL_RISK
+        # ★ 读单 bot 风控配置（也可以和全局风控合并：任一触发即平）
+        risk = cls._get_bot_risk(bot_id)
         profit = info.get("round_profit", 0.0) or 0.0
         ratio = info.get("round_ratio", 0.0) or 0.0
 
-        # 止盈
-        if risk.get("global_tp_enabled"):
-            mode = risk.get("global_tp_mode", "amount")
+        # ---- 止盈 ----
+        if risk.get("tp_enabled"):
+            mode = risk.get("tp_mode", "amount")
+            hit = False
             if mode == "ratio":
-                th = float(risk.get("global_tp_ratio", 0) or 0)
-                if th > 0 and ratio >= th:
-                    cls._handle_exit(bot_id, "global_tp", "全局止盈", "全局止盈")
-                    info["global_tp_count"] += 1
-                    return
+                th = float(risk.get("tp_ratio", 0) or 0)
+                hit = th > 0 and ratio >= th
             else:
-                th = float(risk.get("global_tp_amount", 0) or 0)
-                if th > 0 and profit >= th:
-                    cls._handle_exit(bot_id, "global_tp", "全局止盈", "全局止盈")
-                    info["global_tp_count"] += 1
-                    return
+                th = float(risk.get("tp_amount", 0) or 0)
+                hit = th > 0 and profit >= th
 
-        # 止损
-        if risk.get("global_sl_enabled"):
-            mode = risk.get("global_sl_mode", "amount")
+            if hit:
+                cls._handle_exit(
+                    bot_id, "bot_tp", "单bot止盈", "单bot止盈",
+                    auto_stop=risk.get("auto_stop_on_tp", True),
+                )
+                info["global_tp_count"] += 1
+                return
+
+        # ---- 止损 ----
+        if risk.get("sl_enabled"):
+            mode = risk.get("sl_mode", "amount")
+            hit = False
             if mode == "ratio":
-                th = float(risk.get("global_sl_ratio", 0) or 0)
-                if th > 0 and ratio <= -th:
-                    cls._handle_exit(bot_id, "global_sl", "全局止损", "全局止损")
-                    info["global_sl_count"] += 1
-                    return
+                th = float(risk.get("sl_ratio", 0) or 0)
+                hit = th > 0 and ratio <= -th
             else:
-                th = float(risk.get("global_sl_amount", 0) or 0)
-                if th > 0 and profit <= -th:
-                    cls._handle_exit(bot_id, "global_sl", "全局止损", "全局止损")
-                    info["global_sl_count"] += 1
-                    return
+                th = float(risk.get("sl_amount", 0) or 0)
+                hit = th > 0 and profit <= -th
 
-        # 追踪止损（保留原逻辑，只是用 info 替代 runtime.ROUND_INFO）
-        if risk.get("global_trail_enabled"):
-            mode = risk.get("global_trail_mode", "ratio")
+            if hit:
+                cls._handle_exit(
+                    bot_id, "bot_sl", "单bot止损", "单bot止损",
+                    auto_stop=risk.get("auto_stop_on_sl", True),
+                )
+                info["global_sl_count"] += 1
+                return
+
+        # ---- 追踪止损 ----
+        if risk.get("trail_enabled"):
+            mode = risk.get("trail_mode", "ratio")
             if mode == "ratio":
-                activate = float(risk.get("global_trail_activate_ratio", 0) or 0)
-                drawdown = float(risk.get("global_trail_drawdown_ratio", 0) or 0)
+                activate = float(risk.get("trail_activate_ratio", 0) or 0)
+                drawdown = float(risk.get("trail_drawdown_ratio", 0) or 0)
                 current, peak, trough = ratio, info["peak_ratio"], info["trough_ratio"]
             else:
-                activate = float(risk.get("global_trail_activate_amount", 0) or 0)
-                drawdown = float(risk.get("global_trail_drawdown_amount", 0) or 0)
+                activate = float(risk.get("trail_activate_amount", 0) or 0)
+                drawdown = float(risk.get("trail_drawdown_amount", 0) or 0)
                 current, peak, trough = profit, info["peak_profit"], info["trough_profit"]
 
             if drawdown > 0 and activate != 0:
@@ -226,19 +261,20 @@ class RiskService:
                 if info.get("trail_active"):
                     direction = info.get("trail_direction", "profit")
                     if direction == "profit":
-                        trigger = peak - drawdown
-                        hit = current <= trigger
+                        hit = current <= peak - drawdown
                     else:
-                        trigger = trough + drawdown
-                        hit = current >= trigger
+                        hit = current >= trough + drawdown
 
                     if hit:
                         info["global_trail_count"] = info.get("global_trail_count", 0) + 1
-                        cls._handle_exit(bot_id, "global_trail", "追踪止损", "追踪止损")
+                        cls._handle_exit(
+                            bot_id, "bot_trail", "单bot追踪止损", "单bot追踪止损",
+                            auto_stop=risk.get("auto_stop_on_trail", True),
+                        )
                         return
 
     @classmethod
-    def _handle_exit(cls, bot_id, event_type, message, reason):
+    def _handle_exit(cls, bot_id, event_type, message, reason, auto_stop: bool = False):
         info = cls._round_info(bot_id)
         if info.get("exiting"):
             return
@@ -249,8 +285,19 @@ class RiskService:
             failed = cls.force_exit_all(bot_id, reason=reason)
             if failed:
                 print(f"[Risk] bot={bot_id} 以下 trade_id 平仓失败: {failed}")
+
             if not cls.wait_positions_closed(bot_id):
                 return
+
+            # ★ 触发后自动停止 bot（关闭，不删除）
+            if auto_stop:
+                try:
+                    from app.services.bot_manager import BotManager
+                    BotManager.stop(bot_id)
+                    print(f"[Risk] bot={bot_id} 已自动停止（触发 {event_type}）")
+                except Exception as e:
+                    print(f"[Risk] bot={bot_id} 自动停止失败: {e}")
+
             cls.init_round(bot_id)
         finally:
             info["exiting"] = False
