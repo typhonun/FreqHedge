@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from app.database import get_db
 from app.models.trade_event import TradeEvent
+from app.services.bot_manager import BotManager
 from app.schemas.chart import (
     TradeEventCreate,
     TradeEventOut
@@ -28,28 +29,15 @@ exchange = ccxt.binance({
 
 
 def load_whitelist_pairs():
+    """从 bots 表读所有 bot 的 pair 并集"""
     pairs = set()
-
-    config_files = [
-        BASE_DIR / "freqtrade/user_data/config_long.json",
-        BASE_DIR / "freqtrade/user_data/config_short.json"
-    ]
-
-    for cfg in config_files:
-
-        if not cfg.exists():
-            continue
-
-        try:
-
-            with open(cfg, "r", encoding="utf8") as f:
-                data = json.load(f)
-
-            pairs.update(data["exchange"]["pair_whitelist"])
-
-        except Exception as e:
-            print(f"读取配置失败: {e}")
-
+    try:
+        bots = BotManager.list_all()
+        for b in bots:
+            for p in (b.get("pair") or []):
+                pairs.add(p)
+    except Exception as e:
+        print(f"[chart] 读取 bot pair 失败: {e}")
     return list(pairs)
 
 
@@ -62,20 +50,16 @@ def get_strategies():
 
 
 @router.get("/pairs/{strategy}")
-def get_pairs(strategy: str):
-    if strategy == "DcaTpLong":
-        cfg = BASE_DIR / "freqtrade/user_data/config_long.json"
-
-    elif strategy == "DcaTpShort":
-        cfg = BASE_DIR / "freqtrade/user_data/config_short.json"
-
-    else:
+def get_pairs(strategy: str, bot_id: int | None = None):
+    """如果传 bot_id，则返回该 bot 的 pair；否则返回所有 bot 并集"""
+    if bot_id is not None:
+        bot = BotManager.get(bot_id)
+        if bot:
+            return bot.get("pair") or []
         return []
 
-    with open(cfg, "r", encoding="utf8") as f:
-        data = json.load(f)
-
-    return data["exchange"]["pair_whitelist"]
+    # 没传 bot_id：退化为所有 bot 并集（保持兼容）
+    return load_whitelist_pairs()
 
 
 @router.get("/candles")

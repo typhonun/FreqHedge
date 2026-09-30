@@ -12,15 +12,16 @@ from config.settings import (
 FREQTRADE_ROOT = Path(FREQTRADE_DIR)
 USER_DATA = FREQTRADE_ROOT / "user_data"
 BOTS_DIR = USER_DATA / "bots"
-BASE_LONG = USER_DATA / "config_long.json"
-BASE_SHORT = USER_DATA / "config_short.json"
+BASE_TEMPLATE = USER_DATA / "config_template.json"
+BASE_LONG = BASE_TEMPLATE
+BASE_SHORT = BASE_TEMPLATE
+
 
 class ConfigService:
 
     # ================== 新增：多实例配置生成 ==================
     @staticmethod
     def generate_configs(bot_id: int, payload: dict):
-        """为 bot_id 生成 config_long.json / config_short.json"""
         bot_dir = BOTS_DIR / str(bot_id)
         bot_dir.mkdir(parents=True, exist_ok=True)
         (bot_dir / "logs").mkdir(exist_ok=True)
@@ -33,9 +34,11 @@ class ConfigService:
                 side="long",
                 base=base,
                 strategy_params=payload.get("longConfig") or {},
-                template=BASE_LONG,
+                template=BASE_TEMPLATE,
             )
-            (bot_dir / "config_long.json").write_text(
+            # ★ 改这里：带 bot_id 前缀
+            cfg_name = f"config_bot{bot_id}_long.json"
+            (bot_dir / cfg_name).write_text(
                 json.dumps(cfg, indent=4, ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -46,9 +49,10 @@ class ConfigService:
                 side="short",
                 base=base,
                 strategy_params=payload.get("shortConfig") or {},
-                template=BASE_SHORT,
+                template=BASE_TEMPLATE,
             )
-            (bot_dir / "config_short.json").write_text(
+            cfg_name = f"config_bot{bot_id}_short.json"
+            (bot_dir / cfg_name).write_text(
                 json.dumps(cfg, indent=4, ensure_ascii=False),
                 encoding="utf-8",
             )
@@ -58,26 +62,46 @@ class ConfigService:
         cfg = ConfigService.read_json(template)
 
         port = ConfigService._get_port(bot_id, side)
-        db_file = (Path(FREQTRADE_DIR) / f"user_data/bots/{bot_id}/tradesv3_{side}.sqlite").as_posix()
+        db_file = (Path(FREQTRADE_DIR)
+                   / f"user_data/bots/{bot_id}/tradesv3_bot{bot_id}_{side}.sqlite").as_posix()
 
         cfg["db_url"] = f"sqlite:///{db_file}"
         cfg["api_server"]["listen_port"] = port
         cfg["api_server"]["CORS_origins"] = ["*"]
 
-        # ★ 新字段生效
+        # ★ 新增：显式告诉策略这是多还是空
+        cfg["side"] = side
+        # ★ 新增：策略类名（这样 process_service 也可以从 config 里读）
+        cfg["strategy"] = "DcaTpShort" if side == "short" else "DcaTpLong"
+
         cfg["dry_run"] = bool(base.get("dryRun", True))
         cfg["dry_run_wallet"] = base["capital"]
         cfg["stake_amount"] = base.get("stakeAmount", 10)
         cfg["leverage"] = base.get("leverage", 10)
-        cfg["max_open_trades"] = int(base.get("maxOpenTrades", 3))  # ★ 新增这一行
-        cfg["tradable_balance_ratio"] = 1.0
+        cfg["max_open_trades"] = int(base.get("maxOpenTrades", 3))
+        cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"
+
         cfg.setdefault("exchange", {})
         cfg["exchange"]["pair_whitelist"] = list(base["pair"])
 
+        # ★ 只塞当前方向，不再塞两侧
         cfg["custom_params"] = {side: strategy_params}
 
         return cfg
+
+    @staticmethod
+    def config_path(bot_id: int, side: str) -> Path:
+        """返回某个 bot 某个方向的 config 绝对路径"""
+        return BOTS_DIR / str(bot_id) / f"config_bot{bot_id}_{side}.json"
+
+    @staticmethod
+    def log_path(bot_id: int, side: str) -> Path:
+        return BOTS_DIR / str(bot_id) / "logs" / f"{side}.log"
+
+    @staticmethod
+    def db_path(bot_id: int, side: str) -> Path:
+        return BOTS_DIR / str(bot_id) / f"tradesv3_bot{bot_id}_{side}.sqlite"
 
     @staticmethod
     def _get_port(bot_id, side):

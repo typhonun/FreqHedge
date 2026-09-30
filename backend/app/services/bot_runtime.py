@@ -38,7 +38,7 @@ def get_bot_db_path(bot_id: int, side: str) -> Path:
         / "user_data"
         / "bots"
         / str(bot_id)
-        / f"tradesv3_{side}.sqlite"
+        / f"tradesv3_bot{bot_id}_{side}.sqlite"
     )
 
 

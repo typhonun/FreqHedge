@@ -16,9 +16,10 @@ class ProcessService:
     @classmethod
     def start_bot(cls, bot: dict):
         import subprocess, sys, time
+        from app.services.config_service import ConfigService
 
         bot_id = bot["id"]
-        base_dir = Path(FREQTRADE_DIR)   # ← 用局部变量名，别叫 FREQTRADE_DIR
+        base_dir = Path(FREQTRADE_DIR)
 
         started = []
 
@@ -27,9 +28,10 @@ class ProcessService:
             if not enabled:
                 continue
 
-            cfg = base_dir / f"user_data/bots/{bot_id}/config_{side}.json"
+            # ★ 改这里：用 helper 拿路径
+            cfg = ConfigService.config_path(bot_id, side)
             if not cfg.exists():
-                return {"success": False, "error": f"config {side} missing"}
+                return {"success": False, "error": f"config {side} missing: {cfg}"}
 
             port = cls._get_port(bot_id, side)
             old_pids = cls.get_port_pids(port)
@@ -37,7 +39,9 @@ class ProcessService:
                 cls.terminate_pid(pid, f"bot{bot_id}-{side}")
             time.sleep(0.5)
 
-            log_path = base_dir / f"user_data/bots/{bot_id}/logs/{side}.log"
+            # ★ 改这里：日志路径统一
+            log_path = ConfigService.log_path(bot_id, side)
+
             strategy = "DcaTpLong" if side == "long" else "DcaTpShort"
 
             proc = subprocess.Popen(

@@ -18,6 +18,15 @@ DATA_DIR = BASE_DIR / "backend" / "app" / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DCATP_DB = DATA_DIR / "dcatp.db"
 
+def bot_config_path(bot_id: int, side: str) -> Path:
+    return FREQTRADE_DIR / "user_data" / "bots" / str(bot_id) / f"config_bot{bot_id}_{side}.json"
+
+def bot_log_path(bot_id: int, side: str) -> Path:
+    return FREQTRADE_DIR / "user_data" / "bots" / str(bot_id) / "logs" / f"{side}.log"
+
+def bot_db_path(bot_id: int, side: str) -> Path:
+    return FREQTRADE_DIR / "user_data" / "bots" / str(bot_id) / f"tradesv3_bot{bot_id}_{side}.sqlite"
+
 # 原有
 LONG_CONFIG = FREQTRADE_DIR / "user_data" / "config_long.json"
 SHORT_CONFIG = FREQTRADE_DIR / "user_data" / "config_short.json"
