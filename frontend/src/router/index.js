@@ -6,9 +6,7 @@ import {
 import MainLayout from "@/layouts/MainLayout.vue"
 
 import Dashboard from "@/views/Dashboard.vue"
-import StrategyConfig from "@/views/StrategyConfig.vue"
 import Charts from "@/views/Charts.vue"
-import Control from "@/views/Control.vue"
 import Logs from "@/views/Logs.vue"
 import Positions from '@/views/Positions.vue'
 import Settings from '@/views/Settings.vue'
@@ -47,18 +45,6 @@ const routes = [
                 name: "BotDetail",
                 component: BotConfig,
                 meta: { title: "机器人配置" }
-            },
-            {
-                path: "control",
-                name: "Control",
-                component: Control,
-                meta: { title: "控制中心" }    // ← 新增
-            },
-            {
-                path: "strategyConfig",
-                name: "StrategyConfig",
-                component: StrategyConfig,
-                meta: { title: "策略配置" }    // ← 新增
             },
             {
               path: 'positions',

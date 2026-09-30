@@ -29,16 +29,6 @@
           <span>持仓管理</span>
         </el-menu-item>
 
-        <!-- 旧的入口暂时保留（可加个标记），等新功能稳定后删除 -->
-        <el-menu-item index="/control">
-          <el-icon :size="20"><Monitor /></el-icon>
-          <span>控制中心（旧）</span>
-        </el-menu-item>
-        <el-menu-item index="/strategyConfig">
-          <el-icon :size="20"><SetUp /></el-icon>
-          <span>策略配置（旧）</span>
-        </el-menu-item>
-
         <el-menu-item index="/charts">
           <el-icon :size="20"><TrendCharts /></el-icon>
           <span>K线分析</span>

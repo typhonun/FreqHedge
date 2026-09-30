@@ -11,7 +11,6 @@ from app.core import runtime
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from app.services.bot_manager import BotManager
-from config.settings import LONG_URL, SHORT_URL  # 保留作为兜底
 
 from app.services.bot_runtime import (
     get_bot_url,
