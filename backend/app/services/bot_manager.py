@@ -24,9 +24,10 @@ def _ensure_table():
             name TEXT NOT NULL,
             pair TEXT NOT NULL,
             capital REAL NOT NULL,
-            stakeAmount REAL DEFAULT 30,
+            stakeAmount REAL DEFAULT 10,
             leverage INTEGER DEFAULT 10,
             dryRun INTEGER DEFAULT 1,
+            maxOpenTrades INTEGER DEFAULT 3,
             enableLong INTEGER DEFAULT 1,
             enableShort INTEGER DEFAULT 0,
             status TEXT DEFAULT 'stopped',
@@ -67,8 +68,9 @@ def _migrate():
         cols = {row["name"] for row in c.execute("PRAGMA table_info(bots)").fetchall()}
 
         migrations = [
-            ("stakeAmount", "ALTER TABLE bots ADD COLUMN stakeAmount REAL DEFAULT 30"),
+            ("stakeAmount", "ALTER TABLE bots ADD COLUMN stakeAmount REAL DEFAULT 10"),
             ("leverage", "ALTER TABLE bots ADD COLUMN leverage INTEGER DEFAULT 10"),
+            ("maxOpenTrades", "ALTER TABLE bots ADD COLUMN maxOpenTrades INTEGER DEFAULT 3"),
             ("dryRun", "ALTER TABLE bots ADD COLUMN dryRun INTEGER DEFAULT 1"),
 
             ("tp_enabled", "ALTER TABLE bots ADD COLUMN tp_enabled INTEGER DEFAULT 0"),
@@ -137,6 +139,7 @@ class BotManager:
         bot["enableLong"] = bool(bot.get("enableLong"))
         bot["enableShort"] = bool(bot.get("enableShort"))
         bot["dryRun"] = bool(bot.get("dryRun", 1))
+        bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or 3)
 
         # ★ 风控字段
         bot["tp_enabled"] = bool(bot.get("tp_enabled"))
@@ -173,7 +176,8 @@ class BotManager:
         with _conn() as c:
             cur = c.execute(
                 """
-                INSERT INTO bots (name, pair, capital, stakeAmount, leverage, dryRun,
+                INSERT INTO bots (name, pair, capital,
+                                  stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
                                   status, port, longConfig, shortConfig, createdAt,
                                   tp_enabled, tp_mode, tp_amount, tp_ratio,
@@ -182,15 +186,23 @@ class BotManager:
                                   trail_activate_amount, trail_activate_ratio,
                                   trail_drawdown_amount, trail_drawdown_ratio,
                                   auto_stop_on_tp, auto_stop_on_sl, auto_stop_on_trail)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stopped', NULL, ?, ?, datetime('now'),
+                VALUES (?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?,
+                        'stopped', NULL, ?, ?, datetime('now'),
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
                         ?, ?, ?)
                 """,
                 (
                     base["name"], json.dumps(base["pair"]), base["capital"],
-                    base.get("stakeAmount", 30), base.get("leverage", 10),
+
+                    base.get("stakeAmount", 10),
+                    base.get("leverage", 10),
+                    base.get("maxOpenTrades", 3),  # ★ 对应 maxOpenTrades 列
                     int(base.get("dryRun", True)),
+
                     int(base["enableLong"]), int(base["enableShort"]),
+
                     json.dumps(payload.get("longConfig") or {}),
                     json.dumps(payload.get("shortConfig") or {}),
 
@@ -232,7 +244,7 @@ class BotManager:
                 """
                 UPDATE bots SET
                     name=?, pair=?, capital=?,
-                    stakeAmount=?, leverage=?, dryRun=?,
+                    stakeAmount=?, leverage=?, dryRun=?, maxOpenTrades=?,
                     enableLong=?, enableShort=?,
                     longConfig=?, shortConfig=?,
 
@@ -250,8 +262,9 @@ class BotManager:
                     base["name"],
                     json.dumps(base["pair"]),
                     base["capital"],
-                    base.get("stakeAmount", 30),
+                    base.get("stakeAmount", 10),
                     base.get("leverage", 10),
+                    base.get("maxOpenTrades", 3),
                     int(base.get("dryRun", True)),
                     int(base["enableLong"]),
                     int(base["enableShort"]),

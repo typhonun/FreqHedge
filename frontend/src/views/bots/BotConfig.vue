@@ -54,16 +54,6 @@
         <!-- 第 2 行：Dry Run / 开仓金额 / 持仓杠杆 -->
         <el-row :gutter="20">
           <el-col :span="8">
-            <el-form-item label="Dry Run">
-              <el-switch
-                v-model="botBaseInfo.dryRun"
-                active-text="模拟"
-                inactive-text="实盘"
-                inline-prompt
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
             <el-form-item label="开仓金额 (USDT)">
               <el-input-number
                 v-model="botBaseInfo.stakeAmount"
@@ -84,18 +74,41 @@
               />
             </el-form-item>
           </el-col>
-        </el-row>
-
-        <!-- 第 3 行：启用方向 -->
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <el-form-item label="启用多头">
-              <el-switch v-model="botBaseInfo.enableLong" />
+          <el-col :span="6">
+            <el-form-item label="最大持仓数">
+              <el-input-number
+                v-model="botBaseInfo.maxOpenTrades"
+                :min="1"
+                :max="100"
+                :step="1"
+                style="width: 100%"
+              />
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="启用空头">
-              <el-switch v-model="botBaseInfo.enableShort" />
+            <el-form-item label="Dry Run">
+              <el-switch
+                v-model="botBaseInfo.dryRun"
+                active-text="模拟"
+                inactive-text="实盘"
+                inline-prompt
+              />
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- 第 3 行：交易方向 -->
+        <el-row :gutter="20">
+          <el-col :span="24">
+            <el-form-item label="方向">
+              <el-radio-group
+                v-model="botBaseInfo.direction"
+                size="default"
+              >
+                <el-radio-button value="long">做多</el-radio-button>
+                <el-radio-button value="short">做空</el-radio-button>
+                <el-radio-button value="both">双向</el-radio-button>
+              </el-radio-group>
             </el-form-item>
           </el-col>
         </el-row>
@@ -229,7 +242,7 @@
     <!-- 策略配置区（多空卡片） -->
     <div class="strategy-columns">
       <!-- 多头 -->
-      <div v-if="botBaseInfo.enableLong" class="strategy-column">
+      <div v-if="showLong" class="strategy-column">
         <el-card class="title-card long">
           <h3>📈 多头策略</h3>
         </el-card>
@@ -242,7 +255,7 @@
       </div>
 
       <!-- 空头 -->
-      <div v-if="botBaseInfo.enableShort" class="strategy-column">
+      <div v-if="showShort" class="strategy-column">
         <el-card class="title-card short">
           <h3>📉 空头策略</h3>
         </el-card>
@@ -305,12 +318,15 @@ const botBaseInfo = ref({
   name: '',
   pair: [],              // ← 从字符串改为数组
   capital: 100,
-  stakeAmount: 30,       // ← 新增
+  stakeAmount: 10,       // ← 新增
   leverage: 10,          // ← 新增
+  maxOpenTrades: 3,
   dryRun: true,          // ← 新增
-  enableLong: true,
-  enableShort: false
+  direction: 'long',
 })
+
+const showLong  = computed(() => ['long',  'both'].includes(botBaseInfo.value.direction))
+const showShort = computed(() => ['short', 'both'].includes(botBaseInfo.value.direction))
 
 // ============ 本地策略配置（完全独立，不碰全局）============
 const localConfig = ref({
@@ -380,13 +396,21 @@ const loadBotDetail = async () => {
       name: data.name,
       pair: Array.isArray(data.pair)
         ? data.pair
-        : (data.pair ? [data.pair] : []),     // 兼容旧数据
+        : (data.pair ? [data.pair] : []),
       capital: data.capital ?? 100,
-      stakeAmount: data.stakeAmount ?? 30,    // 兜底
+      stakeAmount: data.stakeAmount ?? 10,
       leverage: data.leverage ?? 10,
+      maxOpenTrades: data.maxOpenTrades ?? 5,
       dryRun: data.dryRun !== undefined ? !!data.dryRun : true,
-      enableLong: !!data.enableLong,
-      enableShort: !!data.enableShort,
+
+      // ★ enableLong/enableShort → direction
+      direction: (() => {
+        const l = !!data.enableLong
+        const s = !!data.enableShort
+        if (l && s) return 'both'
+        if (s) return 'short'
+        return 'long'
+      })(),
     }
 
     botRisk.value = {
@@ -450,21 +474,28 @@ const botRisk = ref({
 })
 
 // ============ 保存 ============
-const buildPayload = () => ({
-  base: {
-    name: botBaseInfo.value.name,
-    pair: botBaseInfo.value.pair,         // 数组
-    capital: botBaseInfo.value.capital,
-    stakeAmount: botBaseInfo.value.stakeAmount,
-    leverage: botBaseInfo.value.leverage,
-    dryRun: botBaseInfo.value.dryRun,
-    enableLong: botBaseInfo.value.enableLong,
-    enableShort: botBaseInfo.value.enableShort,
-  },
-  risk: botRisk.value,
-  longConfig: localConfig.value.long,
-  shortConfig: localConfig.value.short,
-})
+const buildPayload = () => {
+  const dir = botBaseInfo.value.direction
+
+  return {
+    base: {
+      name: botBaseInfo.value.name,
+      pair: botBaseInfo.value.pair,
+      capital: botBaseInfo.value.capital,
+      stakeAmount: botBaseInfo.value.stakeAmount,
+      leverage: botBaseInfo.value.leverage,
+      maxOpenTrades: botBaseInfo.value.maxOpenTrades,
+      dryRun: botBaseInfo.value.dryRun,
+
+      // ★ direction → enableLong/enableShort
+      enableLong:  dir === 'long' || dir === 'both',
+      enableShort: dir === 'short' || dir === 'both',
+    },
+    risk: botRisk.value,
+    longConfig: localConfig.value.long,
+    shortConfig: localConfig.value.short,
+  }
+}
 
 const validate = () => {
   if (!botBaseInfo.value.name) {
@@ -487,8 +518,12 @@ const validate = () => {
     ElMessage.warning('持仓杠杆至少为 1')
     return false
   }
-  if (!botBaseInfo.value.enableLong && !botBaseInfo.value.enableShort) {
-    ElMessage.warning('请至少启用一个方向')
+  if (!botBaseInfo.value.maxOpenTrades || botBaseInfo.value.maxOpenTrades < 1) {
+    ElMessage.warning('最大持仓数至少为 1')
+    return false
+  }
+  if (!['long', 'short', 'both'].includes(botBaseInfo.value.direction)) {
+    ElMessage.warning('请选择方向')
     return false
   }
   return true

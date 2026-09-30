@@ -67,12 +67,13 @@ class ConfigService:
         # ★ 新字段生效
         cfg["dry_run"] = bool(base.get("dryRun", True))
         cfg["dry_run_wallet"] = base["capital"]
-        cfg["stake_amount"] = base.get("stakeAmount", 30)
+        cfg["stake_amount"] = base.get("stakeAmount", 10)
         cfg["leverage"] = base.get("leverage", 10)
-
+        cfg["max_open_trades"] = int(base.get("maxOpenTrades", 3))  # ★ 新增这一行
+        cfg["tradable_balance_ratio"] = 1.0
         cfg["bot_name"] = f"{base['name']}-{side}"
         cfg.setdefault("exchange", {})
-        cfg["exchange"]["pair_whitelist"] = list(base["pair"])  # list
+        cfg["exchange"]["pair_whitelist"] = list(base["pair"])
 
         cfg["custom_params"] = {side: strategy_params}
 

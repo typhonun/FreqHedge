@@ -15,8 +15,9 @@ class BotBaseInfo(BaseModel):
     name: str
     pair: list[str]
     capital: float
-    stakeAmount: float = 30
+    stakeAmount: float = 10
     leverage: int = 10
+    maxOpenTrades: int = 3
     dryRun: bool = True
     enableLong: bool
     enableShort: bool
