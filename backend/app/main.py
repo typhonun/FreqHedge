@@ -16,6 +16,7 @@ from app.api.system import router as system_router
 from app.api.position import router as position_router
 from app.api.config import router as config_router
 from app.api.chart import router as chart_router
+from app.api import exchange
 from app.api import logs
 from app.api import strategy
 from app.api import bots
@@ -183,4 +184,9 @@ app.include_router(
 app.include_router(
     logs.router,
     prefix="/logs"
+)
+
+app.include_router(
+    exchange.router,
+    prefix="/exchange"
 )

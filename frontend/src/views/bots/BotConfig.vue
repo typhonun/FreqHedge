@@ -25,17 +25,19 @@
               <el-select
                 v-model="botBaseInfo.pair"
                 multiple
+                filterable
                 collapse-tags
                 collapse-tags-tooltip
-                placeholder="选择交易对（可多选）"
+                placeholder="选择交易对（可多选，支持搜索）"
                 style="width: 100%"
+                :loading="pairLoading"
               >
-                <el-option label="BTC/USDT:USDT" value="BTC/USDT:USDT" />
-                <el-option label="ETH/USDT:USDT" value="ETH/USDT:USDT" />
-                <el-option label="SOL/USDT:USDT" value="SOL/USDT:USDT" />
-                <el-option label="XRP/USDT:USDT" value="XRP/USDT:USDT" />
-                <el-option label="BNB/USDT:USDT" value="BNB/USDT:USDT" />
-                <el-option label="DOGE/USDT:USDT" value="DOGE/USDT:USDT" />
+                <el-option
+                  v-for="p in pairOptions"
+                  :key="p.name"
+                  :label="p.name"
+                  :value="p.name"
+                />
               </el-select>
             </el-form-item>
           </el-col>
@@ -497,6 +499,24 @@ const buildPayload = () => {
   }
 }
 
+const pairOptions = ref([])
+const pairLoading = ref(false)
+
+const loadPairs = async () => {
+  pairLoading.value = true
+  try {
+    const { data } = await axios.get(`${API}/exchange/pairs`, {
+      params: { exchange: 'binance', market: 'futures' }
+    })
+    pairOptions.value = data || []
+  } catch (e) {
+    console.error('load pairs failed', e)
+    ElMessage.error('加载交易对失败')
+  } finally {
+    pairLoading.value = false
+  }
+}
+
 const validate = () => {
   if (!botBaseInfo.value.name) {
     ElMessage.warning('请输入机器人名称')
@@ -574,7 +594,12 @@ const goBack = () => {
   router.push({ name: 'BotList' })
 }
 
-onMounted(loadBotDetail)
+onMounted(async () => {
+  await loadPairs()
+  await loadBotDetail()
+  mergeMissingPairs()
+})
+
 </script>
 
 <style scoped>
