@@ -168,8 +168,7 @@ class BotManager:
     @staticmethod
     def create(payload: dict):
         base = payload["base"]
-        risk = payload.get("risk", {})  # ★ 新增
-        port = _find_free_port()
+        risk = payload.get("risk", {})
 
         with _conn() as c:
             cur = c.execute(
@@ -183,7 +182,7 @@ class BotManager:
                                   trail_activate_amount, trail_activate_ratio,
                                   trail_drawdown_amount, trail_drawdown_ratio,
                                   auto_stop_on_tp, auto_stop_on_sl, auto_stop_on_trail)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stopped', ?, ?, ?, datetime('now'),
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'stopped', NULL, ?, ?, datetime('now'),
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
                         ?, ?, ?)
                 """,
@@ -192,11 +191,9 @@ class BotManager:
                     base.get("stakeAmount", 30), base.get("leverage", 10),
                     int(base.get("dryRun", True)),
                     int(base["enableLong"]), int(base["enableShort"]),
-                    port,
                     json.dumps(payload.get("longConfig") or {}),
                     json.dumps(payload.get("shortConfig") or {}),
 
-                    # ★ 风控
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", "amount"),
                     float(risk.get("tp_amount", 0) or 0),
@@ -220,7 +217,10 @@ class BotManager:
                 ),
             )
             bot_id = cur.lastrowid
+            port = 8011 + bot_id * 2
+            c.execute("UPDATE bots SET port=? WHERE id=?", (port, bot_id))
             c.commit()
+            print(f"[BotManager] created bot_id={bot_id} port={port} risk={risk}")
         return BotManager.get(bot_id)
 
     @staticmethod
@@ -283,10 +283,35 @@ class BotManager:
                 ),
             )
             c.commit()
+            print(f"[BotManager] created bot_id={bot_id} risk={risk}")
         return BotManager.get(bot_id)
 
     @staticmethod
     def delete(bot_id: int):
+        from app.services.process_service import ProcessService
+        bot = BotManager.get(bot_id)
+        if bot:
+            try:
+                ProcessService.stop_bot(bot)
+            except Exception as e:
+                print(f"[BotManager] stop before delete failed bot={bot_id}: {e}")
+
+        # ★ 清 position_service 缓存
+        from app.services import position_service
+        position_service._snapshot_cache.pop(bot_id, None)
+        position_service._snapshot_all_cache["data"] = None
+        position_service._snapshot_all_cache["time"] = 0
+        for key in list(position_service._last_good_data.keys()):
+            if key[0] == bot_id:
+                position_service._last_good_data.pop(key, None)
+        for key in list(position_service._custom_data_cache.keys()):
+            if key[0] == bot_id:
+                position_service._custom_data_cache.pop(key, None)
+
+        from app.core import runtime
+        runtime.ROUND_INFO_BY_BOT.pop(bot_id, None)
+        runtime.clear_exit_reasons(bot_id)
+
         with _conn() as c:
             c.execute("DELETE FROM bots WHERE id=?", (bot_id,))
             c.commit()

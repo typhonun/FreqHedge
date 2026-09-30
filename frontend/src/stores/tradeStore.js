@@ -2,7 +2,12 @@ import { defineStore } from "pinia"
 import axios from "axios"
 
 const API = "http://localhost:9000"
-const _q = (botId) => (botId != null ? `?bot_id=${botId}` : "")
+const _q = (botId) => {
+  const parts = []
+  if (botId != null) parts.push(`bot_id=${botId}`)
+  parts.push(`_t=${Date.now()}`)
+  return `?${parts.join('&')}`
+}
 
 export const useTradeStore = defineStore("trade", {
   state: () => ({

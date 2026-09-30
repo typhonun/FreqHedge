@@ -62,11 +62,11 @@ class PositionService:
     @staticmethod
     def _extract_trades(data):
         if isinstance(data, list):
-            return list(data)  # shallow copy
+            return [dict(t) for t in data]  # ★ 每个 dict 浅拷贝
         if isinstance(data, dict):
             trades = data.get("trades")
             if isinstance(trades, list):
-                return list(trades)
+                return [dict(t) for t in trades]
         return []
 
     @staticmethod
@@ -657,8 +657,10 @@ class PositionService:
         def enrich(trade, side):
             trade = {**trade, "side": side, "bot_id": bot_id}
             tid = trade.get("trade_id")
-            if tid in runtime.GLOBAL_EXIT_REASONS:
-                trade["exit_reason"] = runtime.GLOBAL_EXIT_REASONS[tid]
+            if tid is not None:
+                reason = runtime.get_exit_reason(bot_id, tid)  # ★ 改这里
+                if reason:
+                    trade["exit_reason"] = reason
             return trade
 
         return {

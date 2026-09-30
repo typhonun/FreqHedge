@@ -63,9 +63,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'           // ★ 加 onMounted
 import { ArrowRight, ArrowDown } from '@element-plus/icons-vue'
+import axios from 'axios'                                        // ★ 加 axios
 import PositionTableCommon from './PositionTableCommon.vue'
+
+const API = 'http://localhost:9000'
 
 const props = defineProps({
   positions: { type: [Array, Object], default: () => [] },
@@ -90,9 +93,16 @@ const flat = computed(() => {
   return result
 })
 
+// ★ 只保留一份 botMap
+const internalBots = ref([])
+
+const effectiveBots = computed(() => {
+  return (props.bots && props.bots.length) ? props.bots : internalBots.value
+})
+
 const botMap = computed(() => {
   const m = {}
-  for (const b of props.bots) m[b.id] = b
+  for (const b of effectiveBots.value) m[b.id] = b
   return m
 })
 
@@ -144,6 +154,16 @@ const toggleGroup = (bid) => {
   else arr.push(bid)
   expandedIds.value = arr
 }
+
+onMounted(async () => {
+  if (props.bots && props.bots.length) return
+  try {
+    const { data } = await axios.get(`${API}/bots`)
+    internalBots.value = data
+  } catch (e) {
+    console.error('[GroupedPositionTable] fetch bots failed', e)
+  }
+})
 </script>
 
 <style scoped>

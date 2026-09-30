@@ -2,7 +2,6 @@
 
 <el-table
     :data="normalizedPositions"
-    row-key="trade_id"
     border
     stripe
 >

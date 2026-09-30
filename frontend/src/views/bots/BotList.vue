@@ -92,9 +92,9 @@
             <span class="info-value">{{ bot.capital }} USDT</span>
           </div>
           <div class="info-row">
-            <span class="info-label">当前盈亏</span>
-            <span class="info-value" :class="bot.pnl >= 0 ? 'profit' : 'loss'">
-              {{ bot.pnl >= 0 ? '+' : '' }}{{ bot.pnl ?? 0 }} USDT
+            <span class="info-label">累计收益</span>
+            <span class="info-value" :class="(bot.total_profit ?? 0) >= 0 ? 'profit' : 'loss'">
+              {{ (bot.total_profit ?? 0) >= 0 ? '+' : '' }}{{ Number(bot.total_profit ?? 0).toFixed(2) }} USDT
             </span>
           </div>
         </div>
@@ -159,7 +159,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Plus, MoreFilled, VideoPlay, VideoPause, Setting, Delete
@@ -173,7 +173,6 @@ const filterStatus = ref('all')
 const { state, fetchBots, toggleBot, deleteBot } = useBotStore()
 const bots = computed(() => state.bots)
 
-// 每个 bot 独立 loading，避免全局 loading 导致所有按钮转圈
 const loadingIds = ref(new Set())
 
 const filteredBots = computed(() => {
@@ -181,17 +180,15 @@ const filteredBots = computed(() => {
   return bots.value.filter(b => b.status === filterStatus.value)
 })
 
-// ============ 跳转 ============
 const goCreate = () => router.push({ name: 'BotNew' })
 const goDetail = (id) => router.push({ name: 'BotDetail', params: { id } })
 
-// ============ 启动 / 停止 ============
 const handleToggle = async (bot) => {
   loadingIds.value.add(bot.id)
   try {
     await toggleBot(bot.id, bot.status)
     ElMessage.success(bot.status === 'running' ? '已停止' : '已启动')
-    await fetchBots()   // 刷新最新状态
+    await fetchBots()
   } catch (e) {
     ElMessage.error(e?.response?.data?.error || '操作失败')
   } finally {
@@ -199,7 +196,6 @@ const handleToggle = async (bot) => {
   }
 }
 
-// ============ 删除 ============
 const handleDelete = async (bot) => {
   try {
     await ElMessageBox.confirm(
@@ -208,12 +204,11 @@ const handleDelete = async (bot) => {
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
     )
   } catch {
-    return   // 用户取消
+    return
   }
 
   loadingIds.value.add(bot.id)
   try {
-    // 如果正在运行，先停止
     if (bot.status === 'running') {
       await toggleBot(bot.id, 'running')
     }
@@ -227,18 +222,15 @@ const handleDelete = async (bot) => {
   }
 }
 
-// ============ 更多菜单 ============
 const handleCommand = async (cmd, bot) => {
   switch (cmd) {
     case 'edit':
       goDetail(bot.id)
       break
     case 'copy':
-      // 复制配置：跳转到新建页并带上预填数据（后续实现）
       router.push({ name: 'BotNew', query: { copyFrom: bot.id } })
       break
     case 'logs':
-      // 打开日志抽屉或跳转日志页
       router.push({ name: 'BotLogs', params: { id: bot.id } })
       break
     case 'delete':
@@ -247,7 +239,30 @@ const handleCommand = async (cmd, bot) => {
   }
 }
 
-onMounted(fetchBots)
+// ============ ★ 定时刷新累计收益 ============
+let refreshTimer = null
+
+const startTimer = () => {
+  stopTimer()
+  refreshTimer = setInterval(() => {
+    fetchBots()
+  }, 10000)   // 10 秒
+}
+
+const stopTimer = () => {
+  if (refreshTimer) {
+    clearInterval(refreshTimer)
+    refreshTimer = null
+  }
+}
+
+onMounted(async () => {
+  await fetchBots()
+  startTimer()
+})
+
+onUnmounted(stopTimer)
+
 </script>
 
 <style scoped>

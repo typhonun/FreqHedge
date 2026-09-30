@@ -63,16 +63,17 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
-import GroupedPositionTable    from '@features/dashboard/components/GroupedPositionTable.vue'
-import GroupedClosedTradeTable from '@features/dashboard/components/GroupedClosedTradeTable.vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useTradeStore } from '@/stores/tradeStore'
 import { useBotStore } from '@/stores/botStore'
+import GroupedPositionTable from '@features/dashboard/components/GroupedPositionTable.vue'
+import GroupedClosedTradeTable from '@features/dashboard/components/GroupedClosedTradeTable.vue'
 
 const store = useTradeStore()
 const botStore = useBotStore()
 
-const bots = ref([])
+const bots = computed(() => botStore.state.bots)
+
 const filterBotId = ref(null)
 const viewMode = ref('grouped')
 
@@ -90,8 +91,11 @@ const closedCount = computed(() => {
 })
 
 const loadBots = async () => {
-  await botStore.fetchBots()
-  bots.value = botStore.state.bots
+  try {
+    await botStore.fetchBots()
+  } catch (e) {
+    console.error('[Positions] loadBots failed', e)
+  }
 }
 
 const reload = async () => {
@@ -105,23 +109,42 @@ watch(filterBotId, async () => {
 
 const startTimers = () => {
   stopTimers()
-  timer = setInterval(() => store.refresh(filterBotId.value), 5000)
+  console.log('[Positions] startTimers')
+  timer = setInterval(() => store.refresh(filterBotId.value), 10000)
   historyTimer = setInterval(() => store.refreshHistory(filterBotId.value), 60000)
 }
 
 const stopTimers = () => {
+  console.log('[Positions] stopTimers')
   if (timer) { clearInterval(timer); timer = null }
   if (historyTimer) { clearInterval(historyTimer); historyTimer = null }
 }
 
 onMounted(async () => {
-  store.setBotId(null)
+  console.log('[Positions] onMounted')
+  // ★ 删掉 store.setBotId(null)
   await loadBots()
   await reload()
   startTimers()
 })
 
-onUnmounted(stopTimers)
+onUnmounted(() => {
+  console.log('[Positions] onUnmounted')
+  stopTimers()
+})
+
+// keep-alive 兼容（无 keep-alive 时 onActivated 不会触发，无害）
+onActivated(async () => {
+  console.log('[Positions] onActivated')
+  await loadBots()
+  await reload()
+  startTimers()
+})
+
+onDeactivated(() => {
+  console.log('[Positions] onDeactivated')
+  stopTimers()
+})
 </script>
 
 <style scoped>

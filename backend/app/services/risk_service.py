@@ -109,7 +109,7 @@ class RiskService:
             for pos in positions:
                 tid = pos.get("trade_id")
                 if tid is not None:
-                    runtime.GLOBAL_EXIT_REASONS[tid] = reason
+                    runtime.set_exit_reason(bot_id, tid, reason)  # ★ 改这一行
 
         failed = []
         for pos in positions:
@@ -153,7 +153,7 @@ class RiskService:
         bot = BotManager.get(bot_id)
         if not bot:
             return {}
-        return {
+        risk = {
             "tp_enabled": bot.get("tp_enabled"),
             "tp_mode": bot.get("tp_mode", "amount"),
             "tp_amount": bot.get("tp_amount", 0),
@@ -175,6 +175,8 @@ class RiskService:
             "auto_stop_on_sl": bot.get("auto_stop_on_sl", True),
             "auto_stop_on_trail": bot.get("auto_stop_on_trail", True),
         }
+        print(f"[Risk] bot={bot_id} risk={risk}")  # ★ 加这一行，跑一次就能定位
+        return risk
 
     @classmethod
     def check_risk(cls, bot_id: int):
@@ -183,6 +185,8 @@ class RiskService:
             return
 
         position_count = PositionService.get_position_count(bot_id=bot_id)
+        print(f"[Risk] bot={bot_id} position_count={position_count}")
+        
         if position_count["total"] == 0:
             return
         if time.time() - (info.get("last_tp_time", 0) or 0) < 60:
@@ -281,7 +285,7 @@ class RiskService:
         info["exiting"] = True
         info["last_tp_time"] = time.time()
         try:
-            cls.record_global_exit_events(event_type, message, bot_id=bot_id)
+            cls.record_exit_events(bot_id, event_type, message)  # ★ 改这里
             failed = cls.force_exit_all(bot_id, reason=reason)
             if failed:
                 print(f"[Risk] bot={bot_id} 以下 trade_id 平仓失败: {failed}")
@@ -289,7 +293,6 @@ class RiskService:
             if not cls.wait_positions_closed(bot_id):
                 return
 
-            # ★ 触发后自动停止 bot（关闭，不删除）
             if auto_stop:
                 try:
                     from app.services.bot_manager import BotManager
@@ -303,8 +306,7 @@ class RiskService:
             info["exiting"] = False
 
     @classmethod
-    def record_global_exit_events(cls, event_type, message, bot_id: int = None):
-        # 保留原实现，加上 bot_id 传给 record_event 时选择策略名
+    def record_exit_events(cls, bot_id: int, event_type: str, message: str):
         import sys
         from pathlib import Path
         from datetime import datetime
@@ -317,7 +319,7 @@ class RiskService:
             print(f"[Risk] event_logger 导入失败: {e}")
             return
 
-        positions = PositionService.get_all_positions(bot_id=bot_id)
+        positions = PositionService.get_all_positions(bot_id=bot_id)  # ★ 只本 bot
         current_time = datetime.utcnow()
         for pos in positions:
             tid = pos.get("trade_id")

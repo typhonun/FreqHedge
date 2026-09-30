@@ -83,3 +83,23 @@ ROUND_INFO = {
 }
 
 ROUND_INFO_BY_BOT = {}
+
+
+# 按 bot 隔离的退出原因： {bot_id: {trade_id: reason}}
+EXIT_REASONS_BY_BOT: dict[int, dict[int, str]] = {}
+
+
+def set_exit_reason(bot_id: int, trade_id: int, reason: str):
+    if bot_id is None or trade_id is None:
+        return
+    EXIT_REASONS_BY_BOT.setdefault(bot_id, {})[trade_id] = reason
+
+
+def get_exit_reason(bot_id: int, trade_id: int) -> str | None:
+    if bot_id is None or trade_id is None:
+        return None
+    return EXIT_REASONS_BY_BOT.get(bot_id, {}).get(trade_id)
+
+
+def clear_exit_reasons(bot_id: int):
+    EXIT_REASONS_BY_BOT.pop(bot_id, None)

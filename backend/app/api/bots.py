@@ -2,17 +2,18 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
 
 from app.services.bot_manager import BotManager
+from app.services.position_service import PositionService   # ★ 新增
 from app.services.config_service import ConfigService
 
 router = APIRouter(tags=["bots"])       # ← 去掉 prefix
 
 
 class BotBaseInfo(BaseModel):
-
     name: str
-    pair: list[str]              # ← 从 str 改为 list
+    pair: list[str]
     capital: float
     stakeAmount: float = 30
     leverage: int = 10
@@ -23,7 +24,7 @@ class BotBaseInfo(BaseModel):
 
 class BotRiskConfig(BaseModel):
     tp_enabled: bool = False
-    tp_mode: str = "amount"        # 'amount' | 'ratio'
+    tp_mode: str = "amount"
     tp_amount: float = 0
     tp_ratio: float = 0
 
@@ -43,7 +44,7 @@ class BotRiskConfig(BaseModel):
     auto_stop_on_sl: bool = True
     auto_stop_on_trail: bool = True
 
-    
+
 class BotPayload(BaseModel):
     base: BotBaseInfo
     risk: Optional[BotRiskConfig] = None
@@ -51,9 +52,40 @@ class BotPayload(BaseModel):
     shortConfig: Optional[dict] = None
 
 
+# =========================================================
+# ★ 给单个 bot 补上收益字段（累计 / 多头 / 空头）
+# =========================================================
+def _attach_profit(bot: dict) -> dict:
+    bot_id = bot.get("id")
+    try:
+        summary = PositionService.get_total_profit_summary(bot_id=bot_id)
+        bot["total_profit"] = round(float(summary.get("total_profit", 0.0) or 0.0), 2)
+        bot["long_profit"]  = round(float(summary.get("long_total_profit", 0.0) or 0.0), 2)
+        bot["short_profit"] = round(float(summary.get("short_total_profit", 0.0) or 0.0), 2)
+    except Exception as e:
+        print(f"[bots] attach profit failed bot={bot_id}: {e}")
+        bot["total_profit"] = 0.0
+        bot["long_profit"]  = 0.0
+        bot["short_profit"] = 0.0
+    return bot
+
+
+def _attach_profit_batch(bots: list[dict]) -> list[dict]:
+    """并行给一批 bot 补收益，最多 8 个并发"""
+    if not bots:
+        return bots
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        return list(executor.map(_attach_profit, bots))
+
+
+# =========================================================
+# 路由
+# =========================================================
+
 @router.get("")
 async def list_bots():
-    return BotManager.list_all()
+    bots = BotManager.list_all()
+    return _attach_profit_batch(bots)
 
 
 @router.get("/{bot_id}")
@@ -61,7 +93,7 @@ async def get_bot(bot_id: int):
     bot = BotManager.get(bot_id)
     if not bot:
         raise HTTPException(404, "bot not found")
-    return bot
+    return _attach_profit(bot)
 
 
 @router.post("")
@@ -69,7 +101,7 @@ async def create_bot(payload: BotPayload):
     data = payload.model_dump()
     bot = BotManager.create(data)
     ConfigService.generate_configs(bot["id"], data)
-    return bot
+    return _attach_profit(bot)
 
 
 @router.put("/{bot_id}")
@@ -79,7 +111,7 @@ async def update_bot(bot_id: int, payload: BotPayload):
     if not bot:
         raise HTTPException(404, "bot not found")
     ConfigService.generate_configs(bot_id, data)
-    return bot
+    return _attach_profit(bot)
 
 
 @router.delete("/{bot_id}")
