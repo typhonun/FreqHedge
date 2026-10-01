@@ -170,6 +170,8 @@ import { useBotStore } from '@/stores/botStore.js'
 const router = useRouter()
 
 const filterStatus = ref('all')
+
+// 只拿 BotList 需要的方法
 const { state, fetchBots, toggleBot, deleteBot } = useBotStore()
 const bots = computed(() => state.bots)
 
@@ -246,7 +248,7 @@ const startTimer = () => {
   stopTimer()
   refreshTimer = setInterval(() => {
     fetchBots()
-  }, 10000)   // 10 秒
+  }, 10000)
 }
 
 const stopTimer = () => {
@@ -262,7 +264,6 @@ onMounted(async () => {
 })
 
 onUnmounted(stopTimer)
-
 </script>
 
 <style scoped>

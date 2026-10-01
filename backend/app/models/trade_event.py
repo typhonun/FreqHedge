@@ -10,6 +10,8 @@ class TradeEvent(Base):
         primary_key=True
     )
 
+    bot_id = Column(Integer, nullable=True, index=True)
+
     strategy = Column(String)
 
     pair = Column(String)

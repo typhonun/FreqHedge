@@ -14,7 +14,8 @@ def record_event(
         amount,
         message="",
         current_time=None,
-        candle_time=None  # 新增：策略层传入的 K 线时间戳
+        candle_time=None,  # 新增：策略层传入的 K 线时间戳
+        bot_id=None,
 ):
     try:
         if current_time:
@@ -61,6 +62,7 @@ def record_event(
         requests.post(
             EVENT_API,
             json={
+                "bot_id": bot_id,
                 "strategy": strategy,
                 "pair": pair,
                 "trade_id": trade_id,

@@ -49,58 +49,31 @@ def get_strategies():
     ]
 
 
-@router.get("/pairs/{strategy}")
-def get_pairs(strategy: str, bot_id: int | None = None):
-    """如果传 bot_id，则返回该 bot 的 pair；否则返回所有 bot 并集"""
-    if bot_id is not None:
-        bot = BotManager.get(bot_id)
-        if bot:
-            return bot.get("pair") or []
+@router.get("/pairs/{bot_id}")
+def get_pairs(bot_id: int):
+    bot = BotManager.get(bot_id)
+    if not bot:
         return []
-
-    # 没传 bot_id：退化为所有 bot 并集（保持兼容）
-    return load_whitelist_pairs()
+    return bot.get("pair") or []
 
 
 @router.get("/candles")
-def get_candles(
-        pair: str,
-        timeframe: str = "5m"
-):
+def get_candles(pair: str, timeframe: str = "5m"):
     key = f"{pair}_{timeframe}"
-
     now = time.time()
 
     if key in kline_cache:
-
         cache_time, data = kline_cache[key]
-
         if now - cache_time < 300:
             return data
 
-    ohlcv = exchange.fetch_ohlcv(
-        pair,
-        timeframe=timeframe,
-        limit=2000
-    )
-
+    ohlcv = exchange.fetch_ohlcv(pair, timeframe=timeframe, limit=2000)
     data = [
-        {
-            "time": c[0],
-            "open": c[1],
-            "high": c[2],
-            "low": c[3],
-            "close": c[4],
-            "volume": c[5]
-        }
+        {"time": c[0], "open": c[1], "high": c[2], "low": c[3],
+         "close": c[4], "volume": c[5]}
         for c in ohlcv
     ]
-
-    kline_cache[key] = (
-        now,
-        data
-    )
-
+    kline_cache[key] = (now, data)
     return data
 
 
@@ -132,31 +105,15 @@ def latest_candle(
     }
 
 
-@router.get("/strategy-positions/{strategy}")
-def get_strategy_positions(strategy: str):
-    positions = PositionService.get_open_positions()
-
-    if strategy == "DcaTpLong":
-
-        return [
-            {
-                **p,
-                "side": "LONG"
-            }
-            for p in positions["long"]
-        ]
-
-    elif strategy == "DcaTpShort":
-
-        return [
-            {
-                **p,
-                "side": "SHORT"
-            }
-            for p in positions["short"]
-        ]
-
-    return []
+@router.get("/bot-positions/{bot_id}")
+def get_bot_positions(bot_id: int):
+    positions = PositionService.get_open_positions(bot_id=bot_id)
+    result = []
+    for p in positions["long"]:
+        result.append({**p, "side": "LONG"})
+    for p in positions["short"]:
+        result.append({**p, "side": "SHORT"})
+    return result
 
 
 def cache_refresh_loop():
@@ -264,6 +221,7 @@ def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
 
     # 插入逻辑（无论是否有 candle_time，都要走到这里）
     obj = TradeEvent(
+        bot_id=event.bot_id,
         strategy=event.strategy,
         pair=event.pair,
         trade_id=event.trade_id,
@@ -283,27 +241,17 @@ def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
     return obj
 
 
-@router.get(
-    "/events",
-    response_model=list[TradeEventOut]
-)
+@router.get("/events", response_model=list[TradeEventOut])
 def get_events(
-        strategy: str,
-        pair: str,
-        db: Session = Depends(get_db)
+    bot_id: int | None = None,
+    strategy: str | None = None,
+    pair: str = None,
+    db: Session = Depends(get_db),
 ):
-    pairs = [
-        pair,
-        pair.replace(":USDT", ""),
-        pair.replace("/", "")
-    ]
-
-    return (
-        db.query(TradeEvent)
-        .filter(
-            TradeEvent.strategy == strategy,
-            TradeEvent.pair.in_(pairs)
-        )
-        .order_by(TradeEvent.time)
-        .all()
-    )
+    pairs = [pair, pair.replace(":USDT", ""), pair.replace("/", "")]
+    q = db.query(TradeEvent).filter(TradeEvent.pair.in_(pairs))
+    if bot_id is not None:
+        q = q.filter(TradeEvent.bot_id == bot_id)
+    if strategy:
+        q = q.filter(TradeEvent.strategy == strategy)
+    return q.order_by(TradeEvent.time).all()

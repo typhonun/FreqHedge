@@ -5,22 +5,18 @@
     <el-row :gutter="20">
 
         <el-col :span="6">
-
-            <el-select
-                v-model="strategy"
-                placeholder="选择策略"
-                @change="loadPairs"
-            >
-
-                <el-option
-                    v-for="item in strategies"
-                    :key="item"
-                    :label="item"
-                    :value="item"
-                />
-
-            </el-select>
-
+          <el-select
+            v-model="botId"
+            placeholder="选择机器人"
+            @change="onBotChange"
+          >
+            <el-option
+              v-for="b in botList"
+              :key="b.id"
+              :label="b.name"
+              :value="b.id"
+            />
+          </el-select>
         </el-col>
 
         <el-col :span="6">
@@ -92,15 +88,8 @@
 <script setup>
 
 import axios from "axios"
-
-import {
-    ref,
-    onMounted,
-    onUnmounted,
-    watch
-}
-from "vue"
-
+import { ref, computed, onMounted, onUnmounted, watch } from "vue"
+import { useRoute } from "vue-router"
 import {
     createChart,
     CandlestickSeries,
@@ -108,829 +97,326 @@ import {
 } from "lightweight-charts"
 
 import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
+import { useBotStore } from '@/stores/botStore.js'
 
 const API = "http://localhost:9000"
-
-import { useRoute } from "vue-router"
-
 const route = useRoute()
+
+const botStore = useBotStore()
+const botList = computed(() => botStore.state.bots)
 
 const chartRef = ref(null)
 
-const strategies = ref([])
-
+const botId = ref(null)
 const pairs = ref([])
-
+const pair = ref("")
+const timeframe = ref("30m")
 const strategyPositions = ref([])
 
-const strategy = ref("")
-
-const pair = ref("")
-
-const timeframe = ref("30m")
-
-const chartCache = new Map()
-
 const timeframes = [
-    "1m",
-    "5m",
-    "15m",
-    "30m",
-    "1h",
-    "4h",
-    "1d"
+    "1m", "5m", "15m", "30m", "1h", "4h", "1d"
 ]
 
 const REFRESH_INTERVAL = 5000
 
 let chart = null
-
 let candleSeries = null
-
 let markerApi = null
-
 let refreshTimer = null
 
-const loadStrategies = async () => {
+// =========================================================
+// 机器人列表
+// =========================================================
 
-    const res =
-        await axios.get(
-            `${API}/chart/strategies`
-        )
+const loadBots = async () => {
+    await botStore.fetchBots()
 
-    strategies.value = res.data
-
-    if (res.data.length) {
-
-        const queryStrategy =
-            route.query.strategy
-
-        if (
-            queryStrategy &&
-            res.data.includes(queryStrategy)
-        ) {
-
-            strategy.value =
-                queryStrategy
-
-        } else {
-
-            strategy.value =
-                res.data[0]
-        }
-
-        await loadPairs()
+    if (!botList.value.length) {
+        botId.value = null
+        return
     }
+
+    const queryBotId = Number(route.query.botId)
+    if (queryBotId && botList.value.find(b => b.id === queryBotId)) {
+        botId.value = queryBotId
+    } else {
+        botId.value = botList.value[0].id
+    }
+
+    await loadPairs()
 }
 
-const changePair = async(data)=>{
+const onBotChange = async () => {
+    // 清空旧数据
+    pairs.value = []
+    pair.value = ""
+    strategyPositions.value = []
+    if (candleSeries) candleSeries.setData([])
+    if (markerApi) markerApi.setMarkers([])
 
-
-    // 如果策略变化
-    if(strategy.value !== data.strategy){
-
-        strategy.value =
-            data.strategy
-
-        await loadPairs()
-
-    }
-
-
-    // 切换交易对
-    if(pair.value !== data.pair){
-
-        pair.value =
-            data.pair
-
-        await loadChart()
-
-    }
-
+    await loadPairs()
 }
+
+// =========================================================
+// 交易对 + 当前持仓
+// =========================================================
 
 const loadPairs = async () => {
+    if (!botId.value) return
 
-    await loadCurrentPositions()
+    await loadBotPositions()
 
-    const res =
-        await axios.get(
-            `${API}/chart/pairs/${strategy.value}`
-        )
+    const res = await axios.get(`${API}/chart/pairs/${botId.value}`)
+    pairs.value = res.data || []
 
-    pairs.value = res.data
-
-    if (res.data.length) {
-
-        const queryPair =
-            route.query.pair
-
-        if (
-            queryPair &&
-            res.data.includes(queryPair)
-        ) {
-
-            pair.value =
-                queryPair
-
+    if (pairs.value.length) {
+        const queryPair = route.query.pair
+        if (queryPair && pairs.value.includes(queryPair)) {
+            pair.value = queryPair
         } else {
-
-            pair.value =
-                res.data[0]
+            pair.value = pairs.value[0]
         }
+        await loadChart()
+    } else {
+        pair.value = ""
+        if (candleSeries) candleSeries.setData([])
+        if (markerApi) markerApi.setMarkers([])
+    }
+}
 
+const loadBotPositions = async () => {
+    if (!botId.value) return
+    try {
+        const res = await axios.get(`${API}/chart/bot-positions/${botId.value}`)
+        strategyPositions.value = res.data || []
+    } catch (e) {
+        console.error("loadBotPositions failed", e)
+        strategyPositions.value = []
+    }
+}
+
+const changePair = async (data) => {
+    if (pair.value !== data.pair) {
+        pair.value = data.pair
         await loadChart()
     }
 }
 
+// =========================================================
+// 自动刷新最后一根 K 线
+// =========================================================
+
 const startAutoRefresh = () => {
-
-    if (refreshTimer) {
-        clearInterval(refreshTimer)
-    }
-
-    refreshTimer = setInterval(
-        updateLastCandle,
-        REFRESH_INTERVAL
-    )
-}
-
-const loadChart = async () => {
-
-    if(markerApi){
-
-        markerApi.setMarkers([])
-
-    }
-
-    const key =
-    `${strategy.value}_${pair.value}_${timeframe.value}`
-
-
-
-    const res =
-        await axios.get(
-            `${API}/chart/candles`,
-            {
-                params:{
-                    pair: pair.value,
-                    timeframe: timeframe.value
-                }
-            }
-        )
-
-
-    const data =
-        res.data.map(c=>({
-
-            time:
-            Math.floor(
-                c.time / 1000
-            ),
-
-            open:c.open,
-            high:c.high,
-            low:c.low,
-            close:c.close
-
-        }))
-
-
-
-    candleSeries.setData(data)
-
-
-
-    /*
-    =========================
-    加载交易事件
-    =========================
-    */
-
-
-    const eventRes =
-        await axios.get(
-            `${API}/chart/events`,
-            {
-                params:{
-                    strategy:
-                    strategy.value,
-
-                    pair:
-                    pair.value
-                }
-            }
-        )
-
-    function parseEventTime(time){
-
-        if(!time)
-            return null
-
-
-        let date = new Date(time)
-
-
-        return Math.floor(
-            date.getTime()/1000
-        )
-
-    }
-
-        /*
-    =========================
-    过滤：手动开仓时隐藏 signal
-    =========================
-    */
-    const rawEvents = eventRes.data || []
-
-    // 找出所有 manual_entry 事件的时间（转成秒）
-    const manualEntryTimes = rawEvents
-        .filter(e => e.event_type === "manual_entry")
-        .map(e => parseEventTime(
-            e.candle_time || e.time
-        ))
-        .filter(t => t !== null && t !== undefined)
-
-    // 判断某个 signal 是否落在某根手动开仓的 30min K 线内
-    function isSignalFromManualEntry(e) {
-
-        if (e.event_type !== "signal") return false
-
-        const sigTime = parseEventTime(
-            e.candle_time || e.time || e.created_at
-        )
-        if (sigTime === null || sigTime === undefined) return false
-
-        // 同一根 30 分钟 K 线（1800 秒）
-        const sigBucket = Math.floor(sigTime / 1800)
-
-        return manualEntryTimes.some(mt => {
-            return Math.floor(mt / 1800) === sigBucket
-        })
-    }
-
-    // 过滤掉手动开仓产生的 signal
-    const filteredEvents = rawEvents.filter(
-        e => !isSignalFromManualEntry(e)
-    )
-
-    console.log("raw events:", rawEvents)
-    console.log("filtered events:", filteredEvents)
-
-    const eventMarkers =
-        filteredEvents.map(e=>{
-
-
-            let config={}
-
-
-            switch(e.event_type){
-
-                case "signal":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#673ab7",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `信号开仓 ${e.price}`,
-
-                        size:2
-
-                    }
-
-                break
-
-                case "manual_entry":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#9c27b0",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `手动开仓 ${e.price}`,
-
-                        size:2,
-
-                        title:
-                        `价格:${e.price ?? '-'}
-                        数量:${e.amount ?? '-'}`
-
-                    }
-
-                break
-
-                case "dca":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#2196f3",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `DCA加仓 ${e.price}`,
-
-                        size:1,
-
-                        title:
-                            `价格:${e.price}
-                            数量:${e.amount}`
-
-                    }
-
-                break
-
-                case "trend_add":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#00bcd4",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `趋势加仓 ${e.price}`,
-
-                        title:
-                        `价格:${e.price}
-                        数量:${e.amount}`
-
-                    }
-
-                break
-
-                case "kdj_reduce":
-
-                    config={
-
-                        position:"aboveBar",
-
-                        color:"#9c27b0",
-
-                        shape:"arrowDown",
-
-                        text:
-                        `KDJ减仓 ${e.price}`,
-
-                        title:
-                        `价格:${e.price}
-                        数量:${e.amount}`
-
-                    }
-
-                break
-
-                case "grid_add":
-
-                    config={
-
-                        position:"belowBar",
-
-                        color:"#4caf50",
-
-                        shape:"arrowUp",
-
-                        text:
-                        `网格加仓 ${e.price}`,
-
-                        title:
-                        `价格:${e.price}
-                        数量:${e.amount}`
-
-                    }
-
-                break
-
-
-                case "grid_sell":
-
-                    config={
-
-                        position:"aboveBar",
-
-                        color:"#e91e63",
-
-                        shape:"arrowDown",
-
-                        text:
-                        `网格减仓 ${e.price}`,
-
-                        title:
-                        `价格:${e.price}
-                        数量:${e.amount}`
-
-                    }
-
-                break
-
-                case "tp":
-
-                    config={
-
-                        position:
-                        "aboveBar",
-
-                        color:
-                        "#ff9800",
-
-                        shape:
-                        "arrowDown",
-
-                        text:
-                        `${e.message || "TP"} ${e.price}`
-
-                    }
-
-                break
-
-                case "sl":
-
-                    config={
-
-                        position:
-                        "aboveBar",
-
-                        color:
-                        "#f44336",
-
-                        shape:
-                        "arrowDown",
-
-                        text:
-                        `SL ${e.price}`
-
-                    }
-
-                break
-
-                case "stop_loss":
-
-                    config={
-
-                        position: "aboveBar",
-
-                        color: "#f44336",
-
-                        shape: "arrowDown",
-
-                        text: `止损平仓 ${e.price}`,
-
-                        title:
-                            `价格:${e.price}
-                            数量:${e.amount}`,
-
-                        size: 2
-
-                    }
-
-                break
-
-                case "global_tp":
-
-                    config = {
-
-                        position: "aboveBar",
-
-                        color: "#00c853",
-
-                        shape: "arrowDown",
-
-                        text: `全局止盈 ${e.price}`,
-
-                        title:
-                            `价格:${e.price}
-                            数量:${e.amount}
-                            ${e.message || ""}`,
-
-                        size: 3
-
-                    }
-
-                break
-
-                case "global_sl":
-
-                    config = {
-
-                        position: "aboveBar",
-
-                        color: "#d50000",
-
-                        shape: "arrowDown",
-
-                        text: `全局止损 ${e.price}`,
-
-                        title:
-                            `价格:${e.price}
-                            数量:${e.amount}
-                            ${e.message || ""}`,
-
-                        size: 3
-
-                    }
-
-                break
-
-            }
-
-            let markerTime;
-
-
-            if(e.candle_time){
-
-                markerTime =
-                    parseEventTime(
-                        e.candle_time
-                    )
-
-            }
-            else if(e.time){
-
-                markerTime =
-                    parseEventTime(
-                        e.time
-                    )
-
-            }
-            else if(e.created_at){
-
-                markerTime =
-                    parseEventTime(
-                        e.created_at
-                    )
-
-            }
-            else if(e.current_time){
-
-                markerTime =
-                    parseEventTime(
-                        e.current_time
-                    )
-
-            }
-            else{
-
-                console.warn(
-                    "事件无时间",
-                    e
-                )
-
-                return null
-            }
-
-            const nearest =
-                data.reduce(
-                    (prev, curr)=>{
-
-                        return Math.abs(curr.time-markerTime)
-                            <
-                            Math.abs(prev.time-markerTime)
-                            ?
-                            curr
-                            :
-                            prev
-
-                    }
-                )
-
-
-            return {
-
-                time:
-                nearest.time,
-
-                ...config
-
-            }
-        }).filter(Boolean)
-
-
-
-    /*
-    ======================
-    设置标记
-    ======================
-    */
-
-    console.log(
-        "events:",
-        filteredEvents
-    )
-
-    console.log(
-        "markers:",
-        eventMarkers
-    )
-
-    console.log(
-        "candle range:",
-        data[0].time,
-        data[data.length-1].time
-    )
-
-    console.log(
-        "marker time:",
-        eventMarkers[0]?.time
-    )
-
-    markerApi.setMarkers(eventMarkers)
-
-    if(!eventMarkers.length){
-        console.warn("没有交易事件")
-    }
-
-
-
-    startAutoRefresh()
-
+    if (refreshTimer) clearInterval(refreshTimer)
+    refreshTimer = setInterval(updateLastCandle, REFRESH_INTERVAL)
 }
 
 const updateLastCandle = async () => {
-
-    if (!pair.value) return
-
+    if (!pair.value || !candleSeries) return
     try {
-
-        const res =
-            await axios.get(
-                `${API}/chart/latest`,
-                {
-                    params: {
-                        pair: pair.value,
-                        timeframe: timeframe.value
-                    }
-                }
-            )
-
+        const res = await axios.get(`${API}/chart/latest`, {
+            params: { pair: pair.value, timeframe: timeframe.value }
+        })
         candleSeries.update({
-
-            time: Math.floor(
-                res.data.time / 1000
-            ),
+            time: Math.floor(res.data.time / 1000),
             open: res.data.open,
             high: res.data.high,
             low: res.data.low,
             close: res.data.close
-
         })
-
     } catch (e) {
-
-        console.error(
-            "update candle error",
-            e
-        )
+        console.error("update candle error", e)
     }
 }
 
-const loadCurrentPositions = async () => {
+// =========================================================
+// 加载 K 线 + 事件标记
+// =========================================================
 
-    const res =
-        await axios.get(
-            `${API}/chart/strategy-positions/${strategy.value}`
-        )
+const loadChart = async () => {
+    if (!pair.value) return
 
-    strategyPositions.value = res.data
+    if (markerApi) markerApi.setMarkers([])
+
+    const res = await axios.get(`${API}/chart/candles`, {
+        params: { pair: pair.value, timeframe: timeframe.value }
+    })
+
+    const data = res.data.map(c => ({
+        time: Math.floor(c.time / 1000),
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close
+    }))
+
+    candleSeries.setData(data)
+
+    // 加载交易事件
+    const eventRes = await axios.get(`${API}/chart/events`, {
+        params: {
+            bot_id: botId.value,
+            pair: pair.value
+        }
+    })
+
+    const eventMarkers = buildMarkers(eventRes.data || [], data)
+    markerApi.setMarkers(eventMarkers)
+
+    startAutoRefresh()
 }
 
-onMounted(async () => {
+// =========================================================
+// 事件 → marker
+// =========================================================
 
-    chart = createChart(
-        chartRef.value,
-        {
-            localization:{
-                timeFormatter:(time)=>{
+function parseEventTime(time) {
+    if (!time) return null
+    const date = new Date(time)
+    const t = Math.floor(date.getTime() / 1000)
+    return Number.isFinite(t) ? t : null
+}
 
-                    return new Date(
-                        time*1000
-                    ).toLocaleString(
-                        "zh-CN",
-                        {
-                            timeZone:"Asia/Shanghai"
-                        }
-                    )
+function buildMarkers(rawEvents, candleData) {
+    if (!candleData.length) return []
 
-                }
-            },
-            width: chartRef.value.clientWidth,
-            height: 700,
+    // 手动开仓时间桶（30m）
+    const manualEntryTimes = rawEvents
+        .filter(e => e.event_type === "manual_entry")
+        .map(e => parseEventTime(e.candle_time || e.time))
+        .filter(t => t !== null)
 
-            layout: {
-                background: {
-                    color: "#ffffff"
-                },
-                textColor: "#333"
-            },
+    const isSignalFromManualEntry = (e) => {
+        if (e.event_type !== "signal") return false
+        const sigTime = parseEventTime(e.candle_time || e.time || e.created_at)
+        if (sigTime === null) return false
+        const sigBucket = Math.floor(sigTime / 1800)
+        return manualEntryTimes.some(mt => Math.floor(mt / 1800) === sigBucket)
+    }
 
-            grid: {
-                vertLines: {
-                    color: "#f0f0f0"
-                },
-                horzLines: {
-                    color: "#f0f0f0"
-                }
-            },
+    const filteredEvents = rawEvents.filter(e => !isSignalFromManualEntry(e))
 
-            timeScale: {
+    return filteredEvents.map(e => {
+        const config = buildMarkerConfig(e)
+        if (!config) return null
 
-                timeVisible: true,
+        let markerTime =
+            parseEventTime(e.candle_time) ??
+            parseEventTime(e.time) ??
+            parseEventTime(e.created_at) ??
+            parseEventTime(e.current_time)
 
-                secondsVisible: false,
-
-                tickMarkFormatter: (time) => {
-
-                    const d =
-                        new Date(
-                            time * 1000
-                        )
-
-                    return d.toLocaleString(
-                        "zh-CN",
-                        {
-                            timeZone:"Asia/Shanghai",
-                            month:"2-digit",
-                            day:"2-digit",
-                            hour:"2-digit",
-                            minute:"2-digit"
-                        }
-                    )
-
-                },
-
-                rightOffset: 0,
-
-                shiftVisibleRangeOnNewBar: false,
-
-                fixRightEdge: false,
-
-                lockVisibleTimeRangeOnResize: true
-            }
+        if (markerTime === null) {
+            console.warn("事件无时间", e)
+            return null
         }
-    )
 
-    candleSeries =
-        chart.addSeries(
-            CandlestickSeries
+        // 找最接近的 K 线
+        const nearest = candleData.reduce((prev, curr) =>
+            Math.abs(curr.time - markerTime) < Math.abs(prev.time - markerTime)
+                ? curr : prev
         )
 
+        return { time: nearest.time, ...config }
+    }).filter(Boolean)
+}
 
-    markerApi =
-        createSeriesMarkers(
-            candleSeries,
-            []
-        )
+function buildMarkerConfig(e) {
+    switch (e.event_type) {
+        case "signal":
+            return { position: "belowBar", color: "#673ab7", shape: "arrowUp", text: `信号开仓 ${e.price}`, size: 2 }
+        case "manual_entry":
+            return { position: "belowBar", color: "#9c27b0", shape: "arrowUp", text: `手动开仓 ${e.price}`, size: 2,
+                title: `价格:${e.price ?? '-'}\n数量:${e.amount ?? '-'}` }
+        case "dca":
+            return { position: "belowBar", color: "#2196f3", shape: "arrowUp", text: `DCA加仓 ${e.price}`, size: 1,
+                title: `价格:${e.price}\n数量:${e.amount}` }
+        case "trend_add":
+            return { position: "belowBar", color: "#00bcd4", shape: "arrowUp", text: `趋势加仓 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}` }
+        case "kdj_reduce":
+            return { position: "aboveBar", color: "#9c27b0", shape: "arrowDown", text: `KDJ减仓 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}` }
+        case "grid_add":
+            return { position: "belowBar", color: "#4caf50", shape: "arrowUp", text: `网格加仓 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}` }
+        case "grid_sell":
+            return { position: "aboveBar", color: "#e91e63", shape: "arrowDown", text: `网格减仓 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}` }
+        case "tp":
+            return { position: "aboveBar", color: "#ff9800", shape: "arrowDown", text: `${e.message || "TP"} ${e.price}` }
+        case "sl":
+            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `SL ${e.price}` }
+        case "stop_loss":
+            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `止损平仓 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}`, size: 2 }
+        case "global_tp":
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `全局止盈 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
+        case "global_sl":
+            return { position: "aboveBar", color: "#d50000", shape: "arrowDown", text: `全局止损 ${e.price}`,
+                title: `价格:${e.price}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
+        default:
+            return null
+    }
+}
 
-    await loadStrategies()
+// =========================================================
+// 生命周期
+// =========================================================
+
+onMounted(async () => {
+    chart = createChart(chartRef.value, {
+        localization: {
+            timeFormatter: (time) => new Date(time * 1000).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })
+        },
+        width: chartRef.value.clientWidth,
+        height: 700,
+        layout: { background: { color: "#ffffff" }, textColor: "#333" },
+        grid: { vertLines: { color: "#f0f0f0" }, horzLines: { color: "#f0f0f0" } },
+        timeScale: {
+            timeVisible: true,
+            secondsVisible: false,
+            tickMarkFormatter: (time) => {
+                const d = new Date(time * 1000)
+                return d.toLocaleString("zh-CN", {
+                    timeZone: "Asia/Shanghai",
+                    month: "2-digit", day: "2-digit",
+                    hour: "2-digit", minute: "2-digit"
+                })
+            },
+            rightOffset: 0,
+            shiftVisibleRangeOnNewBar: false,
+            fixRightEdge: false,
+            lockVisibleTimeRangeOnResize: true
+        }
+    })
+
+    candleSeries = chart.addSeries(CandlestickSeries)
+    markerApi = createSeriesMarkers(candleSeries, [])
+
+    await loadBots()
 })
 
 onUnmounted(() => {
-
-    if (refreshTimer) {
-        clearInterval(refreshTimer)
-    }
+    if (refreshTimer) clearInterval(refreshTimer)
 })
 
+// 支持 ?botId=1&pair=BTC/USDT:USDT 这种深链
 watch(
-    ()=>route.query,
-    async(query)=>{
-
-
-        if(query.strategy){
-
-            strategy.value =
-                query.strategy
-
+    () => route.query,
+    async (query) => {
+        if (query.botId && Number(query.botId) !== botId.value) {
+            botId.value = Number(query.botId)
+            await loadPairs()
+            return
         }
-
-
-        if(query.pair){
-
-            pair.value =
-                query.pair
-
-
+        if (query.pair && query.pair !== pair.value) {
+            pair.value = query.pair
             await loadChart()
-
         }
-
     },
-    {
-        deep:true
-    }
+    { deep: true }
 )
 
 </script>

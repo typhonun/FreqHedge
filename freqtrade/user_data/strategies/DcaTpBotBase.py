@@ -329,6 +329,23 @@ class DcaTpBotBase(IStrategy):
             f"保护趋势加仓      : {_fmt(htf.get('protect_trend'))}"
         )
 
+    def _get_bot_id(self):
+        """从 freqtrade config 读 bot_id（优先顶层，其次 custom_params）"""
+        try:
+            v = (self.config or {}).get("bot_id")
+            if v is not None:
+                return int(v)
+        except Exception:
+            pass
+        try:
+            custom = (self.config or {}).get("custom_params", {}) or {}
+            v = custom.get("bot_id")
+            if v is not None:
+                return int(v)
+        except Exception:
+            pass
+        return None
+
     # ============================================================
     # 配置读取
     # ============================================================
@@ -547,7 +564,8 @@ class DcaTpBotBase(IStrategy):
             amount=amount,
             message=message,
             current_time=current_time,
-            candle_time=candle_time
+            candle_time=candle_time,
+            bot_id=self._get_bot_id(),
         )
 
     # ============================================================

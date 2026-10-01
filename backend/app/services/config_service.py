@@ -64,9 +64,10 @@ class ConfigService:
         cfg["api_server"]["listen_port"] = port
         cfg["api_server"]["CORS_origins"] = ["*"]
 
-        # ★ 新增：显式告诉策略这是多还是空
+        # ★ 新增：把 bot_id 写到配置顶层，策略能直接读
+        cfg["bot_id"] = bot_id
+
         cfg["side"] = side
-        # ★ 新增：策略类名（这样 process_service 也可以从 config 里读）
         cfg["strategy"] = "DcaTpShort" if side == "short" else "DcaTpLong"
 
         cfg["dry_run"] = bool(base.get("dryRun", True))
@@ -80,8 +81,11 @@ class ConfigService:
         cfg.setdefault("exchange", {})
         cfg["exchange"]["pair_whitelist"] = list(base["pair"])
 
-        # ★ 只塞当前方向，不再塞两侧
-        cfg["custom_params"] = {side: strategy_params}
+        # ★ custom_params 里也塞一份，方便策略直接读
+        cfg["custom_params"] = {
+            "bot_id": bot_id,
+            side: strategy_params,
+        }
 
         return cfg
 

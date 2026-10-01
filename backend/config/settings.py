@@ -9,7 +9,7 @@ FREQTRADE_DIR = BASE_DIR / "freqtrade"
 AUTH_USER = "freqtrader"
 AUTH_PASSWORD = "zy147258"
 
-DATA_DIR = BASE_DIR / "backend" / "app" / "data"
+DATA_DIR = BASE_DIR / "backend" / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DCATP_DB = DATA_DIR / "dcatp.db"
 

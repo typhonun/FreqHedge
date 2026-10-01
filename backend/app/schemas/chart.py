@@ -3,6 +3,7 @@ from datetime import datetime
 
 
 class TradeEventCreate(BaseModel):
+    bot_id: int | None = None
 
     strategy: str
 
