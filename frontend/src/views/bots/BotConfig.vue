@@ -6,275 +6,421 @@
       <h2 class="config-title">{{ isEdit ? '编辑机器人' : '新建机器人' }}</h2>
     </div>
 
-    <!-- 基础信息 -->
-    <el-card class="base-info-card">
+    <!-- ============================================================ -->
+    <!-- 统一配置卡片：机器人信息 + 策略参数 + 止盈止损                 -->
+    <!-- ============================================================ -->
+    <el-card class="unified-card" shadow="never">
       <template #header>
-        <span class="card-title">基础信息</span>
+        <div class="card-head">
+          <span class="card-head__title">基础配置</span>
+          <el-text type="info" size="small">
+            机器人信息 · 策略参数 · 止盈止损
+          </el-text>
+        </div>
       </template>
 
-      <el-form :model="botBaseInfo" label-width="120px" size="default">
-        <!-- 第 1 行：名称 / 交易对 / 投入资金 -->
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <el-form-item label="机器人名称">
-              <el-input v-model="botBaseInfo.name" placeholder="如：BTC 多头激进" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="交易对">
-              <el-select
-                v-model="botBaseInfo.pair"
-                multiple
-                filterable
-                collapse-tags
-                collapse-tags-tooltip
-                placeholder="选择交易对（可多选，支持搜索）"
-                style="width: 100%"
-                :loading="pairLoading"
-              >
-                <el-option
-                  v-for="p in pairOptions"
-                  :key="p.name"
-                  :label="p.name"
-                  :value="p.name"
-                />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="投入资金 (USDT)">
-              <el-input-number
-                v-model="botBaseInfo.capital"
-                :min="1"
-                :step="100"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
+      <!-- ★ 左 60% / 右 40% 两栏 -->
+      <div class="base-split">
+        <div class="base-left">
 
-        <!-- 第 2 行：Dry Run / 开仓金额 / 持仓杠杆 -->
-        <el-row :gutter="20">
-          <el-col :span="8">
-            <el-form-item label="开仓金额 (USDT)">
-              <el-input-number
-                v-model="botBaseInfo.stakeAmount"
-                :min="1"
-                :step="10"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="持仓杠杆">
-              <el-input-number
-                v-model="botBaseInfo.leverage"
-                :min="1"
-                :max="125"
-                :step="1"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="6">
-            <el-form-item label="最大持仓数">
-              <el-input-number
-                v-model="botBaseInfo.maxOpenTrades"
-                :min="1"
-                :max="100"
-                :step="1"
-                style="width: 100%"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="Dry Run">
-              <el-switch
-                v-model="botBaseInfo.dryRun"
-                active-text="模拟"
-                inactive-text="实盘"
-                inline-prompt
-              />
-            </el-form-item>
-          </el-col>
-        </el-row>
+          <!-- ── 第 1 节：机器人信息 ── -->
+          <div class="config-section">
+            <div class="section-label">机器人信息</div>
 
-        <!-- 第 3 行：交易方向 -->
-        <el-row :gutter="20">
-          <el-col :span="24">
-            <el-form-item label="方向">
-              <el-radio-group
-                v-model="botBaseInfo.direction"
-                size="default"
-              >
-                <el-radio-button value="long">做多</el-radio-button>
-                <el-radio-button value="short">做空</el-radio-button>
-                <el-radio-button value="both">双向</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-          </el-col>
-        </el-row>
-      </el-form>
+            <div class="field-list">
+              <!-- 名称 -->
+              <div class="field-row">
+                <div class="field-label">机器人名称</div>
+                <div class="field-value">
+                  <el-input
+                    v-model="botBaseInfo.name"
+                    placeholder="如：BTC 多头激进"
+                    style="width: 100%"
+                  />
+                </div>
+              </div>
+
+              <!-- 交易对 -->
+              <div class="field-row">
+                <div class="field-label">交易对</div>
+                <div class="field-value">
+                  <el-select
+                    v-model="botBaseInfo.pair"
+                    multiple
+                    filterable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    placeholder="选择交易对（可多选）"
+                    style="width: 100%"
+                    :loading="pairLoading"
+                  >
+                    <el-option
+                      v-for="p in pairOptions"
+                      :key="p.name"
+                      :label="p.name"
+                      :value="p.name"
+                    />
+                  </el-select>
+                </div>
+              </div>
+
+              <!-- 投入资金 -->
+              <div class="field-row">
+                <div class="field-label">投入资金 (USDT)</div>
+                <div class="field-value">
+                  <el-input-number
+                    v-model="botBaseInfo.capital"
+                    :min="1"
+                    :step="100"
+                    style="width: 100%"
+                  />
+                </div>
+              </div>
+
+              <!-- 开仓金额 -->
+              <div class="field-row">
+                <div class="field-label">开仓金额 (USDT)</div>
+                <div class="field-value">
+                  <el-input-number
+                    v-model="botBaseInfo.stakeAmount"
+                    :min="1"
+                    :step="10"
+                    style="width: 100%"
+                  />
+                </div>
+              </div>
+
+              <!-- 持仓杠杆 -->
+              <div class="field-row">
+                <div class="field-label">持仓杠杆</div>
+                <div class="field-value">
+                  <el-input-number
+                    v-model="botBaseInfo.leverage"
+                    :min="1"
+                    :max="125"
+                    :step="1"
+                    style="width: 100%"
+                  />
+                </div>
+              </div>
+
+              <!-- 最大持仓数 -->
+              <div class="field-row">
+                <div class="field-label">最大持仓数</div>
+                <div class="field-value">
+                  <el-input-number
+                    v-model="botBaseInfo.maxOpenTrades"
+                    :min="1"
+                    :max="100"
+                    :step="1"
+                    style="width: 100%"
+                  />
+                </div>
+              </div>
+
+              <!-- Dry Run -->
+              <div class="field-row">
+                <div class="field-label">Dry Run</div>
+                <div class="field-value">
+                  <el-switch
+                    v-model="botBaseInfo.dryRun"
+                    active-text="模拟"
+                    inactive-text="实盘"
+                    inline-prompt
+                  />
+                </div>
+              </div>
+
+              <!-- 方向 -->
+              <div class="field-row">
+                <div class="field-label">方向</div>
+                <div class="field-value">
+                  <el-radio-group v-model="botBaseInfo.direction" size="default">
+                    <el-radio-button value="long">做多</el-radio-button>
+                    <el-radio-button value="short">做空</el-radio-button>
+                    <el-radio-button value="both">双向</el-radio-button>
+                  </el-radio-group>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── 第 2 节：策略参数 ── -->
+          <div class="config-section">
+            <div class="section-label">策略参数</div>
+
+            <div class="field-list">
+              <!-- K 线周期 -->
+              <div class="field-row">
+                <div class="field-label">K 线周期</div>
+                <div class="field-value">
+                  <el-select
+                    :model-value="currentStrategy.timeframe"
+                    @update:model-value="val => currentStrategy.timeframe = val"
+                    style="width: 100%"
+                  >
+                    <el-option label="1m"  value="1m" />
+                    <el-option label="3m"  value="3m" />
+                    <el-option label="5m"  value="5m" />
+                    <el-option label="15m" value="15m" />
+                    <el-option label="30m" value="30m" />
+                    <el-option label="1h"  value="1h" />
+                    <el-option label="2h"  value="2h" />
+                    <el-option label="4h"  value="4h" />
+                    <el-option label="6h"  value="6h" />
+                    <el-option label="12h" value="12h" />
+                    <el-option label="1d"  value="1d" />
+                  </el-select>
+                </div>
+              </div>
+
+              <!-- 金额模式 -->
+              <div class="field-row">
+                <div class="field-label">金额模式</div>
+                <div class="field-value">
+                  <el-radio-group
+                    :model-value="currentStrategy.amount_mode"
+                    @update:model-value="val => currentStrategy.amount_mode = val"
+                  >
+                    <el-radio-button value="percent">百分比</el-radio-button>
+                    <el-radio-button value="amount">固定金额</el-radio-button>
+                  </el-radio-group>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── 第 3 节：止盈止损 ── -->
+          <div class="config-section">
+            <div class="section-label">止盈止损</div>
+
+            <div class="field-list">
+
+              <!-- ========== 止盈 ========== -->
+              <div class="field-row field-row--switch">
+                <div class="field-label">
+                  <span>启用止盈</span>
+                  <p class="field-hint">达到目标自动平仓并停止机器人</p>
+                </div>
+                <div class="field-value field-value--right">
+                  <el-switch v-model="botRisk.tp_enabled" />
+                </div>
+              </div>
+
+              <template v-if="botRisk.tp_enabled">
+                <!-- 止盈模式 -->
+                <div class="field-row field-row--sub">
+                  <div class="field-label">止盈模式</div>
+                  <div class="field-value">
+                    <el-radio-group v-model="botRisk.tp_mode" size="small">
+                      <el-radio-button label="amount">金额</el-radio-button>
+                      <el-radio-button label="ratio">百分比</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                </div>
+
+                <!-- 止盈阈值 -->
+                <div class="field-row field-row--sub">
+                  <div class="field-label">
+                    {{ botRisk.tp_mode === 'amount' ? '止盈阈值 (USDT)' : '止盈阈值 (%)' }}
+                  </div>
+                  <div class="field-value">
+                    <el-input-number
+                      v-if="botRisk.tp_mode === 'amount'"
+                      v-model="botRisk.tp_amount"
+                      :min="0"
+                      :step="1"
+                      style="width: 100%"
+                    />
+                    <el-input-number
+                      v-else
+                      v-model="botRisk.tp_ratio"
+                      :min="0"
+                      :step="0.1"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </div>
+                </div>
+              </template>
+
+              <!-- ========== 止损 ========== -->
+              <div class="field-row field-row--switch">
+                <div class="field-label">
+                  <span>启用止损</span>
+                  <p class="field-hint">达到亏损限制自动平仓并停止机器人</p>
+                </div>
+                <div class="field-value field-value--right">
+                  <el-switch v-model="botRisk.sl_enabled" />
+                </div>
+              </div>
+
+              <template v-if="botRisk.sl_enabled">
+                <div class="field-row field-row--sub">
+                  <div class="field-label">止损模式</div>
+                  <div class="field-value">
+                    <el-radio-group v-model="botRisk.sl_mode" size="small">
+                      <el-radio-button label="amount">金额</el-radio-button>
+                      <el-radio-button label="ratio">百分比</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                </div>
+
+                <div class="field-row field-row--sub">
+                  <div class="field-label">
+                    {{ botRisk.sl_mode === 'amount' ? '止损阈值 (USDT)' : '止损阈值 (%)' }}
+                  </div>
+                  <div class="field-value">
+                    <el-input-number
+                      v-if="botRisk.sl_mode === 'amount'"
+                      v-model="botRisk.sl_amount"
+                      :min="0"
+                      :step="1"
+                      style="width: 100%"
+                    />
+                    <el-input-number
+                      v-else
+                      v-model="botRisk.sl_ratio"
+                      :min="0"
+                      :step="0.1"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </div>
+                </div>
+              </template>
+
+              <!-- ========== 追踪止损 ========== -->
+              <div class="field-row field-row--switch">
+                <div class="field-label">
+                  <span>启用追踪止损</span>
+                  <p class="field-hint">回撤/反弹到触发线自动平仓并停止机器人</p>
+                </div>
+                <div class="field-value field-value--right">
+                  <el-switch v-model="botRisk.trail_enabled" />
+                </div>
+              </div>
+
+              <template v-if="botRisk.trail_enabled">
+                <div class="field-row field-row--sub">
+                  <div class="field-label">追踪模式</div>
+                  <div class="field-value">
+                    <el-radio-group v-model="botRisk.trail_mode" size="small">
+                      <el-radio-button label="amount">金额</el-radio-button>
+                      <el-radio-button label="ratio">百分比</el-radio-button>
+                    </el-radio-group>
+                  </div>
+                </div>
+
+                <div class="field-row field-row--sub">
+                  <div class="field-label">
+                    {{ botRisk.trail_mode === 'amount' ? '触发盈亏 (USDT)' : '触发盈亏 (%)' }}
+                  </div>
+                  <div class="field-value">
+                    <el-input-number
+                      v-if="botRisk.trail_mode === 'amount'"
+                      v-model="botRisk.trail_activate_amount"
+                      :step="1"
+                      style="width: 100%"
+                    />
+                    <el-input-number
+                      v-else
+                      v-model="botRisk.trail_activate_ratio"
+                      :step="0.1"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </div>
+                </div>
+
+                <div class="field-row field-row--sub">
+                  <div class="field-label">
+                    {{ botRisk.trail_mode === 'amount' ? '追踪止损 (USDT)' : '追踪止损 (%)' }}
+                  </div>
+                  <div class="field-value">
+                    <el-input-number
+                      v-if="botRisk.trail_mode === 'amount'"
+                      v-model="botRisk.trail_drawdown_amount"
+                      :min="0"
+                      :step="1"
+                      style="width: 100%"
+                    />
+                    <el-input-number
+                      v-else
+                      v-model="botRisk.trail_drawdown_ratio"
+                      :min="0"
+                      :step="0.1"
+                      :precision="2"
+                      style="width: 100%"
+                    />
+                  </div>
+                </div>
+              </template>
+
+              <!-- ========== 触发后行为（仅任一项启用时显示）========== -->
+              <template v-if="botRisk.tp_enabled || botRisk.sl_enabled || botRisk.trail_enabled">
+                <div class="field-row field-row--sub">
+                  <div class="field-label">触发后自动停止机器人</div>
+                  <div class="field-value">
+                    <div class="checkbox-stack">
+                      <el-checkbox
+                        v-if="botRisk.tp_enabled"
+                        v-model="botRisk.auto_stop_on_tp"
+                      >
+                        止盈后停止
+                      </el-checkbox>
+                      <el-checkbox
+                        v-if="botRisk.sl_enabled"
+                        v-model="botRisk.auto_stop_on_sl"
+                      >
+                        止损后停止
+                      </el-checkbox>
+                      <el-checkbox
+                        v-if="botRisk.trail_enabled"
+                        v-model="botRisk.auto_stop_on_trail"
+                      >
+                        追踪止损后停止
+                      </el-checkbox>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+            </div>
+          </div>
+
+        </div>
+
+        <!-- 右栏：留空（与下方"回测"栏宽度对齐） -->
+        <div class="base-right"></div>
+      </div>
     </el-card>
 
-    <!-- 止盈止损 -->
-    <el-card class="risk-config-card">
+    <!-- ============================================================ -->
+    <!-- 策略配置区（多空 tab）                                        -->
+    <!-- ============================================================ -->
+    <el-card>
       <template #header>
-        <span class="card-title">🎯 止盈止损</span>
+        <el-tabs v-model="activeSide">
+          <el-tab-pane v-if="showLong"  label="📈 多头策略" name="long" />
+          <el-tab-pane v-if="showShort" label="📉 空头策略" name="short" />
+        </el-tabs>
       </template>
 
-      <div class="risk-grid">
-        <!-- 止盈 -->
-        <div class="risk-item">
-          <div class="risk-label">
-            <span>启用止盈</span>
-            <p>达到目标自动平仓并停止机器人</p>
-          </div>
-          <el-switch v-model="botRisk.tp_enabled" />
-        </div>
+      <StrategyPanel
+        v-if="activeSide === 'long' && showLong && localConfig.long.entry"
+        :config="localConfig.long"
+        :trade-info="longTradeInfo"
+        @save="handleSaveLong"
+      />
 
-        <div class="risk-item">
-          <div class="risk-label"><span>止盈阈值</span></div>
-          <div class="risk-input">
-            <el-radio-group v-model="botRisk.tp_mode" size="small">
-              <el-radio-button label="amount">金额</el-radio-button>
-              <el-radio-button label="ratio">百分比</el-radio-button>
-            </el-radio-group>
-
-            <el-input-number
-              v-if="botRisk.tp_mode === 'amount'"
-              v-model="botRisk.tp_amount"
-              :min="0" :step="1"
-              :disabled="!botRisk.tp_enabled"
-            />
-            <el-input-number
-              v-else
-              v-model="botRisk.tp_ratio"
-              :min="0" :step="0.1" :precision="2"
-              suffix="%"
-              :disabled="!botRisk.tp_enabled"
-            />
-          </div>
-        </div>
-
-        <!-- 止损 -->
-        <div class="risk-item">
-          <div class="risk-label">
-            <span>启用止损</span>
-            <p>达到亏损限制自动平仓并停止机器人</p>
-          </div>
-          <el-switch v-model="botRisk.sl_enabled" />
-        </div>
-
-        <div class="risk-item">
-          <div class="risk-label"><span>止损阈值</span></div>
-          <div class="risk-input">
-            <el-radio-group v-model="botRisk.sl_mode" size="small">
-              <el-radio-button label="amount">金额</el-radio-button>
-              <el-radio-button label="ratio">百分比</el-radio-button>
-            </el-radio-group>
-
-            <el-input-number
-              v-if="botRisk.sl_mode === 'amount'"
-              v-model="botRisk.sl_amount"
-              :min="0" :step="1"
-              :disabled="!botRisk.sl_enabled"
-            />
-            <el-input-number
-              v-else
-              v-model="botRisk.sl_ratio"
-              :min="0" :step="0.1" :precision="2"
-              suffix="%"
-              :disabled="!botRisk.sl_enabled"
-            />
-          </div>
-        </div>
-
-        <!-- 追踪止损 -->
-        <div class="risk-item">
-          <div class="risk-label">
-            <span>启用追踪止损</span>
-            <p>回撤/反弹到触发线自动平仓并停止机器人</p>
-          </div>
-          <el-switch v-model="botRisk.trail_enabled" />
-        </div>
-
-        <div class="risk-item">
-          <div class="risk-label"><span>追踪参数</span></div>
-          <div class="risk-input">
-            <el-radio-group v-model="botRisk.trail_mode" size="small">
-              <el-radio-button label="amount">金额</el-radio-button>
-              <el-radio-button label="ratio">百分比</el-radio-button>
-            </el-radio-group>
-
-            <template v-if="botRisk.trail_mode === 'amount'">
-              <el-input-number v-model="botRisk.trail_activate_amount"
-                :step="1" :disabled="!botRisk.trail_enabled"
-                placeholder="触发盈亏" />
-              <el-input-number v-model="botRisk.trail_drawdown_amount"
-                :min="0" :step="1" :disabled="!botRisk.trail_enabled"
-                placeholder="追踪止损" />
-            </template>
-            <template v-else>
-              <el-input-number v-model="botRisk.trail_activate_ratio"
-                :step="0.1" :precision="2" :disabled="!botRisk.trail_enabled"
-                placeholder="触发盈亏" />
-              <el-input-number v-model="botRisk.trail_drawdown_ratio"
-                :min="0" :step="0.1" :precision="2" :disabled="!botRisk.trail_enabled"
-                placeholder="追踪止损" />
-            </template>
-          </div>
-        </div>
-
-        <!-- 触发后行为 -->
-        <div class="risk-item risk-item--full">
-          <div class="risk-label">
-            <span>触发后自动停止机器人</span>
-            <p>止盈/止损后不再入场（不会删除，可手动重启）</p>
-          </div>
-          <div style="display:flex; gap:12px;">
-            <el-checkbox v-model="botRisk.auto_stop_on_tp">止盈后</el-checkbox>
-            <el-checkbox v-model="botRisk.auto_stop_on_sl">止损后</el-checkbox>
-            <el-checkbox v-model="botRisk.auto_stop_on_trail">追踪止损后</el-checkbox>
-          </div>
-        </div>
-      </div>
+      <StrategyPanel
+        v-else-if="activeSide === 'short' && showShort && localConfig.short.entry"
+        :config="localConfig.short"
+        :trade-info="shortTradeInfo"
+        @save="handleSaveShort"
+      />
     </el-card>
-
-    <!-- 策略配置区（多空卡片） -->
-    <div class="strategy-columns">
-      <!-- 多头 -->
-      <div v-if="showLong" class="strategy-column">
-        <el-card class="title-card long">
-          <h3>📈 多头策略</h3>
-        </el-card>
-        <StrategyPanel
-          v-if="localConfig.long.entry"
-          :config="localConfig.long"
-          :trade-info="longTradeInfo"
-          @save="handleSaveLong"
-        />
-      </div>
-
-      <!-- 空头 -->
-      <div v-if="showShort" class="strategy-column">
-        <el-card class="title-card short">
-          <h3>📉 空头策略</h3>
-        </el-card>
-        <StrategyPanel
-          v-if="localConfig.short.entry"
-          :config="localConfig.short"
-          :trade-info="shortTradeInfo"
-          @save="handleSaveShort"
-        />
-      </div>
-    </div>
-
-    <!-- 都没有启用时的提示 -->
-    <el-empty
-      v-if="!botBaseInfo.enableLong && !botBaseInfo.enableShort"
-      description="请至少启用一个方向（多头或空头）"
-    />
 
     <!-- 底部保存栏 -->
     <div class="save-footer">
@@ -291,7 +437,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
@@ -310,34 +456,36 @@ const route = useRoute()
 const router = useRouter()
 
 const { createBot, updateBot } = useBotStore()
+const activeSide = ref('long')
 
-// ============ 编辑模式 ============
 const botId = computed(() => route.params.id)
 const isEdit = computed(() => !!botId.value)
 
-// ============ 基础信息 ============
 const botBaseInfo = ref({
   name: '',
-  pair: [],              // ← 从字符串改为数组
+  pair: [],
   capital: 100,
-  stakeAmount: 10,       // ← 新增
-  leverage: 10,          // ← 新增
+  stakeAmount: 10,
+  leverage: 10,
   maxOpenTrades: 3,
-  dryRun: true,          // ← 新增
+  dryRun: true,
   direction: 'long',
 })
 
 const showLong  = computed(() => ['long',  'both'].includes(botBaseInfo.value.direction))
 const showShort = computed(() => ['short', 'both'].includes(botBaseInfo.value.direction))
 
-// ============ 本地策略配置（完全独立，不碰全局）============
 const localConfig = ref({
   long: getDefaultLongConfig(),
   short: getDefaultShortConfig()
 })
 
-// tradeInfo 只是给 StrategyPanel 展示的摘要，本地简单处理
-// 如果你希望它跟配置联动，需要重写 buildTradeInfo 或调用原逻辑
+const currentStrategy = computed(() => {
+  return activeSide.value === 'short'
+    ? localConfig.value.short
+    : localConfig.value.long
+})
+
 const longTradeInfo = computed(() => ({
   side: 'long',
   direction: '仅做多',
@@ -380,6 +528,18 @@ const shortTradeInfo = computed(() => ({
   roiLevels: []
 }))
 
+watch(
+  () => botBaseInfo.value.direction,
+  (dir) => {
+    if (dir === 'short') activeSide.value = 'short'
+    else if (dir === 'long') activeSide.value = 'long'
+    else if (dir === 'both' && !['long', 'short'].includes(activeSide.value)) {
+      activeSide.value = 'long'
+    }
+  },
+  { immediate: true }
+)
+
 const parseCfg = (v) => {
   if (!v) return null
   if (typeof v === 'string') {
@@ -388,7 +548,6 @@ const parseCfg = (v) => {
   return v
 }
 
-// ============ 加载数据 ============
 const loadBotDetail = async () => {
   if (!isEdit.value) return
   try {
@@ -404,8 +563,6 @@ const loadBotDetail = async () => {
       leverage: data.leverage ?? 10,
       maxOpenTrades: data.maxOpenTrades ?? 5,
       dryRun: data.dryRun !== undefined ? !!data.dryRun : true,
-
-      // ★ enableLong/enableShort → direction
       direction: (() => {
         const l = !!data.enableLong
         const s = !!data.enableShort
@@ -475,7 +632,6 @@ const botRisk = ref({
   auto_stop_on_trail: true,
 })
 
-// ============ 保存 ============
 const buildPayload = () => {
   const dir = botBaseInfo.value.direction
 
@@ -488,8 +644,6 @@ const buildPayload = () => {
       leverage: botBaseInfo.value.leverage,
       maxOpenTrades: botBaseInfo.value.maxOpenTrades,
       dryRun: botBaseInfo.value.dryRun,
-
-      // ★ direction → enableLong/enableShort
       enableLong:  dir === 'long' || dir === 'both',
       enableShort: dir === 'short' || dir === 'both',
     },
@@ -567,7 +721,6 @@ const handleSaveAndStart = async () => {
       id = bot.id
     }
 
-    // 启动
     await axios.post(`${API}/bots/${id}/start`)
 
     ElMessage.success(isEdit.value ? '已保存并重启' : '已保存并启动')
@@ -580,9 +733,7 @@ const handleSaveAndStart = async () => {
   }
 }
 
-// ============ 子策略保存 ============
 const handleSaveLong = () => {
-  // 已经是本地对象，不需要额外操作
   ElMessage.success('多头策略已更新')
 }
 
@@ -597,9 +748,7 @@ const goBack = () => {
 onMounted(async () => {
   await loadPairs()
   await loadBotDetail()
-  mergeMissingPairs()
 })
-
 </script>
 
 <style scoped>
@@ -623,50 +772,168 @@ onMounted(async () => {
   flex: 1;
 }
 
-.header-actions {
-  display: flex;
-  gap: 12px;
-}
-
-.base-info-card {
+/* ============================================================ */
+/* 基础配置卡片                                                  */
+/* ============================================================ */
+.unified-card {
   border-radius: 12px;
 }
 
-.card-title {
+.unified-card :deep(.el-card__header) {
+  padding: 12px 16px;
+  background: var(--el-fill-color-light);
+}
+
+.unified-card :deep(.el-card__body) {
+  padding: 0;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+
+.card-head__title {
   font-size: 15px;
   font-weight: 600;
   color: var(--text-main);
 }
 
-/* 多空列 */
-.strategy-columns {
-  display: flex;
-  gap: 20px;
-  align-items: flex-start;
+/* ============================================================ */
+/* 左 60% / 右 40% 两栏                                          */
+/* ============================================================ */
+.base-split {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 0;
+  align-items: start;
 }
 
-.strategy-column {
+.base-left {
+  min-width: 0;
+  border-right: 1px solid var(--el-border-color-lighter);
+}
+
+.base-right {
+  min-width: 0;
+  min-height: 100px;
+}
+
+/* ============================================================ */
+/* Section 结构                                                 */
+/* ============================================================ */
+.config-section {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.config-section:last-child {
+  border-bottom: none;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+  margin-bottom: 12px;
+  padding-left: 8px;
+  border-left: 3px solid var(--el-color-primary);
+}
+
+/* ============================================================ */
+/* ★ 核心：每行只放一个字段                                     */
+/* ============================================================ */
+.field-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px dashed var(--el-border-color-lighter);
+  min-height: 40px;
+}
+
+.field-row:last-child {
+  border-bottom: none;
+}
+
+/* 开关行：描述可能两行，垂直居中 */
+.field-row--switch {
+  align-items: flex-start;
+  padding: 12px 0;
+}
+
+/* 参数行（缩进 + 浅色背景，视觉上从属于上面的开关）*/
+.field-row--sub {
+  background: var(--el-fill-color-extra-light);
+  padding: 10px 12px;
+  margin-left: 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  border-radius: 0;
+}
+
+.field-row--sub:last-child {
+  border-bottom: none;
+  border-radius: 0 0 6px 6px;
+}
+
+/* label */
+.field-label {
+  flex: 0 0 150px;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  line-height: 1.4;
+}
+
+.field-label > span {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+.field-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-weight: normal;
+  line-height: 1.4;
+}
+
+/* value */
+.field-value {
   flex: 1;
   min-width: 0;
+  display: flex;
+  align-items: center;
 }
 
-.title-card {
-  margin-bottom: 20px;
+/* 开关按钮靠右对齐 */
+.field-value--right {
+  justify-content: flex-end;
 }
 
-.title-card h3 {
-  margin: 0;
-  font-size: 16px;
+/* 复选框堆叠（触发后行为）*/
+.checkbox-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.long {
-  border-left: 6px solid #67c23a;
+.checkbox-stack :deep(.el-checkbox) {
+  margin-right: 0;
 }
 
-.short {
-  border-left: 6px solid #f56c6c;
-}
-
+/* ============================================================ */
+/* 底部保存栏                                                    */
+/* ============================================================ */
 .save-footer {
   position: sticky;
   bottom: 0;
@@ -674,8 +941,23 @@ onMounted(async () => {
   justify-content: flex-end;
   padding: 16px 24px;
   margin-top: 8px;
-  background: var(--bg-dark);   /* 或 var(--el-bg-color) */
-  border-top: 1px solid var(--border-color);
+  background: var(--el-bg-color);
+  border-top: 1px solid var(--el-border-color);
   z-index: 10;
+}
+
+/* ============================================================ */
+/* 响应式                                                        */
+/* ============================================================ */
+@media (max-width: 1200px) {
+  .base-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .base-left {
+    border-right: none;
+  }
+  .base-right {
+    display: none;
+  }
 }
 </style>
