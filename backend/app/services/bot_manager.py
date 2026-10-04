@@ -198,8 +198,8 @@ class BotManager:
 
                     base.get("stakeAmount", 10),
                     base.get("leverage", 10),
-                    base.get("maxOpenTrades", 3),  # ★ 对应 maxOpenTrades 列
-                    int(base.get("dryRun", True)),
+                    int(base.get("dryRun", True)),  # ★ 对应 maxOpenTrades 列
+                    base.get("maxOpenTrades", 3),
 
                     int(base["enableLong"]), int(base["enableShort"]),
 
@@ -264,8 +264,8 @@ class BotManager:
                     base["capital"],
                     base.get("stakeAmount", 10),
                     base.get("leverage", 10),
-                    base.get("maxOpenTrades", 3),
                     int(base.get("dryRun", True)),
+                    base.get("maxOpenTrades", 3),
                     int(base["enableLong"]),
                     int(base["enableShort"]),
                     json.dumps(payload.get("longConfig") or {}),
@@ -335,6 +335,8 @@ class BotManager:
         bot = BotManager.get(bot_id)
         if not bot:
             return {"success": False, "error": "bot not found"}
+        if bot.get("status") == "draft":
+            return {"success": False, "error": "草稿机器人不能启动，请先保存"}
 
         result = ProcessService.start_bot(bot)
         if result.get("success"):
@@ -371,3 +373,75 @@ class BotManager:
         if not bot:
             return {"success": False, "error": "bot not found"}
         return ProcessService.status_bot(bot)
+
+    @staticmethod
+    def create_draft():
+        """创建一个草稿 bot：status='draft'，参数用默认值，允许 pair 为空"""
+        default_payload = {
+            "base": {
+                "name": "未命名机器人",
+                "pair": [],
+                "capital": 100,
+                "stakeAmount": 10,
+                "leverage": 10,
+                "maxOpenTrades": 3,
+                "dryRun": True,
+                "enableLong": True,
+                "enableShort": False,
+            },
+            "risk": {},
+            "longConfig": None,
+            "shortConfig": None,
+        }
+
+        base = default_payload["base"]
+        risk = default_payload["risk"]
+
+        with _conn() as c:
+            cur = c.execute(
+                """
+                INSERT INTO bots (name, pair, capital,
+                                  stakeAmount, leverage, maxOpenTrades, dryRun,
+                                  enableLong, enableShort,
+                                  status, port, longConfig, shortConfig, createdAt)
+                VALUES (?, ?, ?,
+                        ?, ?, ?, ?,
+                        ?, ?,
+                        'draft', NULL, ?, ?, datetime('now'))
+                """,
+                (
+                    base["name"], json.dumps(base["pair"]), base["capital"],
+                    base["stakeAmount"], base["leverage"],
+                    base["maxOpenTrades"], int(base["dryRun"]),
+                    int(base["enableLong"]), int(base["enableShort"]),
+                    json.dumps({}), json.dumps({}),
+                ),
+            )
+            bot_id = cur.lastrowid
+            port = 8011 + bot_id * 2
+            c.execute("UPDATE bots SET port=? WHERE id=?", (port, bot_id))
+            c.commit()
+            print(f"[BotManager] created DRAFT bot_id={bot_id} port={port}")
+        return BotManager.get(bot_id)
+
+    @staticmethod
+    def list_all(include_draft: bool = False):
+        with _conn() as c:
+            if include_draft:
+                rows = c.execute("SELECT * FROM bots ORDER BY id").fetchall()
+            else:
+                rows = c.execute(
+                    "SELECT * FROM bots WHERE status != 'draft' ORDER BY id"
+                ).fetchall()
+        return [BotManager._normalize(r) for r in rows]
+
+    @staticmethod
+    def promote(bot_id: int):
+        """把 draft 升级为 stopped（正式保存时调用）"""
+        with _conn() as c:
+            c.execute(
+                "UPDATE bots SET status='stopped' WHERE id=? AND status='draft'",
+                (bot_id,),
+            )
+            c.commit()
+        return BotManager.get(bot_id)

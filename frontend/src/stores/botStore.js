@@ -41,6 +41,10 @@ export function useBotStore() {
     await axios.post(`${API}/bots/${id}/${action}`)
     await fetchBots()
   }
+  const createDraft = async () => {
+    const { data } = await axios.post(`${API}/bots/draft`)
+    return data
+  }
 
   return {
     state,
@@ -50,5 +54,6 @@ export function useBotStore() {
     updateBot,
     deleteBot,
     toggleBot,
+    createDraft,
   }
 }

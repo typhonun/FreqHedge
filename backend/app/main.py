@@ -16,7 +16,7 @@ from app.api.position import router as position_router
 from app.api.chart import router as chart_router
 from app.api import exchange
 from app.api import logs
-from app.api import bots
+from app.api import bots, backtest
 from app.services.health_monitor import (
     start_health_monitor,
     stop_health_monitor,
@@ -86,8 +86,9 @@ def root():
 # =========================================================
 
 app.include_router(position_router, prefix="/position", tags=["position"])
-app.include_router(chart_router,    prefix="/chart",    tags=["chart"])
-app.include_router(bots.router,     prefix="/bots",     tags=["bots"])
+app.include_router(chart_router,    prefix="/chart", tags=["chart"])
+app.include_router(bots.router,     prefix="/bots", tags=["bots"])
+app.include_router(backtest.router, prefix="/bots", tags=["backtest"])
 app.include_router(risk_router,     prefix="/api/risk", tags=["risk"])
-app.include_router(logs.router,     prefix="/logs")
-app.include_router(exchange.router, prefix="/exchange")
+app.include_router(logs.router,     prefix="/logs", tags=["logs"])
+app.include_router(exchange.router, prefix="/exchange", tags=["exchange"])

@@ -172,7 +172,7 @@ const router = useRouter()
 const filterStatus = ref('all')
 
 // 只拿 BotList 需要的方法
-const { state, fetchBots, toggleBot, deleteBot } = useBotStore()
+const { state, fetchBots, toggleBot, deleteBot, createDraft } = useBotStore()
 const bots = computed(() => state.bots)
 
 const loadingIds = ref(new Set())
@@ -182,7 +182,16 @@ const filteredBots = computed(() => {
   return bots.value.filter(b => b.status === filterStatus.value)
 })
 
-const goCreate = () => router.push({ name: 'BotNew' })
+const goCreate = async () => {
+  try {
+    const bot = await createDraft()
+    router.push({ name: 'BotDetail', params: { id: bot.id } })
+  } catch (e) {
+    console.error('[goCreate] failed:', e)
+    ElMessage.error('创建草稿失败：' + (e?.message || e))
+  }
+}
+
 const goDetail = (id) => router.push({ name: 'BotDetail', params: { id } })
 
 const handleToggle = async (bot) => {

@@ -2,11 +2,13 @@
   <el-card class="toggle-section" :class="{ 'is-open': modelValue }" shadow="never">
     <template #header>
       <div class="toggle-head">
-        <!-- 左侧：图标 + 标题 + 开关（开关紧跟标题） -->
+        <!-- 左侧：标题 + 开关（可选） -->
         <div class="toggle-head__left">
           <span class="toggle-head__title">{{ title }}</span>
 
+          <!-- ★ 只有 hideSwitch=false 时才显示开关 -->
           <el-switch
+            v-if="!hideSwitch"
             class="toggle-head__switch"
             :model-value="modelValue"
             size="small"
@@ -38,14 +40,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-
 const props = defineProps({
   modelValue: { type: Boolean, default: false },
   title: { type: String, default: '' },
   desc: { type: String, default: '' },
   icon: { type: [String, Object], default: null },
-  tag: { type: Object, default: null }  // { on: '已启用', off: '已关闭' }
+  tag: { type: Object, default: null },
+  hideSwitch: { type: Boolean, default: false }   // ★ 新增
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -53,7 +54,6 @@ const emit = defineEmits(['update:modelValue'])
 const onSwitch = (val) => {
   emit('update:modelValue', val)
 }
-
 </script>
 
 <style scoped>
@@ -75,7 +75,6 @@ const onSwitch = (val) => {
 .toggle-section :deep(.el-card__header) {
   padding: 8px 12px;
   background: var(--el-fill-color-light);
-  /* ★ 不再 cursor: pointer */
 }
 
 .toggle-section.is-open :deep(.el-card__header) {

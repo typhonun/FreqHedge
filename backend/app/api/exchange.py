@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Query
 from app.services.exchange_service import ExchangeService
 
-router = APIRouter(tags=["exchange"])
+router = APIRouter()
 
 
 @router.get("/pairs")

@@ -8,7 +8,7 @@ from app.services.bot_manager import BotManager
 from app.services.position_service import PositionService   # ★ 新增
 from app.services.config_service import ConfigService
 
-router = APIRouter(tags=["bots"])       # ← 去掉 prefix
+router = APIRouter()
 
 
 class BotBaseInfo(BaseModel):
@@ -89,6 +89,33 @@ async def list_bots():
     return _attach_profit_batch(bots)
 
 
+@router.post("/draft")
+async def create_draft_bot():
+    """新建草稿 bot，返回完整 bot 记录（含 id）"""
+    bot = BotManager.create_draft()
+    # 尝试生成一份默认 config，失败不影响草稿创建
+    try:
+        ConfigService.generate_configs(bot["id"], {
+            "base": {
+                "name": bot["name"],
+                "pair": bot["pair"],
+                "capital": bot["capital"],
+                "stakeAmount": bot.get("stakeAmount", 10),
+                "leverage": bot.get("leverage", 10),
+                "maxOpenTrades": bot.get("maxOpenTrades", 3),
+                "dryRun": bot.get("dryRun", True),
+                "enableLong": bot.get("enableLong", True),
+                "enableShort": bot.get("enableShort", False),
+            },
+            "risk": {},
+            "longConfig": bot.get("longConfig"),
+            "shortConfig": bot.get("shortConfig"),
+        })
+    except Exception as e:
+        print(f"[draft] generate_configs failed (non-fatal): {e}")
+    return _attach_profit(bot)
+
+
 @router.get("/{bot_id}")
 async def get_bot(bot_id: int):
     bot = BotManager.get(bot_id)
@@ -125,6 +152,11 @@ async def delete_bot(bot_id: int):
 
 @router.post("/{bot_id}/start")
 async def start_bot(bot_id: int):
+    bot = BotManager.get(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    if bot.get("status") == "draft":
+        BotManager.promote(bot_id)
     return BotManager.start(bot_id)
 
 
