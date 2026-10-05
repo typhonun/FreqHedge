@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
+from pydantic import model_validator
 
 from app.services.bot_manager import BotManager
 from app.services.position_service import PositionService   # ★ 新增
@@ -21,6 +22,15 @@ class BotBaseInfo(BaseModel):
     dryRun: bool = True
     enableLong: bool
     enableShort: bool
+
+    @model_validator(mode="after")
+    def _check_direction(self):
+        # ★ 只允许一个方向
+        if self.enableLong and self.enableShort:
+            raise ValueError("不再支持双向，请只启用多头或空头")
+        if not self.enableLong and not self.enableShort:
+            raise ValueError("必须启用一个方向（多头或空头）")
+        return self
 
 
 class BotRiskConfig(BaseModel):

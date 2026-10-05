@@ -11,6 +11,7 @@ if str(USER_DATA_DIR) not in sys.path:
     sys.path.insert(0, str(USER_DATA_DIR))
 
 from freqtrade.strategy.interface import IStrategy
+from freqtrade.strategy import merge_informative_pair
 from freqtrade.strategy import informative
 from freqtrade.persistence import Trade, Order
 from pandas import DataFrame, Timestamp
@@ -28,6 +29,8 @@ YELLOW = "\033[33m"
 RESET = "\033[0m"
 logger = logging.getLogger(__name__)
 
+# 支持的 HTF 周期集合（用来做合法性校验）
+_ALLOWED_HTF = {"4h", "12h", "1d"}
 _direction_cache = {
     "ts": 0,
     "data": None,
@@ -69,30 +72,80 @@ class DcaTpBotBase(IStrategy):
         return "buy" if self._is_short else "sell"
 
     # ============================================================
-    # HTF 数据（4h / 12h / 1d）
+    # HTF 数据（4h / 12h / 1d）★ 动态：只加载 UI 选中的周期
     # ============================================================
-    @informative('4h')
-    def populate_indicators_4h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        return self._calc_htf_ema(dataframe)
 
-    @informative('12h')
-    def populate_indicators_12h(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        return self._calc_htf_ema(dataframe)
+    def _get_htf_timeframe(self) -> str:
+        """
+        从 runtime config 读 UI 选的 HTF 周期。
+        没配置或非法值 → 兜底 '4h'
+        """
+        try:
+            cfg = self.get_runtime_config() or {}
+            htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}
+            tf = str(htf_cfg.get("timeframe", "4h")).lower()
+            if tf in _ALLOWED_HTF:
+                return tf
+        except Exception as e:
+            logger.warning(f"[HTF] 读取 timeframe 失败: {e}")
+        return "4h"
 
-    @informative('1d')
-    def populate_indicators_1d(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        return self._calc_htf_ema(dataframe)
+    def _is_htf_effective(self) -> bool:
+        """
+        HTF 过滤是否真正生效：
+          - enable = True
+          - 且至少一个 protect_* 开关打开
+
+        用于决定是否加载 / 计算 HTF 数据（性能优化）。
+        """
+        try:
+            cfg = self.get_runtime_config() or {}
+            htf_cfg = self._cfg(cfg, "htf_trend_filter", default={}) or {}
+
+            if not bool(htf_cfg.get("enable", False)):
+                return False
+
+            return any([
+                bool(htf_cfg.get("protect_entry", False)),
+                bool(htf_cfg.get("protect_dca", False)),
+                bool(htf_cfg.get("protect_grid", False)),
+                bool(htf_cfg.get("protect_rebuy", False)),
+                bool(htf_cfg.get("protect_trend", False)),
+            ])
+        except Exception as e:
+            logger.warning(f"[HTF] _is_htf_effective 检查失败: {e}")
+            return False
+
+    def informative_pairs(self):
+        """
+        ★ 动态声明 informative 周期：只声明 UI 选中的那个。
+        ★ 如果 HTF 过滤未真正生效，直接返回 []，完全不加载 HTF 数据。
+        """
+        if not self._is_htf_effective():
+            logger.info("[HTF] 过滤未生效，跳过 informative_pairs")
+            return []
+
+        pairs = self.dp.current_whitelist()
+        htf_tf = self._get_htf_timeframe()
+        logger.info(f"[HTF] informative_pairs → {len(pairs)} pairs × {htf_tf}")
+        return [(pair, htf_tf) for pair in pairs]
 
     def _calc_htf_ema(self, dataframe: DataFrame) -> DataFrame:
+        """
+        计算 HTF 的 EMA 列。
+        ★ 注意：这里不再直接挂到主 df 上，而是返回一个独立的 DataFrame，
+          由 merge_informative_pair 负责加周期后缀并合并。
+        """
         cfg = self.get_runtime_config()
         ema_cfg = self._cfg(cfg, "indicator", "ema", default={}) or {}
 
         ema_fast = self._cfg_int(ema_cfg, "fast", 9)
-        ema_mid  = self._cfg_int(ema_cfg, "mid", 21)
+        ema_mid = self._cfg_int(ema_cfg, "mid", 21)
         ema_slow = self._cfg_int(ema_cfg, "slow", 99)
 
+        dataframe = dataframe.copy()
         dataframe['ema_fast'] = ta.EMA(dataframe['close'], timeperiod=ema_fast)
-        dataframe['ema_mid']  = ta.EMA(dataframe['close'], timeperiod=ema_mid)
+        dataframe['ema_mid'] = ta.EMA(dataframe['close'], timeperiod=ema_mid)
         dataframe['ema_slow'] = ta.EMA(dataframe['close'], timeperiod=ema_slow)
         return dataframe
 
@@ -792,6 +845,35 @@ class DcaTpBotBase(IStrategy):
             }
             for name, series in series_map.items():
                 dataframe[name] = pd.Series(series, index=df_tf.index)
+
+        # ============================================================
+        # ★ 动态合并 HTF 数据
+        # 只在 HTF 过滤生效时才计算，否则完全跳过
+        # ============================================================
+        if not self._is_htf_effective():
+            return dataframe
+
+        htf_tf = self._get_htf_timeframe()
+        try:
+            informative_df = self.dp.get_pair_dataframe(
+                pair=metadata['pair'],
+                timeframe=htf_tf
+            )
+            if informative_df is not None and not informative_df.empty:
+                informative_df = self._calc_htf_ema(informative_df)
+                dataframe = merge_informative_pair(
+                    dataframe,
+                    informative_df,
+                    self.timeframe,
+                    htf_tf,
+                    ffill=True
+                )
+            else:
+                logger.warning(
+                    f"[{metadata['pair']}] HTF {htf_tf} 数据为空，跳过合并"
+                )
+        except Exception as e:
+            logger.error(f"[{metadata['pair']}] HTF {htf_tf} 合并失败: {e}")
 
         return dataframe
 

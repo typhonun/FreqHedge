@@ -17,13 +17,25 @@ class ConfigService:
     # ================== 新增：多实例配置生成 ==================
     @staticmethod
     def generate_configs(bot_id: int, payload: dict):
+        """
+        按 base.enableLong / base.enableShort 决定写哪些 config：
+          - 只 long  → 只写 config_botX_long.json（并删 short）
+          - 只 short → 只写 config_botX_short.json（并删 long）
+          - both     → 两份都写
+        """
         bot_dir = BOTS_DIR / str(bot_id)
         bot_dir.mkdir(parents=True, exist_ok=True)
         (bot_dir / "logs").mkdir(exist_ok=True)
 
         base = payload["base"]
+        enable_long = bool(base.get("enableLong", True))
+        enable_short = bool(base.get("enableShort", False))
 
-        if base["enableLong"]:
+        long_path = bot_dir / f"config_bot{bot_id}_long.json"
+        short_path = bot_dir / f"config_bot{bot_id}_short.json"
+
+        # ---------- 1. 写需要的 ----------
+        if enable_long:
             cfg = ConfigService._build_config(
                 bot_id=bot_id,
                 side="long",
@@ -31,14 +43,12 @@ class ConfigService:
                 strategy_params=payload.get("longConfig") or {},
                 template=BASE_TEMPLATE,
             )
-            # ★ 改这里：带 bot_id 前缀
-            cfg_name = f"config_bot{bot_id}_long.json"
-            (bot_dir / cfg_name).write_text(
+            long_path.write_text(
                 json.dumps(cfg, indent=4, ensure_ascii=False),
                 encoding="utf-8",
             )
 
-        if base["enableShort"]:
+        if enable_short:
             cfg = ConfigService._build_config(
                 bot_id=bot_id,
                 side="short",
@@ -46,12 +56,34 @@ class ConfigService:
                 strategy_params=payload.get("shortConfig") or {},
                 template=BASE_TEMPLATE,
             )
-            cfg_name = f"config_bot{bot_id}_short.json"
-            (bot_dir / cfg_name).write_text(
+            short_path.write_text(
                 json.dumps(cfg, indent=4, ensure_ascii=False),
                 encoding="utf-8",
             )
 
+        # ---------- 2. 删多余的 ----------
+        if not enable_long and long_path.exists():
+            try:
+                long_path.unlink()
+                print(f"[config] 删除多余文件: {long_path.name}")
+            except Exception as e:
+                print(f"[config] 删除失败 {long_path}: {e}")
+
+        if not enable_short and short_path.exists():
+            try:
+                short_path.unlink()
+                print(f"[config] 删除多余文件: {short_path.name}")
+            except Exception as e:
+                print(f"[config] 删除失败 {short_path}: {e}")
+
+    @staticmethod
+    def resolve_config_path(bot_id: int, side: str) -> Optional[Path]:
+        """
+        返回某 bot 某方向的 config 路径；如果该方向不存在，返回 None。
+        """
+        p = BOTS_DIR / str(bot_id) / f"config_bot{bot_id}_{side}.json"
+        return p if p.exists() else None
+    
     @staticmethod
     def _build_config(bot_id, side, base, strategy_params, template):
         cfg = ConfigService.read_json(template)

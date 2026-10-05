@@ -3,7 +3,7 @@ import sqlite3
 import socket
 import json
 from pathlib import Path
-
+import threading
 from config.settings import DCATP_DB
 from app.services.freqtrade_client import FreqtradeClient
 
@@ -330,7 +330,12 @@ class BotManager:
             c.commit()
 
     @staticmethod
-    def start(bot_id: int):
+    def start(bot_id: int, wait: bool = False):
+        """
+        启动机器人。
+        - 默认 wait=False：后台异步启动，立即返回 {"success": True, "async": True}
+        - wait=True：同步等待启动完成（旧行为，保留兼容）
+        """
         from app.services.process_service import ProcessService
         bot = BotManager.get(bot_id)
         if not bot:
@@ -338,20 +343,50 @@ class BotManager:
         if bot.get("status") == "draft":
             return {"success": False, "error": "草稿机器人不能启动，请先保存"}
 
-        result = ProcessService.start_bot(bot)
-        if result.get("success"):
+        if wait:
+            return BotManager._do_start_sync(bot_id, bot)
+
+        # ★ 乐观置 running，立即返回
+        with _conn() as c:
+            c.execute("UPDATE bots SET status='running' WHERE id=?", (bot_id,))
+            c.commit()
+
+        t = threading.Thread(
+            target=BotManager._do_start_sync,
+            args=(bot_id, bot),
+            daemon=True,
+        )
+        t.start()
+
+        print(f"[BotManager] start bot={bot_id} 已提交后台启动")
+        return {"success": True, "async": True, "bot_id": bot_id}
+
+    @staticmethod
+    def _do_start_sync(bot_id: int, bot: dict):
+        """实际执行启动（同步阻塞），供后台线程调用"""
+        from app.services.process_service import ProcessService
+        try:
+            result = ProcessService.start_bot(bot)
+            if result.get("success"):
+                # 已经在 start 里置 running，无需再改
+                try:
+                    from app.services.risk_service import RiskService
+                    RiskService.init_round(bot_id)
+                except Exception as e:
+                    print(f"[BotManager] init_round 失败 bot={bot_id}: {e}")
+            else:
+                # ★ 启动失败 → 改回 stopped
+                with _conn() as c:
+                    c.execute("UPDATE bots SET status='stopped' WHERE id=?", (bot_id,))
+                    c.commit()
+                print(f"[BotManager] start failed bot={bot_id}: {result.get('error')}")
+            return result
+        except Exception as e:
+            print(f"[BotManager] _do_start_sync 异常 bot={bot_id}: {e}")
             with _conn() as c:
-                c.execute("UPDATE bots SET status='running' WHERE id=?", (bot_id,))
+                c.execute("UPDATE bots SET status='stopped' WHERE id=?", (bot_id,))
                 c.commit()
-
-            # ★ 新增
-            try:
-                from app.services.risk_service import RiskService
-                RiskService.init_round(bot_id)
-            except Exception as e:
-                print(f"[BotManager] init_round 失败 bot={bot_id}: {e}")
-
-        return result
+            return {"success": False, "error": str(e)}
 
     @staticmethod
     def stop(bot_id: int):

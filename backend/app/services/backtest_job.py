@@ -16,6 +16,7 @@ FREQTRADE_DIR = Path(r"E:\code\python_code\DcaTp\freqtrade")
 class BacktestJob:
     job_id: str
     bot_id: int
+    kind: str = "backtest"
     status: str = "pending"          # pending | running | success | failed | cancelled
     stage: str = "初始化"
     percent: float = 0.0
@@ -32,6 +33,7 @@ class BacktestJob:
         data = {
             "job_id": self.job_id,
             "bot_id": self.bot_id,
+            "kind": self.kind,
             "status": self.status,
             "stage": self.stage,
             "percent": round(self.percent, 1),
@@ -75,8 +77,8 @@ def list_jobs(bot_id: Optional[int] = None) -> list:
     return [j.to_public() for j in jobs]
 
 
-def create_job(bot_id: int) -> BacktestJob:
-    job = BacktestJob(job_id=uuid.uuid4().hex[:12], bot_id=bot_id)
+def create_job(bot_id: int, kind: str = "backtest") -> BacktestJob:
+    job = BacktestJob(job_id=uuid.uuid4().hex[:12], bot_id=bot_id, kind=kind)
     with JOBS_LOCK:
         JOBS[job.job_id] = job
         now = time.time()
@@ -127,13 +129,16 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
     后台线程执行 freqtrade，流式读取 stdout 更新进度。
     parse_result_fn(stdout_text) -> dict
     """
+
     def _worker():
         job.status = "running"
         job.stage = "启动 freqtrade"
         job.percent = 5
 
         stdout_buf = []
+        stop_estimate = threading.Event()
         try:
+            # ★ 这里必须写完整参数，不能是 ...
             proc = subprocess.Popen(
                 cmd,
                 cwd=cwd,
@@ -147,18 +152,32 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
             with job._lock:
                 job._proc = proc
 
+            if job.kind == "download":
+                def _estimate():
+                    elapsed = 0
+                    while not stop_estimate.is_set():
+                        time.sleep(1)
+                        elapsed += 1
+                        job.percent = min(95.0, 5.0 + elapsed * 1.5)
+                        job.stage = f"下载 K 线数据（已耗时 {elapsed}s）"
+                        job.elapsed = time.time() - job.started_at
+
+                threading.Thread(target=_estimate, daemon=True).start()
+
             for line in iter(proc.stdout.readline, ""):
                 stdout_buf.append(line)
                 if len(stdout_buf) > 3000:
                     stdout_buf = stdout_buf[-2000:]
 
-                parsed = _parse_progress_line(line)
-                if parsed:
-                    job.stage, job.percent = parsed
+                if job.kind != "download":
+                    parsed = _parse_progress_line(line)
+                    if parsed:
+                        job.stage, job.percent = parsed
 
                 job.elapsed = time.time() - job.started_at
                 job.log_tail = "".join(stdout_buf[-30:])
 
+            stop_estimate.set()
             proc.wait()
             rc = proc.returncode
             job.elapsed = time.time() - job.started_at
@@ -197,6 +216,8 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
             job.error = str(e)
             job.finished_at = time.time()
             job.elapsed = job.finished_at - job.started_at
+        finally:
+            stop_estimate.set()
 
     t = threading.Thread(target=_worker, daemon=True)
     t.start()

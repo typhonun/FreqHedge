@@ -618,7 +618,11 @@
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="HTF 周期">
-              <el-select v-model="config.htf_trend_filter.timeframe" class="field-input">
+              <el-select
+                :model-value="config.htf_trend_filter.timeframe"
+                @update:model-value="onHtfTimeframeChange"
+                class="field-input"
+              >
                 <el-option label="4h"  value="4h" />
                 <el-option label="12h" value="12h" />
                 <el-option label="1d"  value="1d" />
@@ -663,7 +667,7 @@
 
 
 <script setup>
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import ToggleSection from './ToggleSection.vue'
 
 const props = defineProps({
@@ -788,6 +792,44 @@ const onRebuyChange = (val) => {
 
 // 原来的四个都改成 hide-switch + :model-value="true"，不再需要 sectionState
 // 如果还有别的用途就保留空对象，否则直接删掉
+
+const onHtfTimeframeChange = async (newTf) => {
+  if (!props.config?.htf_trend_filter) return
+
+  const oldTf = props.config.htf_trend_filter.timeframe
+
+  // 相同周期直接返回
+  if (oldTf === newTf) return
+
+  try {
+    await ElMessageBox.confirm(
+      `HTF 周期已切换到 ${newTf}。\n\n` +
+      `策略只会加载该周期（不再同时计算 4h/12h/1d），因此必须重新下载 ${newTf} 数据后回测才能生效。\n\n` +
+      `是否确认切换？`,
+      '请重新下载数据',
+      {
+        type: 'warning',
+        confirmButtonText: '确认切换',
+        cancelButtonText: '取消',
+        dangerouslyUseHTMLString: false,
+        customClass: 'htf-switch-confirm'
+      }
+    )
+  } catch {
+    // 用户取消：不修改
+    return
+  }
+
+  // 用户确认：写入新值
+  props.config.htf_trend_filter.timeframe = newTf
+
+  // 再弹一个提示，明确告诉用户下一步做什么
+  ElMessage.warning({
+    message: `请点击「下载数据」按钮下载 ${newTf} 数据后再回测`,
+    duration: 5000,
+    showClose: true
+  })
+}
 </script>
 
 <style scoped>

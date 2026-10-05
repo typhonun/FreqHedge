@@ -84,7 +84,8 @@
             <span class="info-label">方向</span>
             <span class="info-value">
               <el-tag v-if="bot.enableLong" type="success" size="small">多头</el-tag>
-              <el-tag v-if="bot.enableShort" type="danger" size="small">空头</el-tag>
+              <el-tag v-else-if="bot.enableShort" type="danger" size="small">空头</el-tag>
+              <el-tag v-else type="info" size="small">未设置</el-tag>
             </span>
           </div>
           <div class="info-row">

@@ -1,14 +1,16 @@
-# backend/app/api/backtest.py
+# ══════════════════════════════════════════════════════════════
+# 文件顶部：只定义一次
+# ══════════════════════════════════════════════════════════════
 import json
 import shutil
 import subprocess
 import tempfile
-import glob
-import os
 import re
 import time
+import pandas as pd
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -21,6 +23,126 @@ from app.services.config_service import ConfigService
 router = APIRouter()
 
 FREQTRADE_DIR = Path(r"E:\code\python_code\DcaTp\freqtrade")
+
+# ══════════════════════════════════════════════════════════════
+# 基础工具
+# ══════════════════════════════════════════════════════════════
+def _parse_timerange(timerange: str) -> tuple:
+    if "-" not in timerange:
+        return timerange, timerange
+    start, end = timerange.split("-", 1)
+    return start or "", end or ""
+
+
+def _timerange_to_ts(timerange: str):
+    start_s, end_s = _parse_timerange(timerange)
+    if not start_s or not end_s:
+        return None
+    try:
+        start_dt = datetime.strptime(start_s, "%Y%m%d")
+        end_dt = datetime.strptime(end_s, "%Y%m%d").replace(hour=23, minute=59, second=59)
+        return (int(start_dt.timestamp()), int(end_dt.timestamp()))
+    except Exception:
+        return None
+
+
+def _tf_to_seconds(tf: str) -> int:
+    if not tf:
+        return 3600
+    unit = tf[-1].lower()
+    try:
+        n = int(tf[:-1])
+    except Exception:
+        return 3600
+    return {"m": 60, "h": 3600, "d": 86400, "w": 604800}.get(unit, 3600) * n
+
+
+def _get_data_dir(exchange_name: str = "binance",
+                  trading_mode: str = "futures") -> Path:
+    return (
+        FREQTRADE_DIR / "user_data" / "data" /
+        exchange_name / trading_mode
+    )
+
+
+def _pair_to_filename(pair: str) -> str:
+    return pair.replace("/", "_").replace(":", "_")
+
+
+def _get_local_range(pair: str, timeframe: str,
+                     data_dir: Path) -> Optional[tuple]:
+    stem = _pair_to_filename(pair)
+    fname = f"{stem}-{timeframe}-{data_dir.name}.feather"
+    fpath = data_dir / fname
+
+    if not fpath.exists():
+        return None
+
+    try:
+        df = pd.read_feather(fpath, columns=["date"])
+        if df.empty:
+            return None
+        start = int(df["date"].iloc[0].timestamp())
+        end = int(df["date"].iloc[-1].timestamp())
+        return (start, end)
+    except Exception as e:
+        print(f"[check] read feather failed {fpath}: {e}")
+        return None
+
+
+# ══════════════════════════════════════════════════════════════
+# 本地数据检查 + 缓存
+# ══════════════════════════════════════════════════════════════
+_check_cache = {}
+
+
+def _check_local_data(pairs: list,
+                      timeframes: list,
+                      timerange: str,
+                      exchange_name: str = "binance",
+                      trading_mode: str = "futures") -> dict:
+    # 缓存 key
+    key = (
+        ",".join(sorted(pairs)),
+        ",".join(sorted(timeframes)),
+        timerange,
+        exchange_name,
+        trading_mode,
+    )
+    now = time.time()
+    if key in _check_cache and now - _check_cache[key][0] < 5:
+        return _check_cache[key][1]
+
+    target = _timerange_to_ts(timerange)
+    if target is None:
+        return {"all_covered": False, "details": []}
+
+    req_start, req_end = target
+    data_dir = _get_data_dir(exchange_name, trading_mode)
+
+    details = []
+    all_covered = True
+
+    for pair in pairs:
+        for tf in timeframes:
+            local = _get_local_range(pair, tf, data_dir)
+            covered = False
+            if local is not None:
+                tol = max(_tf_to_seconds(tf), 3600)
+                covered = (
+                    local[0] <= req_start + tol
+                    and local[1] >= req_end - tol
+                )
+            if not covered:
+                all_covered = False
+            details.append({
+                "pair": pair, "tf": tf,
+                "local": local, "covered": covered,
+            })
+
+    result = {"all_covered": all_covered, "details": details}
+    _check_cache[key] = (now, result)
+    return result
 
 
 def _resolve_freqtrade_exe() -> str:
@@ -52,10 +174,55 @@ except Exception as e:
     print(f"[backtest] freqtrade exe 解析失败: {e}")
 
 
-# ★ 策略里用到的所有周期（主周期 + informative 周期）
-#   如果你策略里 informative 只用了 4h，就写 "30m", "4h"
-#   如果还有 12h / 1d，也一起加上
-ALL_TIMEFRAMES = ["30m", "4h", "12h", "1d"]
+def _get_htf_timeframes(bot: dict, side: str = "long") -> list:
+    try:
+        key = "shortConfig" if side == "short" else "longConfig"
+        cfg_raw = bot.get(key) or {}
+        if isinstance(cfg_raw, str):
+            import json as _json
+            cfg_raw = _json.loads(cfg_raw) if cfg_raw else {}
+
+        htf_cfg = (cfg_raw or {}).get("htf_trend_filter") or {}
+
+        # ★ 未启用 → 不需要下载 HTF 周期
+        if not bool(htf_cfg.get("enable", False)):
+            return []
+
+        # ★ enable=true 但所有 protect_* 都关 → 也没必要下载
+        any_protect = any([
+            bool(htf_cfg.get("protect_entry", False)),
+            bool(htf_cfg.get("protect_dca", False)),
+            bool(htf_cfg.get("protect_grid", False)),
+            bool(htf_cfg.get("protect_rebuy", False)),
+            bool(htf_cfg.get("protect_trend", False)),
+        ])
+        if not any_protect:
+            return []
+
+        tf = str(htf_cfg.get("timeframe", "4h")).lower()
+        if tf in ("4h", "12h", "1d"):
+            return [tf]
+    except Exception as e:
+        print(f"[backtest] _get_htf_timeframes failed: {e}")
+    return ["4h"]
+
+
+def _require_config_path(bot: dict, bot_id: int, side: str) -> Path:
+    """
+    同 _resolve_config_path，但失败时直接 raise HTTPException。
+    """
+    enable_long = bool(bot.get("enableLong", True))
+    enable_short = bool(bot.get("enableShort", False))
+
+    if side == "long" and not enable_long:
+        raise HTTPException(400, "当前机器人未启用做多，无法使用 long 方向")
+    if side == "short" and not enable_short:
+        raise HTTPException(400, "当前机器人未启用做空，无法使用 short 方向")
+
+    p = FREQTRADE_DIR / "user_data" / "bots" / str(bot_id) / f"config_bot{bot_id}_{side}.json"
+    if not p.exists():
+        raise HTTPException(400, f"配置文件不存在: {p}")
+    return p
 
 
 class BacktestRequest(BaseModel):
@@ -82,22 +249,18 @@ def _parse_timerange(timerange: str) -> tuple[str, str]:
 
 def _run_freqtrade_download(config_path: Path,
                             timeframe: str,
-                            timerange: Optional[str]) -> dict:
+                            timerange: Optional[str],
+                            extra_timeframes: Optional[list] = None) -> dict:
     """
     下载回测所需的全部数据。
-    ★ 关键：把主周期和 informative 周期全部传给 -t
-    ★ 返回 {"success": bool, "stdout_tail": str, "stderr_tail": str}
+    ★ extra_timeframes: 除主周期外还需要下载的周期（由调用方从 bot 配置推断）
     """
     if not FREQTRADE_EXE:
-        return {
-            "success": False,
-            "stdout_tail": "",
-            "stderr_tail": "freqtrade 可执行文件未找到",
-        }
+        return {"success": False, "stdout_tail": "", "stderr_tail": "freqtrade 可执行文件未找到"}
 
-    # 组装需要下载的周期集合（去重，保持顺序）
+    # 组装需要下载的周期集合
     tf_set = []
-    for tf in [timeframe] + ALL_TIMEFRAMES:
+    for tf in [timeframe] + (extra_timeframes or []):
         if tf and tf not in tf_set:
             tf_set.append(tf)
 
@@ -107,7 +270,6 @@ def _run_freqtrade_download(config_path: Path,
         "--config", str(config_path),
         "-t", *tf_set,
         "--trading-mode", "futures",
-        "--prepend",
     ]
 
     # ★ 只有明确给了 timerange 才加，否则默认最近 N 天（freqtrade 默认行为）
@@ -355,26 +517,82 @@ def _run_freqtrade_backtest(config_path: Path, strategy: str,
     return _parse_stdout_report(proc.stdout)
 
 
-def _cleanup_old_results(results_dir: Path, keep: int = 20):
-    files = sorted(
-        glob.glob(str(results_dir / "backtest-result-*.json")),
-        key=os.path.getmtime,
-        reverse=True,
-    )
-    for f in files[keep:]:
-        try:
-            os.remove(f)
-        except Exception:
-            pass
+def _cleanup_old_results(results_dir: Path, keep: int = 10):
+    """
+    清理旧的回测结果文件（保留最近 keep 次回测的所有文件）。
+
+    freqtrade 每次回测可能生成：
+      backtest-result-<ts>.zip
+      backtest-result-<ts>.meta.json
+      backtest-result-<ts>.json          （旧版/未压缩时）
+      backtest-result-<ts>_config.json   （某些版本）
+
+    以「主结果」（.zip 或 .json）为分组依据，保留最近 keep 组，
+    其余连 meta / config 一起删。
+    """
+    if not results_dir.exists():
+        return
+
+    # ---------- 1. 找出所有主结果文件（.zip 优先，兼容 .json） ----------
+    # 排除 .meta.json 和 _config.json
+    main_files = []
+    for f in results_dir.glob("backtest-result-*"):
+        name = f.name
+        if name.endswith(".meta.json"):
+            continue
+        if name.endswith("_config.json"):
+            continue
+        # 只接受 .zip 或 .json
+        if name.endswith(".zip") or name.endswith(".json"):
+            main_files.append(f)
+
+    if len(main_files) <= keep:
+        return
+
+    # ---------- 2. 按 mtime 降序 ----------
+    main_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+    to_delete = main_files[keep:]
+
+    # ---------- 3. 逐个删除三件套 ----------
+    deleted = 0
+    freed = 0
+    for main_file in to_delete:
+        # main_file.stem:
+        #   .zip → "backtest-result-2026-10-04_19-19-44"
+        #   .json → "backtest-result-2026-10-04_19-19-44"
+        stem = main_file.stem
+
+        siblings = [
+            results_dir / f"{stem}.zip",
+            results_dir / f"{stem}.json",
+            results_dir / f"{stem}.meta.json",
+            results_dir / f"{stem}_config.json",
+        ]
+
+        for f in siblings:
+            if f.exists():
+                try:
+                    freed += f.stat().st_size
+                    f.unlink()
+                    deleted += 1
+                except Exception as e:
+                    print(f"[cleanup] 删除失败 {f}: {e}")
+
+    if deleted:
+        print(
+            f"[cleanup] 清理 {deleted} 个文件，"
+            f"释放 {freed / 1024 / 1024:.2f} MB"
+        )
 
 
 def _parse_summary(data: dict) -> dict:
     strategy = data.get("strategy", {})
 
     total_trades = (
-        strategy.get("total_trades")
-        or data.get("total_trades")
-        or 0
+            strategy.get("total_trades")
+            or data.get("total_trades")
+            or 0
     )
 
     pair_stats = []
@@ -449,7 +667,7 @@ def _parse_summary(data: dict) -> dict:
     return {
         "summary": summary,
         "pairs": pair_stats,
-        "exit_reasons": [],   # ★ 新增，JSON 路径暂不解析，给空数组
+        "exit_reasons": [],  # ★ 新增，JSON 路径暂不解析，给空数组
         "trades": trades,
     }
 
@@ -496,13 +714,8 @@ async def run_backtest(bot_id: int, req: BacktestRequest):
         "shortConfig": bot.get("shortConfig"),
     })
 
-    bot_dir = FREQTRADE_DIR / "user_data" / "bots" / str(bot_id)
-    config_path = bot_dir / f"config_bot{bot_id}_{req.side}.json"
-
+    config_path = _require_config_path(bot, bot_id, req.side)
     print(f"[backtest] config_path = {config_path}, exists = {config_path.exists()}")
-
-    if not config_path.exists():
-        raise HTTPException(400, f"配置文件不存在: {config_path}")
 
     strategy = "DcaTpLong" if req.side == "long" else "DcaTpShort"
     timerange = req.timerange or _default_timerange()
@@ -558,77 +771,199 @@ class DownloadDataRequest(BaseModel):
 
 @router.post("/{bot_id}/download-data")
 async def download_data(bot_id: int, req: DownloadDataRequest):
-    """独立下载数据接口：不跑回测，只更新本地数据文件"""
     bot = BotManager.get(bot_id)
     if not bot:
         raise HTTPException(404, "bot not found")
 
-    # 1. 保证 config 最新
-    ConfigService.generate_configs(bot_id, {
-        "base": {
-            "name": bot["name"],
-            "pair": bot["pair"],
-            "capital": bot["capital"],
-            "stakeAmount": bot.get("stakeAmount", 10),
-            "leverage": bot.get("leverage", 10),
-            "maxOpenTrades": bot.get("maxOpenTrades", 3),
-            "dryRun": bot.get("dryRun", True),
-            "enableLong": bot.get("enableLong", True),
-            "enableShort": bot.get("enableShort", False),
-        },
-        "risk": {
-            "tp_enabled": bot.get("tp_enabled", False),
-            "tp_mode": bot.get("tp_mode", "amount"),
-            "tp_amount": bot.get("tp_amount", 0),
-            "tp_ratio": bot.get("tp_ratio", 0),
-            "sl_enabled": bot.get("sl_enabled", False),
-            "sl_mode": bot.get("sl_mode", "amount"),
-            "sl_amount": bot.get("sl_amount", 0),
-            "sl_ratio": bot.get("sl_ratio", 0),
-            "trail_enabled": bot.get("trail_enabled", False),
-            "trail_mode": bot.get("trail_mode", "ratio"),
-            "trail_activate_amount": bot.get("trail_activate_amount", 0),
-            "trail_activate_ratio": bot.get("trail_activate_ratio", 0),
-            "trail_drawdown_amount": bot.get("trail_drawdown_amount", 0),
-            "trail_drawdown_ratio": bot.get("trail_drawdown_ratio", 0),
-            "auto_stop_on_tp": bot.get("auto_stop_on_tp", True),
-            "auto_stop_on_sl": bot.get("auto_stop_on_sl", True),
-            "auto_stop_on_trail": bot.get("auto_stop_on_trail", True),
-        },
-        "longConfig": bot.get("longConfig"),
-        "shortConfig": bot.get("shortConfig"),
-    })
+    ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
+    config_path = _require_config_path(bot, bot_id, req.side)
 
-    bot_dir = FREQTRADE_DIR / "user_data" / "bots" / str(bot_id)
-    config_path = bot_dir / f"config_bot{bot_id}_{req.side}.json"
-
-    if not config_path.exists():
-        raise HTTPException(400, f"配置文件不存在: {config_path}")
+    # ★ 从 config 读 exchange / trading_mode，避免硬编码
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    exchange_name = (cfg.get("exchange") or {}).get("name", "binance")
+    trading_mode = cfg.get("trading_mode", "futures")
 
     timerange = req.timerange or _default_timerange()
 
-    print(f"[download-data] bot={bot_id} tf={req.timeframe} range={timerange}")
+    pairs = bot.get("pair") or []
+    tf_list = [req.timeframe]
+    for tf in _get_htf_timeframes(bot, side=req.side):
+        if tf not in tf_list:
+            tf_list.append(tf)
 
+    local_check = _check_local_data(
+        pairs, tf_list, timerange,
+        exchange_name=exchange_name,
+        trading_mode=trading_mode,
+    )
+    print(f"[download-data] 本地数据检查: all_covered={local_check['all_covered']}")
+    for d in local_check["details"]:
+        print(f"  {d['pair']:20s} {d['tf']:5s} local={d['local']} covered={d['covered']}")
+
+    if local_check["all_covered"]:
+        print("[download-data] ✅ 本地数据已覆盖，跳过下载")
+        return {
+            "success": True,
+            "skipped": True,
+            "message": "数据已下载，无需重复",
+            "bot_id": bot_id,
+            "timeframe": req.timeframe,
+            "timerange": timerange,
+        }
+
+    # 下载
     res = _run_freqtrade_download(
         config_path=config_path,
         timeframe=req.timeframe,
         timerange=timerange,
+        extra_timeframes=_get_htf_timeframes(bot, side=req.side),
     )
-
     if not res["success"]:
-        # 把 tail 带给前端，方便定位
         raise HTTPException(
             500,
             "数据下载失败：\n"
             + (res.get("stderr_tail") or res.get("stdout_tail") or "未知错误")
         )
 
+    # ★ 下载成功后清缓存
+    _check_cache.clear()
+
     return {
         "success": True,
+        "skipped": False,
         "bot_id": bot_id,
         "timeframe": req.timeframe,
         "timerange": timerange,
     }
+
+
+def _make_download_parse_fn():
+    """下载完成时的解析函数"""
+    def _parse(stdout: str) -> dict:
+        # 清检查缓存（下次再点"下载"会重新判断）
+        _check_cache.clear()
+        return {
+            "success": True,
+            "skipped": False,
+            "message": "数据下载完成",
+        }
+    return _parse
+
+
+@router.post("/{bot_id}/download-data/start")
+async def download_data_start(bot_id: int, req: DownloadDataRequest):
+    """
+    启动异步下载，立即返回 job_id。
+    前端通过 /download-data/progress/{job_id} 轮询。
+    """
+    if not FREQTRADE_EXE:
+        raise HTTPException(500, "freqtrade 可执行文件未找到")
+
+    bot = BotManager.get(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+
+    # 1. 生成 config
+    ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
+    config_path = _require_config_path(bot, bot_id, req.side)
+
+    # 2. 从 config 读 exchange / trading_mode
+    with open(config_path, "r", encoding="utf-8") as f:
+        cfg = json.load(f)
+    exchange_name = (cfg.get("exchange") or {}).get("name", "binance")
+    trading_mode = cfg.get("trading_mode", "futures")
+
+    timerange = req.timerange or _default_timerange()
+    pairs = bot.get("pair") or []
+    tf_list = [req.timeframe]
+    for tf in _get_htf_timeframes(bot, side=req.side):
+        if tf not in tf_list:
+            tf_list.append(tf)
+
+    # 3. 本地检查
+    local_check = _check_local_data(
+        pairs, tf_list, timerange,
+        exchange_name=exchange_name,
+        trading_mode=trading_mode,
+    )
+    print(f"[download:start] 本地数据检查: all_covered={local_check['all_covered']}")
+
+    if local_check["all_covered"]:
+        # ★ 直接创建一个已完成的 job，前端看到 success 就提示"已下载"
+        job = create_job(bot_id, kind="download")
+        job.status = "success"
+        job.stage = "已下载"
+        job.percent = 100
+        job.finished_at = time.time()
+        job.elapsed = 0
+        job.result = {
+            "skipped": True,
+            "message": "数据已下载，无需重复",
+            "timerange": timerange,
+        }
+        return {
+            "job_id": job.job_id,
+            "status": job.status,
+            "skipped": True,
+        }
+
+    # 4. 组装命令
+    tf_set = tf_list
+    cmd = [
+        FREQTRADE_EXE,
+        "download-data",
+        "--config", str(config_path),
+        "-t", *tf_set,
+        "--trading-mode", trading_mode,
+    ]
+    if timerange:
+        start, end = _parse_timerange(timerange)
+        if start and end:
+            cmd += ["--timerange", f"{start}-{end}"]
+
+    print(f"[download:start] bot={bot_id} cmd={' '.join(cmd)}")
+
+    # 5. 创建异步 job
+    job = create_job(bot_id, kind="download")
+    run_job_async(
+        job=job,
+        cmd=cmd,
+        cwd=str(FREQTRADE_DIR),
+        parse_result_fn=_make_download_parse_fn(),
+    )
+
+    return {
+        "job_id": job.job_id,
+        "status": job.status,
+        "skipped": False,
+    }
+
+
+@router.get("/{bot_id}/download-data/progress/{job_id}")
+async def download_data_progress(bot_id: int, job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    if job.bot_id != bot_id:
+        raise HTTPException(400, "job / bot 不匹配")
+    if job.kind != "download":
+        raise HTTPException(400, "job 不是下载任务")
+
+    finished = job.status in ("success", "failed", "cancelled")
+    return job.to_public(include_result=finished)
+
+
+@router.post("/{bot_id}/download-data/cancel/{job_id}")
+async def download_data_cancel(bot_id: int, job_id: str):
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    if job.bot_id != bot_id:
+        raise HTTPException(400, "job / bot 不匹配")
+    job.cancel()
+    return {"success": True, "job_id": job_id, "status": job.status}
+
 
 # ============================================================================
 # ★ 异步回测：start / progress / cancel
@@ -674,8 +1009,8 @@ def _build_config_for_backtest(bot: dict):
 
 def _make_parse_fn():
     """返回一个纯函数：stdout -> dict"""
+
     def _parse_from_stdout(stdout: str) -> dict:
-        # 优先从 JSON 读（精度更高）
         result_file = None
         for cand in [
             FREQTRADE_DIR / "user_data" / "backtest_results" / "last_backtest_result.json",
@@ -686,16 +1021,28 @@ def _make_parse_fn():
                 result_file = cand
                 break
 
+        result = None
         if result_file:
             try:
                 with open(result_file, "r", encoding="utf-8") as f:
                     raw_json = json.load(f)
-                return _parse_summary(raw_json)
+                result = _parse_summary(raw_json)
             except Exception as e:
                 print(f"[backtest] json parse failed: {e}")
 
-        print("[backtest] 使用 stdout 解析")
-        return _parse_stdout_report(stdout)
+        if result is None:
+            result = _parse_stdout_report(stdout)
+
+        # ★ 回测完成后清理旧结果
+        try:
+            _cleanup_old_results(
+                FREQTRADE_DIR / "user_data" / "backtest_results",
+                keep=10,
+            )
+        except Exception as e:
+            print(f"[cleanup] 失败（不影响回测结果）: {e}")
+
+        return result
 
     return _parse_from_stdout
 
@@ -714,14 +1061,17 @@ async def start_backtest(bot_id: int, req: BacktestRequest):
     if not bot:
         raise HTTPException(404, "bot not found")
 
+    # ★ 先检查请求的 side 是否合法（用 DB 状态判断）
+    enable_long = bool(bot.get("enableLong", True))
+    enable_short = bool(bot.get("enableShort", False))
+    if req.side == "long" and not enable_long:
+        raise HTTPException(400, "当前机器人未启用做多，无法回测 long 方向")
+    if req.side == "short" and not enable_short:
+        raise HTTPException(400, "当前机器人未启用做空，无法回测 short 方向")
+
     # 1. 生成 config（参数快照）
     ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
-
-    bot_dir = FREQTRADE_DIR / "user_data" / "bots" / str(bot_id)
-    config_path = bot_dir / f"config_bot{bot_id}_{req.side}.json"
-
-    if not config_path.exists():
-        raise HTTPException(400, f"配置文件不存在: {config_path}")
+    config_path = _require_config_path(bot, bot_id, req.side)
 
     strategy = "DcaTpLong" if req.side == "long" else "DcaTpShort"
     timerange = req.timerange or _default_timerange()

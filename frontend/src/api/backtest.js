@@ -46,3 +46,28 @@ export async function downloadData(botId, payload) {
   )
   return data
 }
+
+/** ★ 启动异步下载，返回 { job_id, status, skipped } */
+export async function startDownload(botId, payload) {
+  const { data } = await axios.post(
+    `${API}/bots/${botId}/download-data/start`,
+    payload
+  )
+  return data
+}
+
+/** ★ 查询下载进度 */
+export async function getDownloadProgress(botId, jobId) {
+  const { data } = await axios.get(
+    `${API}/bots/${botId}/download-data/progress/${jobId}`
+  )
+  return data
+}
+
+/** ★ 取消下载 */
+export async function cancelDownload(botId, jobId) {
+  const { data } = await axios.post(
+    `${API}/bots/${botId}/download-data/cancel/${jobId}`
+  )
+  return data
+}
