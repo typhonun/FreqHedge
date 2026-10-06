@@ -3,7 +3,7 @@
     <!-- 顶部返回栏 -->
     <div class="config-header">
       <el-button :icon="ArrowLeft" text @click="goBack">返回列表</el-button>
-      <h2 class="config-title">{{ isEdit ? '编辑机器人' : '新建机器人' }}</h2>
+      <h2 class="config-title">{{ pageTitle }}</h2>
     </div>
 
     <div class="config-layout">
@@ -721,9 +721,29 @@ const { createBot, updateBot } = useBotStore()
 /* ══════════════════════════════════════════════════════════════════
  * 3. 派生状态（isEdit / 按钮文案）
  * ══════════════════════════════════════════════════════════════════ */
+// ★ botId：永远存在（草稿或正式 bot 都有 id）
 const botId = computed(() => route.params.id)
-const isEdit = computed(() => !!botId.value)
-const submitButtonText = computed(() => (isEdit.value ? '保存配置' : '创建机器人'))
+
+// ★ 源 id：复制时才有
+const copyFromId = computed(() => route.query.copyFrom)
+
+// ★ 是否是复制模式
+const isCopy = computed(() => !!copyFromId.value)
+
+// ★ 编辑模式：有 id 且不是从草稿来的（这里用"是否有 copyFrom"来区分）
+//   但注意：草稿 bot 本身 status='draft'，也可以用 isDraft 判断
+const isEdit = computed(() => !!botId.value && !isCopy.value)
+
+const submitButtonText = computed(() => {
+  if (isEdit.value) return '保存配置'
+  return '创建机器人'
+})
+
+const pageTitle = computed(() => {
+  if (isEdit.value) return '编辑机器人'
+  if (isCopy.value) return '复制机器人'
+  return '新建机器人'
+})
 
 /* ══════════════════════════════════════════════════════════════════
  * 4. 回测区间：纯函数 + 常量（无 ref 依赖，必须放最前）
@@ -1039,7 +1059,7 @@ const startDownloadPolling = (id, jobId) => {
           downloadPercent.value = 100
           const r = data.result || {}
           if (r.skipped) {
-            ElMessage.success(r.message || '数据已下载，无需重复')
+            ElMessage.success(r.message || '数据已下载')
           } else {
             ElMessage.success(`数据下载完成，耗时 ${formatElapsed(downloadElapsed.value)}`)
           }
@@ -1240,6 +1260,7 @@ const saveAndRestart = async () => {
       await updateBot(botId.value, payload)
       id = botId.value
     } else {
+      // ★ 复制模式和新建模式都走这里
       const bot = await createBot(payload)
       id = bot.id
     }
@@ -1283,9 +1304,12 @@ const loadPairs = async () => {
 }
 
 const loadBotDetail = async () => {
-  if (!isEdit.value) return
+  // ★ 复制模式或编辑模式都需要加载源数据
+  const sourceId = isCopy.value ? copyFromId.value : botId.value
+  if (!sourceId) return
+
   try {
-    const { data } = await axios.get(`${API}/bots/${botId.value}`)
+    const { data } = await axios.get(`${API}/bots/${sourceId}`)
 
     const dir = (() => {
       const l = !!data.enableLong
@@ -1295,7 +1319,8 @@ const loadBotDetail = async () => {
     })()
 
     botBaseInfo.value = {
-      name: data.name,
+      // ★ 复制时改名；编辑/新建保持原名
+      name: isCopy.value ? '' : data.name,
       pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
       capital: data.capital ?? 100,
       stakeAmount: data.stakeAmount ?? 10,
@@ -1368,10 +1393,14 @@ const loadBotDetail = async () => {
     }))
 
     localConfig.side = dir
-    updateSnapshot()
+
+    // ★ 复制模式：不更新快照，因为这是新建；编辑模式：更新快照
+    if (!isCopy.value) {
+      updateSnapshot()
+    }
   } catch (e) {
     console.error(e)
-    ElMessage.error('加载机器人详情失败')
+    ElMessage.error('加载机器人配置失败')
     router.push({ name: 'BotList' })
   }
 }
@@ -1748,7 +1777,7 @@ const handleDownloadData = async () => {
     if (data.skipped) {
       downloading.value = false
       downloadPercent.value = 100
-      ElMessage.success('数据已下载，无需重复')
+      ElMessage.success('数据已下载')
       return
     }
 
@@ -1780,6 +1809,29 @@ const handleSaveStrategy = () => {
 const handleSaveAndStart = async () => {
   if (!validate()) return
 
+  // 复制模式：直接保存 + 启动
+  if (isCopy.value) {
+    saving.value = true
+    try {
+      const payload = buildPayload()
+      // ★ 用当前草稿 id 走 PUT（因为是"更新草稿"，不是新建）
+      await updateBot(botId.value, payload)
+      // 启动
+      axios.post(`${API}/bots/${botId.value}/start`).catch((e) => {
+        console.warn('[copy] start 失败', e)
+      })
+      ElMessage.success('复制成功')
+      router.push({ name: 'BotList' })
+    } catch (e) {
+      console.error(e)
+      ElMessage.error(e?.response?.data?.detail || e?.message || '复制失败')
+    } finally {
+      saving.value = false
+    }
+    return
+  }
+
+  // 编辑模式原有逻辑
   if (!hasChanges()) {
     ElMessage.info({
       message: '配置无变更，无需重启',

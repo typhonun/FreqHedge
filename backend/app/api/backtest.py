@@ -806,7 +806,7 @@ async def download_data(bot_id: int, req: DownloadDataRequest):
         return {
             "success": True,
             "skipped": True,
-            "message": "数据已下载，无需重复",
+            "message": "数据已下载",
             "bot_id": bot_id,
             "timeframe": req.timeframe,
             "timerange": timerange,
@@ -899,7 +899,7 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
         job.elapsed = 0
         job.result = {
             "skipped": True,
-            "message": "数据已下载，无需重复",
+            "message": "数据已下载",
             "timerange": timerange,
         }
         return {

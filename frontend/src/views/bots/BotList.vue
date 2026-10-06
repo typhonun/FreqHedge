@@ -240,7 +240,7 @@ const handleCommand = async (cmd, bot) => {
       goDetail(bot.id)
       break
     case 'copy':
-      router.push({ name: 'BotNew', query: { copyFrom: bot.id } })
+      await goCopy(bot.id)
       break
     case 'logs':
       router.push({ name: 'BotLogs', params: { id: bot.id } })
@@ -248,6 +248,21 @@ const handleCommand = async (cmd, bot) => {
     case 'delete':
       await handleDelete(bot)
       break
+  }
+}
+
+// ★ 复制：先建草稿，带上源 id
+const goCopy = async (sourceId) => {
+  try {
+    const draft = await createDraft()
+    router.push({
+      name: 'BotDetail',
+      params: { id: draft.id },
+      query: { copyFrom: sourceId },
+    })
+  } catch (e) {
+    console.error('[goCopy] failed:', e)
+    ElMessage.error('复制失败：' + (e?.message || e))
   }
 }
 
