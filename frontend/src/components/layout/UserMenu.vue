@@ -2,10 +2,6 @@
   <el-dropdown trigger="click" placement="bottom-end" popper-class="user-menu-popper">
     <!-- 触发区 -->
     <div class="trigger">
-      <div class="plan-info">
-        <span class="plan-name">专业套餐</span>
-        <span class="plan-expiry">6天后过期</span>
-      </div>
       <el-badge is-dot class="bell-badge">
         <el-icon :size="20"><Bell /></el-icon>
       </el-badge>
@@ -15,14 +11,6 @@
     <!-- 下拉菜单 -->
     <template #dropdown>
       <el-dropdown-menu>
-        <el-dropdown-item>
-          <el-icon :size="16"><Tickets /></el-icon>
-          <span class="menu-text">订阅</span>
-        </el-dropdown-item>
-        <el-dropdown-item>
-          <el-icon :size="16"><Present /></el-icon>
-          <span class="menu-text">促销码</span>
-        </el-dropdown-item>
         <el-dropdown-item>
           <el-icon :size="16"><Setting /></el-icon>
           <span class="menu-text">设置</span>

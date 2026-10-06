@@ -45,26 +45,6 @@
         </div>
         <el-button>修改</el-button>
       </div>
-
-      <el-divider />
-
-      <div class="row">
-        <div>
-          <div class="row-title">两步验证 (2FA)</div>
-          <div class="row-desc">开启后登录和交易需要额外验证码</div>
-        </div>
-        <el-switch v-model="form.twoFA" />
-      </div>
-
-      <el-divider />
-
-      <div class="row">
-        <div>
-          <div class="row-title">登录设备</div>
-          <div class="row-desc">当前 2 台设备在线</div>
-        </div>
-        <el-button text>查看</el-button>
-      </div>
     </div>
   </div>
 </template>

@@ -39,11 +39,7 @@ const menu = [
   { path: '/settings/profile',      label: '账户',        icon: User },
   { path: '/settings/preferences',  label: '偏好',        icon: Setting },
   { path: '/settings/exchanges',    label: '交易所 API',  icon: Key },
-  { path: '/settings/trading',      label: '交易参数',    icon: TrendCharts },
-  { path: '/settings/risk',         label: '风控',        icon: Warning },
-  { path: '/settings/notification', label: '通知',        icon: Bell },
-  { path: '/settings/data',         label: '数据',        icon: Folder },
-  { path: '/settings/danger',       label: '危险操作',    icon: Delete }
+  { path: '/settings/notification', label: '通知',        icon: Bell }
 ]
 
 const isActive = (path) => route.path === path

@@ -11,6 +11,8 @@ import Logs from "@/views/Logs.vue"
 import Positions from '@/views/Positions.vue'
 import Settings from '@/views/Settings.vue'
 import SettingsProfile from '@/views/settings/Profile.vue'
+import SettingsPreferences from '@/views/settings/Preferences.vue'
+import SettingsExchanges from '@/views/settings/Exchanges.vue'
 // ============ 新增多实例页面 ============
 import BotList from "@/views/bots/BotList.vue"
 import BotConfig from "@/views/bots/BotConfig.vue"
@@ -70,8 +72,18 @@ const routes = [
                     name: 'SettingsProfile',
                     component: SettingsProfile,
                     meta: { title: '账户' }
-
-                  }
+                  },
+                  {
+                    path: 'preferences',                                          // ★ 新增
+                    name: 'SettingsPreferences',
+                    component: SettingsPreferences,
+                    meta: { title: '偏好' }
+                  },
+                  { path: 'exchanges',
+                    name: 'SettingsExchanges',
+                    component: SettingsExchanges,
+                    meta: { title: '交易所 API' }
+                  },
                 ]
             },
 

@@ -46,16 +46,6 @@ defineEmits(['click'])
   background-color: var(--primary-hover);
 }
 
-/* 幽灵按钮/文本按钮：对应顶部“专业套餐” */
-.base-btn--ghost {
-  background-color: transparent;
-  color: var(--text-main);
-  padding: 4px 8px;
-}
-.base-btn--ghost:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-}
-
 /* 轮廓按钮 */
 .base-btn--outline {
   background-color: transparent;
