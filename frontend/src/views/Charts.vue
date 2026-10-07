@@ -71,9 +71,14 @@
 >
 
     <template #header>
-
-        当前持仓
-
+      <div class="position-card-header">
+        <span>当前持仓</span>
+        <PositionActions
+          :bot-id="botId"
+          :positions="{ long: strategyPositions.filter(t => t.side === 'LONG'), short: strategyPositions.filter(t => t.side === 'SHORT') }"
+          @success="loadBotPositions"
+        />
+      </div>
     </template>
 
     <PositionTableCommon
@@ -95,7 +100,7 @@ import {
     CandlestickSeries,
     createSeriesMarkers
 } from "lightweight-charts"
-
+import PositionActions from '@features/dashboard/components/PositionActions.vue'
 import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
 import { useBotStore } from '@/stores/botStore.js'
 
@@ -452,6 +457,13 @@ watch(
 
     margin-top:20px;
 }
+
+.position-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
 
 .profit{
 

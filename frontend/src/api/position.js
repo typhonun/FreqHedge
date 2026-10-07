@@ -12,3 +12,12 @@ export const getProfit = () =>
 
 export const getOpenPositions = () =>
     api.get("/position/open")
+
+export const getAvailablePairs = (params) =>
+    api.get("/position/available_pairs", { params })
+
+export const forceEnter = (payload) =>
+    api.post("/position/force_enter", payload)
+
+export const closeAll = (payload) =>
+    api.post("/position/close_all", payload)

@@ -92,3 +92,45 @@ def position_action(data: PositionAction):
         price=data.price,
         bot_id=data.bot_id,
     )
+
+
+# =========================================================
+# 新增：手动开仓 / 全部平仓 / 可交易对
+# =========================================================
+
+class ForceEnterAction(BaseModel):
+    bot_id: int
+    side: str            # "long" / "short"
+    pair: str
+    stakeamount: float
+
+
+class CloseAllAction(BaseModel):
+    bot_id: int
+    side: str            # "long" / "short"
+
+
+@router.get("/available_pairs")
+def get_available_pairs(
+    side: str = Query(...),
+    bot_id: int = Query(...),
+):
+    """获取该 bot 指定方向下、未被占用的可交易对"""
+    return PositionService.get_available_pairs(side=side, bot_id=bot_id)
+
+
+@router.post("/force_enter")
+def force_enter(data: ForceEnterAction):
+    """立即开仓（不传杠杆，Freqtrade 自动沿用 bot 配置）"""
+    return PositionService.force_enter(
+        side=data.side,
+        pair=data.pair,
+        stakeamount=data.stakeamount,
+        bot_id=data.bot_id,
+    )
+
+
+@router.post("/close_all")
+def close_all(data: CloseAllAction):
+    """平掉该 bot 指定方向的所有持仓"""
+    return PositionService.close_all(side=data.side, bot_id=data.bot_id)
