@@ -72,6 +72,8 @@ def _migrate():
             ("leverage", "ALTER TABLE bots ADD COLUMN leverage INTEGER DEFAULT 10"),
             ("maxOpenTrades", "ALTER TABLE bots ADD COLUMN maxOpenTrades INTEGER DEFAULT 3"),
             ("dryRun", "ALTER TABLE bots ADD COLUMN dryRun INTEGER DEFAULT 1"),
+            ("exchangeAccountId", "ALTER TABLE bots ADD COLUMN exchangeAccountId TEXT DEFAULT NULL"),
+            ("exchangeAccountJson", "ALTER TABLE bots ADD COLUMN exchangeAccountJson TEXT DEFAULT NULL"),
 
             ("tp_enabled", "ALTER TABLE bots ADD COLUMN tp_enabled INTEGER DEFAULT 0"),
             ("tp_mode", "ALTER TABLE bots ADD COLUMN tp_mode TEXT DEFAULT 'amount'"),
@@ -140,7 +142,7 @@ class BotManager:
         bot["enableShort"] = bool(bot.get("enableShort"))
         bot["dryRun"] = bool(bot.get("dryRun", 1))
         bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or 3)
-
+        bot["exchangeAccountJson"] = _parse_json_field(bot.get("exchangeAccountJson"))
         # ★ 风控字段
         bot["tp_enabled"] = bool(bot.get("tp_enabled"))
         bot["sl_enabled"] = bool(bot.get("sl_enabled"))
@@ -180,6 +182,7 @@ class BotManager:
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
                                   status, port, longConfig, shortConfig, createdAt,
+                                  exchangeAccountId, exchangeAccountJson, 
                                   tp_enabled, tp_mode, tp_amount, tp_ratio,
                                   sl_enabled, sl_mode, sl_amount, sl_ratio,
                                   trail_enabled, trail_mode,
@@ -190,6 +193,7 @@ class BotManager:
                         ?, ?, ?, ?,
                         ?, ?,
                         'stopped', NULL, ?, ?, datetime('now'),
+                        ?, ?, 
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
                         ?, ?, ?)
                 """,
@@ -205,6 +209,8 @@ class BotManager:
 
                     json.dumps(payload.get("longConfig") or {}),
                     json.dumps(payload.get("shortConfig") or {}),
+                    base.get("exchangeAccountId"),
+                    json.dumps(base.get("exchangeAccount") or {}),
 
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", "amount"),
@@ -247,7 +253,8 @@ class BotManager:
                     stakeAmount=?, leverage=?, dryRun=?, maxOpenTrades=?,
                     enableLong=?, enableShort=?,
                     longConfig=?, shortConfig=?,
-
+                    exchangeAccountId=?, exchangeAccountJson=?,
+                    
                     tp_enabled=?, tp_mode=?, tp_amount=?, tp_ratio=?,
                     sl_enabled=?, sl_mode=?, sl_amount=?, sl_ratio=?,
                     trail_enabled=?, trail_mode=?,
@@ -270,6 +277,8 @@ class BotManager:
                     int(base["enableShort"]),
                     json.dumps(payload.get("longConfig") or {}),
                     json.dumps(payload.get("shortConfig") or {}),
+                    base.get("exchangeAccountId"),
+                    json.dumps(base.get("exchangeAccount") or {}),
 
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", "amount"),

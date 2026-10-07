@@ -59,6 +59,35 @@
                 </div>
 
                 <div class="field-row">
+                  <div class="field-label">交易所账户</div>
+                  <div class="field-value">
+                    <el-select
+                      v-model="botBaseInfo.exchangeAccountId"
+                      placeholder="选择用于实盘下单的 API 账户"
+                      style="width: 100%"
+                      clearable
+                    >
+                      <el-option
+                        v-for="acc in exchangeAccounts"
+                        :key="acc.id"
+                        :label="`${exchangeLabel(acc.exchange)} · ${acc.alias || '未命名'}${acc.isDefault ? ' (默认)' : ''}`"
+                        :value="acc.id"
+                      />
+                    </el-select>
+                    <el-text
+                      v-if="!exchangeAccounts.length"
+                      type="warning"
+                      size="small"
+                      style="margin-left: 8px"
+                    >
+                      还没有配置，去
+                      <el-link type="primary" @click="goExchangeSettings">设置 → 交易所 API</el-link>
+                      添加
+                    </el-text>
+                  </div>
+                </div>
+
+                <div class="field-row">
                   <div class="field-label">投入资金 (USDT)</div>
                   <div class="field-value">
                     <el-input-number
@@ -695,6 +724,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ArrowLeft, DataAnalysis, Download, Loading } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 import {
   startBacktest,
   getBacktestProgress,
@@ -717,6 +747,19 @@ const API = 'http://localhost:9000'
 const route = useRoute()
 const router = useRouter()
 const { createBot, updateBot } = useBotStore()
+const { accounts: exchangeAccounts, defaultAccount, getById: getExchangeAccount } = useExchangeAccounts()
+const exchangeLabel = (v) => ({
+  binance: 'Binance',
+  okx: 'OKX',
+  bybit: 'Bybit',
+  kucoin: 'KuCoin',
+  gate: 'Gate.io',
+  huobi: 'HTX',
+}[v] || v)
+
+const goExchangeSettings = () => {
+  router.push('/settings/exchanges')
+}
 
 /* ══════════════════════════════════════════════════════════════════
  * 3. 派生状态（isEdit / 按钮文案）
@@ -980,6 +1023,7 @@ const botBaseInfo = ref({
   maxOpenTrades: 3,
   dryRun: true,
   direction: 'long',
+  exchangeAccountId: null,
 })
 
 const botRisk = ref({
@@ -1162,6 +1206,8 @@ const formatElapsed = (sec) => {
  * ══════════════════════════════════════════════════════════════════ */
 const buildPayload = () => {
   const dir = botBaseInfo.value.direction
+  const acct = getExchangeAccount(botBaseInfo.value.exchangeAccountId)
+
   return {
     base: {
       name: botBaseInfo.value.name,
@@ -1173,6 +1219,16 @@ const buildPayload = () => {
       dryRun: botBaseInfo.value.dryRun,
       enableLong: dir === 'long',
       enableShort: dir === 'short',
+      exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
+      // ★ 关键：把账户密钥一起提交，后端才能注入 freqtrade config
+      exchangeAccount: acct
+        ? {
+            exchange: acct.exchange,
+            apiKey: acct.apiKey,
+            apiSecret: acct.apiSecret,
+            passphrase: acct.passphrase || '',
+          }
+        : null,
     },
     risk: botRisk.value,
     longConfig: localConfig,
@@ -1211,6 +1267,10 @@ const validate = () => {
   }
   if (!botBaseInfo.value.pair?.length) {
     ElMessage.warning('请至少选择一个交易对')
+    return false
+  }
+  if (!botBaseInfo.value.dryRun && !botBaseInfo.value.exchangeAccountId) {
+    ElMessage.warning('实盘模式必须选择交易所账户')
     return false
   }
   if (!botBaseInfo.value.capital || botBaseInfo.value.capital <= 0) {
@@ -1328,6 +1388,7 @@ const loadBotDetail = async () => {
       maxOpenTrades: data.maxOpenTrades ?? 5,
       dryRun: data.dryRun !== undefined ? !!data.dryRun : true,
       direction: dir,
+      exchangeAccountId: data.exchangeAccountId ?? null,
     }
 
     botRisk.value = {

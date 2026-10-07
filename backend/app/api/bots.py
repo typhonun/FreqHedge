@@ -22,6 +22,8 @@ class BotBaseInfo(BaseModel):
     dryRun: bool = True
     enableLong: bool
     enableShort: bool
+    exchangeAccountId: Optional[str] = None
+    exchangeAccount: Optional[dict] = None
 
     @model_validator(mode="after")
     def _check_direction(self):

@@ -83,7 +83,7 @@ class ConfigService:
         """
         p = BOTS_DIR / str(bot_id) / f"config_bot{bot_id}_{side}.json"
         return p if p.exists() else None
-    
+
     @staticmethod
     def _build_config(bot_id, side, base, strategy_params, template):
         cfg = ConfigService.read_json(template)
@@ -96,9 +96,7 @@ class ConfigService:
         cfg["api_server"]["listen_port"] = port
         cfg["api_server"]["CORS_origins"] = ["*"]
 
-        # ★ 新增：把 bot_id 写到配置顶层，策略能直接读
         cfg["bot_id"] = bot_id
-
         cfg["side"] = side
         cfg["strategy"] = "DcaTpShort" if side == "short" else "DcaTpLong"
 
@@ -113,7 +111,19 @@ class ConfigService:
         cfg.setdefault("exchange", {})
         cfg["exchange"]["pair_whitelist"] = list(base["pair"])
 
-        # ★ custom_params 里也塞一份，方便策略直接读
+        # ★★★ 关键：注入用户选择的交易所账户 ★★★
+        acct = base.get("exchangeAccount") or {}
+        if acct.get("exchange"):
+            cfg["exchange"]["name"] = acct["exchange"]
+            cfg["exchange"]["key"] = acct.get("apiKey", "") or ""
+            cfg["exchange"]["secret"] = acct.get("apiSecret", "") or ""
+            # OKX/KuCoin 需要
+            if acct.get("passphrase"):
+                cfg["exchange"]["password"] = acct["passphrase"]
+            # 一些 freqtrade 版本要求这两个字段存在
+            cfg["exchange"].setdefault("ccxt_config", {})
+            cfg["exchange"].setdefault("ccxt_async_config", {})
+
         cfg["custom_params"] = {
             "bot_id": bot_id,
             side: strategy_params,

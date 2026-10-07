@@ -15,22 +15,20 @@ const load = () => {
   }
 }
 
+const save = () => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts.value))
+  } catch (e) {
+    console.warn('[useExchangeAccounts] save failed', e)
+  }
+}
+
 const reload = () => load()
-
-const defaultAccount = computed(() =>
-  accounts.value.find((a) => a.isDefault) || null
-)
-
+const defaultAccount = computed(() => accounts.value.find((a) => a.isDefault) || null)
 const getById = (id) => accounts.value.find((a) => a.id === id) || null
 
-// 首次 import 就加载一次
 load()
 
 export function useExchangeAccounts() {
-  return {
-    accounts,
-    defaultAccount,
-    getById,
-    reload,
-  }
+  return { accounts, defaultAccount, getById, reload, save }   // ★ 加 save
 }
