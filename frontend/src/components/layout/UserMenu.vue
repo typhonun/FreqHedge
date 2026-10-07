@@ -5,7 +5,9 @@
       <el-badge is-dot class="bell-badge">
         <el-icon :size="20"><Bell /></el-icon>
       </el-badge>
-      <el-avatar :size="36" class="avatar">U</el-avatar>
+      <el-avatar :size="36" class="avatar">
+        {{ (auth.user?.nickname || 'User').charAt(0).toUpperCase() }}
+      </el-avatar>
     </div>
 
     <!-- 下拉菜单 -->
@@ -23,7 +25,7 @@
           <el-icon :size="16"><Connection /></el-icon>
           <span class="menu-text">语言</span>
         </el-dropdown-item>
-        <el-dropdown-item divided>
+        <el-dropdown-item divided @click="onLogout">
           <el-icon :size="16"><SwitchButton /></el-icon>
           <span class="menu-text" style="color:#F6465D">退出登录</span>
         </el-dropdown-item>
@@ -33,10 +35,21 @@
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import {
-  Bell, Tickets, Present, Setting,
-  Moon, Connection, SwitchButton
+  Bell, Setting, Moon, Connection, SwitchButton
 } from '@element-plus/icons-vue'
+import { useAuthStore } from '@/stores/authStore'
+
+const router = useRouter()
+const auth = useAuthStore()
+
+const onLogout = () => {
+  auth.logout()
+  ElMessage.success('已退出登录')
+  router.push('/login')
+}
 </script>
 
 <style scoped>

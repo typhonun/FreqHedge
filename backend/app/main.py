@@ -7,7 +7,9 @@ from threading import Thread
 import threading
 
 from contextlib import asynccontextmanager
-
+from app.models import user as _user_model  # noqa 确保建表
+from app.api import auth
+from app.models import user as _user_model
 from app.api.chart import cache_refresh_loop
 from app.services.risk_service import RiskService
 from app.services.risk_config_service import RiskConfigService
@@ -92,3 +94,4 @@ app.include_router(backtest.router, prefix="/bots", tags=["backtest"])
 app.include_router(risk_router,     prefix="/api/risk", tags=["risk"])
 app.include_router(logs.router,     prefix="/logs", tags=["logs"])
 app.include_router(exchange.router, prefix="/exchange", tags=["exchange"])
+app.include_router(auth.router,     prefix="/auth", tags=["auth"])

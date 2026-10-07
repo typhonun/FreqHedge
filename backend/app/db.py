@@ -1,7 +1,8 @@
 # app/db.py
 import sqlite3
 from pathlib import Path
-
+from sqlalchemy.orm import sessionmaker
+from app.database import engine
 # app/db.py
 from pathlib import Path
 
@@ -11,7 +12,7 @@ DATA_DIR = BASE_DIR / "data"                       # backend/data/
 DATA_DIR.mkdir(exist_ok=True)
 
 DB_FILE = DATA_DIR / "strategy.db"
-
+SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 def get_conn():
     conn = sqlite3.connect(
@@ -36,3 +37,11 @@ def init_db():
     finally:
         conn.close()
     print(f"[db] initialized: {DB_FILE}")
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
