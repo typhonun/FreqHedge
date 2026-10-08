@@ -19,10 +19,9 @@ from app.services import backtest_job
 from app.services.backtest_job import create_job, run_job_async, get_job
 from app.services.bot_manager import BotManager
 from app.services.config_service import ConfigService
+from config.settings import FREQTRADE_DIR
 
 router = APIRouter()
-
-FREQTRADE_DIR = Path(r"E:\code\python_code\DcaTp\freqtrade")
 
 # ══════════════════════════════════════════════════════════════
 # 基础工具

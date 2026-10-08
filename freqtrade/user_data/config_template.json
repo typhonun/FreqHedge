@@ -1,0 +1,95 @@
+{
+    "$schema": "https://schema.freqtrade.io/schema.json",
+    "max_open_trades": 5,
+    "stake_currency": "USDT",
+    "stake_amount": 30,
+    "stoploss": -9,
+    "tradable_balance_ratio": 0.99,
+    "fiat_display_currency": "",
+    "fiat_conversion_refresh_interval": 600,
+    "dry_run": true,
+    "dry_run_wallet": 500,
+    "cancel_open_orders_on_exit": false,
+    "leverage": 10,
+    "trading_mode": "futures",
+    "margin_mode": "cross",
+    "position_adjustment_enable": true,
+    "order_types": {
+        "entry": "limit",
+        "exit": "limit",
+        "stoploss": "limit",
+        "position_adjustment": "limit",
+        "stoploss_on_exchange": false
+    },
+    "unfilledtimeout": {
+        "entry": 10,
+        "exit": 10,
+        "exit_timeout_count": 0,
+        "unit": "minutes"
+    },
+    "entry_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1,
+        "price_last_balance": 0.0,
+        "check_depth_of_market": {
+            "enabled": false,
+            "bids_to_ask_delta": 1
+        }
+    },
+    "exit_pricing": {
+        "price_side": "other",
+        "use_order_book": true,
+        "order_book_top": 1
+    },
+    "exchange": {
+        "name": "",
+        "key": "",
+        "secret": "",
+        "password": "",
+        "ccxt_config": {
+            "enableRateLimit": true
+        },
+        "ccxt_async_config": {
+            "enableRateLimit": true,
+            "rateLimit": 200
+        },
+        "pair_whitelist": [],
+        "pair_blacklist": []
+    },
+    "pairlists": [
+        {
+            "method": "StaticPairList",
+            "number_assets": 20,
+            "sort_key": "quoteVolume",
+            "min_value": 0,
+            "refresh_period": 1800
+        }
+    ],
+    "telegram": {
+        "enabled": false,
+        "token": "",
+        "chat_id": "",
+        "rpc_methods": true,
+        "allow_custom_messages": true,
+        "keyboard": []
+    },
+    "api_server": {
+        "enabled": true,
+        "listen_ip_address": "0.0.0.0",
+        "listen_port": 8011,
+        "verbosity": "error",
+        "enable_openapi": true,
+        "jwt_secret_key": "",
+        "ws_token": "",
+        "CORS_origins": ["*"],
+        "username": "freqtrader",
+        "password": "zy147258"
+    },
+    "bot_name": "",
+    "initial_state": "running",
+    "force_entry_enable": true,
+    "internals": {
+        "process_throttle_secs": 5
+    }
+}

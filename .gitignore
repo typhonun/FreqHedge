@@ -1,27 +1,87 @@
-# Python
+# ========== Python ==========
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# venv
+# 虚拟环境
 venv/
-.env
+env/
+ENV/
+.venv/
 
-# Freqtrade
-user_data/backtest_results/
-user_data/hyperopt_results/
-user_data/data/
+# ========== Node ==========
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+dist-ssr/
+*.local
 
-# IDE
+# ========== 数据库 ==========
+*.db
+*.sqlite
+*.sqlite3
+backend/data/*.db
+
+# ========== 日志 ==========
+logs/
+*.log
+hs_err_pid*.log
+
+# ========== 运行时状态 ==========
+backend_state.json
+round_state.json
+*.pid
+
+# ========== 配置（敏感） ==========
+# 如果 settings.py 含密钥，取消下面注释
+# backend/config/settings.py
+# 保留 example
+!backend/config/settings.example.py
+
+# 如果 risk_config.json 含用户数据
+# backend/config/risk_config.json
+
+# ========== IDE ==========
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
-# Logs
-*.log
-
-# Windows
+# ========== 系统 ==========
+.DS_Store
 Thumbs.db
-Desktop.ini
+desktop.ini
 
-config*.json
+# ========== 临时文件 ==========
+*.tmp
+*.bak
+*.cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ========== 其他 ==========
+工作.txt
