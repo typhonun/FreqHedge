@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Optional
 
 from config.settings import (
     FREQTRADE_DIR,
@@ -117,12 +118,19 @@ class ConfigService:
             cfg["exchange"]["name"] = acct["exchange"]
             cfg["exchange"]["key"] = acct.get("apiKey", "") or ""
             cfg["exchange"]["secret"] = acct.get("apiSecret", "") or ""
-            # OKX/KuCoin 需要
             if acct.get("passphrase"):
                 cfg["exchange"]["password"] = acct["passphrase"]
-            # 一些 freqtrade 版本要求这两个字段存在
             cfg["exchange"].setdefault("ccxt_config", {})
             cfg["exchange"].setdefault("ccxt_async_config", {})
+
+        # ★ 兜底：回测不需要真实 API key，但必须要有合法的交易所名
+        if not cfg["exchange"].get("name"):
+            cfg["exchange"]["name"] = "binance"
+            cfg["exchange"].setdefault("key", "")
+            cfg["exchange"].setdefault("secret", "")
+            cfg["exchange"].setdefault("ccxt_config", {"enableRateLimit": True})
+            cfg["exchange"].setdefault("ccxt_async_config", {"enableRateLimit": True, "rateLimit": 200})
+            print("[config] exchange.name 为空，回退到 binance")
 
         cfg["custom_params"] = {
             "bot_id": bot_id,

@@ -7,6 +7,7 @@ import subprocess
 import tempfile
 import re
 import time
+import zipfile
 import pandas as pd
 from pathlib import Path
 from typing import Optional
@@ -100,7 +101,6 @@ def _check_local_data(pairs: list,
                       timerange: str,
                       exchange_name: str = "binance",
                       trading_mode: str = "futures") -> dict:
-    # 缓存 key
     key = (
         ",".join(sorted(pairs)),
         ",".join(sorted(timeframes)),
@@ -183,11 +183,9 @@ def _get_htf_timeframes(bot: dict, side: str = "long") -> list:
 
         htf_cfg = (cfg_raw or {}).get("htf_trend_filter") or {}
 
-        # ★ 未启用 → 不需要下载 HTF 周期
         if not bool(htf_cfg.get("enable", False)):
             return []
 
-        # ★ enable=true 但所有 protect_* 都关 → 也没必要下载
         any_protect = any([
             bool(htf_cfg.get("protect_entry", False)),
             bool(htf_cfg.get("protect_dca", False)),
@@ -207,9 +205,6 @@ def _get_htf_timeframes(bot: dict, side: str = "long") -> list:
 
 
 def _require_config_path(bot: dict, bot_id: int, side: str) -> Path:
-    """
-    同 _resolve_config_path，但失败时直接 raise HTTPException。
-    """
     enable_long = bool(bot.get("enableLong", True))
     enable_short = bool(bot.get("enableShort", False))
 
@@ -239,25 +234,13 @@ def _default_timerange() -> str:
     return f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
 
 
-def _parse_timerange(timerange: str) -> tuple[str, str]:
-    if "-" not in timerange:
-        return timerange, timerange
-    start, end = timerange.split("-", 1)
-    return start or "", end or ""
-
-
 def _run_freqtrade_download(config_path: Path,
                             timeframe: str,
                             timerange: Optional[str],
                             extra_timeframes: Optional[list] = None) -> dict:
-    """
-    下载回测所需的全部数据。
-    ★ extra_timeframes: 除主周期外还需要下载的周期（由调用方从 bot 配置推断）
-    """
     if not FREQTRADE_EXE:
         return {"success": False, "stdout_tail": "", "stderr_tail": "freqtrade 可执行文件未找到"}
 
-    # 组装需要下载的周期集合
     tf_set = []
     for tf in [timeframe] + (extra_timeframes or []):
         if tf and tf not in tf_set:
@@ -271,7 +254,6 @@ def _run_freqtrade_download(config_path: Path,
         "--trading-mode", "futures",
     ]
 
-    # ★ 只有明确给了 timerange 才加，否则默认最近 N 天（freqtrade 默认行为）
     if timerange:
         start, end = _parse_timerange(timerange)
         if start and end:
@@ -314,12 +296,9 @@ def _run_freqtrade_download(config_path: Path,
 
 
 def _split_table_row(line: str) -> list[str]:
-    """按 │ 分割，去掉首尾空字段"""
-    # 兼容 │ 和 |（有些 locale 下 freqtrade 会用 |）
     for sep in ("\u2502", "|"):
         if sep in line:
             parts = [p.strip() for p in line.split(sep)]
-            # 去掉首尾空
             while parts and not parts[0]:
                 parts.pop(0)
             while parts and not parts[-1]:
@@ -381,7 +360,6 @@ def _parse_stdout_report(stdout: str) -> dict:
             continue
 
         parts = _split_table_row(line)
-        # 只处理首列为交易对的行（跳过 TOTAL 和续行）
         if len(parts) >= 6 and re.match(r"^[A-Z0-9]+/[A-Z0-9]+:[A-Z0-9]+$", parts[0]):
             try:
                 win_parts = parts[6].split() if len(parts) >= 7 else []
@@ -409,9 +387,7 @@ def _parse_stdout_report(stdout: str) -> dict:
             continue
 
         parts = _split_table_row(line)
-        # 跳过表头 / TOTAL / 空行，只处理第一列是退出原因的行
         if len(parts) >= 6 and parts[0] and parts[0] != "TOTAL":
-            # 排除第一列是 "Exit" / "Reason" 之类的表头
             if parts[0] in ("Exit", "Reason"):
                 continue
             try:
@@ -458,12 +434,89 @@ def _parse_stdout_report(stdout: str) -> dict:
     return result
 
 
+# ══════════════════════════════════════════════════════════════
+# ★ 回测结果文件定位 & 读取（支持 .zip / .json）
+# ══════════════════════════════════════════════════════════════
+def _find_latest_backtest_result() -> Optional[Path]:
+    """
+    在 user_data/backtest_results 下找最新一次回测结果文件。
+
+    freqtrade 2026.x 默认导出：
+      backtest-result-<ts>.zip           （内含主结果 json + _config.json + .meta.json）
+      backtest-result-<ts>.meta.json
+      backtest-result-<ts>_config.json
+
+    旧版/未压缩时可能是：
+      backtest-result-<ts>.json
+
+    返回：最新的 .zip 或 .json（按 mtime 降序取第一个）
+    """
+    d = FREQTRADE_DIR / "user_data" / "backtest_results"
+    if not d.exists():
+        return None
+
+    candidates = []
+    for f in d.glob("backtest-result-*"):
+        name = f.name
+        if name.endswith(".meta.json"):
+            continue
+        if name.endswith("_config.json"):
+            continue
+        if f.suffix in (".zip", ".json"):
+            candidates.append(f)
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return candidates[0]
+
+
+def _read_backtest_result_json(path: Path) -> Optional[dict]:
+    """
+    读取回测结果 JSON。
+    - .json → 直接读
+    - .zip  → 从 zip 里找最大的主结果 json（排除 _config.json / .meta.json）
+    """
+    try:
+        if path.suffix == ".json":
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+        if path.suffix == ".zip":
+            with zipfile.ZipFile(path, "r") as zf:
+                json_members = [
+                    n for n in zf.namelist()
+                    if n.endswith(".json")
+                    and not n.endswith("_config.json")
+                    and not n.endswith(".meta.json")
+                ]
+                if not json_members:
+                    print(f"[backtest] zip 里没有主结果 json: {path}")
+                    return None
+                json_members.sort(
+                    key=lambda n: zf.getinfo(n).file_size,
+                    reverse=True,
+                )
+                with zf.open(json_members[0]) as fp:
+                    return json.load(fp)
+    except Exception as e:
+        print(f"[backtest] 读取结果文件失败 {path}: {e}")
+        return None
+
+    return None
+
+
+# ══════════════════════════════════════════════════════════════
+# ★ 回测执行
+# ══════════════════════════════════════════════════════════════
 def _run_freqtrade_backtest(config_path: Path, strategy: str,
                             timeframe: str, timerange: str,
                             export_dir: Path) -> dict:
     if not FREQTRADE_EXE:
         raise RuntimeError("freqtrade 可执行文件未找到")
 
+    started_at = time.time()   # ★ 函数开头记下启动时间
     cmd = [
         FREQTRADE_EXE,
         "backtesting",
@@ -477,63 +530,33 @@ def _run_freqtrade_backtest(config_path: Path, strategy: str,
 
     print(f"[backtest] cmd = {' '.join(cmd)}")
 
-    proc = subprocess.run(
-        cmd,
-        cwd=str(FREQTRADE_DIR),
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="ignore",
-    )
+    proc = subprocess.run(...)
 
     if proc.returncode != 0:
-        raise RuntimeError(
-            "freqtrade backtesting failed:\n"
-            f"stdout tail:\n{proc.stdout[-2000:]}\n"
-            f"stderr tail:\n{proc.stderr[-2000:]}"
-        )
+        raise RuntimeError(...)
 
-    # ★ 尝试从 JSON 读
-    result_file = None
-    for cand in [
-        FREQTRADE_DIR / "user_data" / "backtest_results" / "last_backtest_result.json",
-        FREQTRADE_DIR / "last_backtest_result.json",
-        FREQTRADE_DIR.parent / "last_backtest_result.json",
-    ]:
-        if cand.exists():
-            result_file = cand
-            break
+    # ★ 找最新一次回测结果（zip 或 json），并过滤旧文件
+    result_file = _find_latest_backtest_result()
+    if result_file:
+        if result_file.stat().st_mtime < started_at - 10:
+            age = time.time() - result_file.stat().st_mtime
+            print(f"[backtest] 忽略旧结果文件（{age:.0f}s 前生成）：{result_file}")
+            result_file = None
 
     if result_file:
         print(f"[backtest] result file = {result_file}")
-        with open(result_file, "r", encoding="utf-8") as f:
-            raw_json = json.load(f)
-        # ★ 从原始 JSON 解析成最终结构
-        return _parse_summary(raw_json)
+        raw_json = _read_backtest_result_json(result_file)
+        if raw_json is not None:
+            return _parse_summary(raw_json)
 
-    # ★ 找不到 JSON：从 stdout 解析（已经是最终结构，直接返回）
-    print("[backtest] JSON 未找到，改用 stdout 解析")
+    print("[backtest] JSON 未找到或读取失败，改用 stdout 解析")
     return _parse_stdout_report(proc.stdout)
 
 
 def _cleanup_old_results(results_dir: Path, keep: int = 10):
-    """
-    清理旧的回测结果文件（保留最近 keep 次回测的所有文件）。
-
-    freqtrade 每次回测可能生成：
-      backtest-result-<ts>.zip
-      backtest-result-<ts>.meta.json
-      backtest-result-<ts>.json          （旧版/未压缩时）
-      backtest-result-<ts>_config.json   （某些版本）
-
-    以「主结果」（.zip 或 .json）为分组依据，保留最近 keep 组，
-    其余连 meta / config 一起删。
-    """
     if not results_dir.exists():
         return
 
-    # ---------- 1. 找出所有主结果文件（.zip 优先，兼容 .json） ----------
-    # 排除 .meta.json 和 _config.json
     main_files = []
     for f in results_dir.glob("backtest-result-*"):
         name = f.name
@@ -541,34 +564,25 @@ def _cleanup_old_results(results_dir: Path, keep: int = 10):
             continue
         if name.endswith("_config.json"):
             continue
-        # 只接受 .zip 或 .json
         if name.endswith(".zip") or name.endswith(".json"):
             main_files.append(f)
 
     if len(main_files) <= keep:
         return
 
-    # ---------- 2. 按 mtime 降序 ----------
     main_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-
     to_delete = main_files[keep:]
 
-    # ---------- 3. 逐个删除三件套 ----------
     deleted = 0
     freed = 0
     for main_file in to_delete:
-        # main_file.stem:
-        #   .zip → "backtest-result-2026-10-04_19-19-44"
-        #   .json → "backtest-result-2026-10-04_19-19-44"
         stem = main_file.stem
-
         siblings = [
             results_dir / f"{stem}.zip",
             results_dir / f"{stem}.json",
             results_dir / f"{stem}.meta.json",
             results_dir / f"{stem}_config.json",
         ]
-
         for f in siblings:
             if f.exists():
                 try:
@@ -585,24 +599,82 @@ def _cleanup_old_results(results_dir: Path, keep: int = 10):
         )
 
 
+# ══════════════════════════════════════════════════════════════
+# ★ 结果解析（多版本字段兼容）
+# ══════════════════════════════════════════════════════════════
+def _safe_float(v, default=0.0) -> float:
+    try:
+        if v is None:
+            return default
+        if isinstance(v, str):
+            v = v.replace("%", "").strip()
+        return float(v)
+    except Exception:
+        return default
+
+
+def _safe_int(v, default=0) -> int:
+    try:
+        if v is None:
+            return default
+        return int(v)
+    except Exception:
+        return default
+
+
+def _first_not_none(*vals):
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
 def _parse_summary(data: dict) -> dict:
-    strategy = data.get("strategy", {})
+    """
+    把 freqtrade backtest-result-*.json 解析成前端统一结构。
 
-    total_trades = (
-            strategy.get("total_trades")
-            or data.get("total_trades")
-            or 0
-    )
+    freqtrade 2026.x 结构：
+      data["strategy"]["<策略名>"] = { ...所有指标... }
+      data["strategy_comparison"] = [ {...} ]
+      data["strategy"]["<策略名>"]["trades"] = [ ... ]
+      data["strategy"]["<策略名>"]["exit_reason_summary"] = [ {key, trades, ...}, ... ]
+    """
+    if not isinstance(data, dict):
+        data = {}
 
+    # ── 1. 取出真实策略对象（兼容新旧两种结构）──
+    strategy_root = data.get("strategy", {}) or {}
+    strategy = {}
+
+    if isinstance(strategy_root, dict):
+        # 结构 B（新）：strategy 下嵌套策略名
+        # 过滤掉非 dict 的值和通用字段，找到真正带 trades 的那个
+        for k, v in strategy_root.items():
+            if isinstance(v, dict) and "trades" in v:
+                strategy = v
+                break
+        # 结构 A（旧）：strategy 本身就是指标 dict
+        if not strategy and "total_trades" in strategy_root:
+            strategy = strategy_root
+
+    # 兜底：从 strategy_comparison 里找
+    if not strategy:
+        sc = data.get("strategy_comparison") or []
+        if isinstance(sc, list) and sc:
+            strategy = sc[0] if isinstance(sc[0], dict) else {}
+
+    # ── 2. trades 从 strategy 里取（新版）或 data 里取（旧版）──
+    trades = strategy.get("trades") or data.get("trades") or []
+
+    # ── 3. 按 pair 聚合 ──
     pair_stats = []
-    trades = data.get("trades", [])
     pair_map = {}
 
     for t in trades:
         pair = t.get("pair", "UNKNOWN")
-        profit_ratio = t.get("profit_ratio", 0.0)
-        profit_abs = t.get("profit_abs", 0.0)
-        duration = t.get("trade_duration", 0)
+        profit_ratio = _safe_float(t.get("profit_ratio"))
+        profit_abs = _safe_float(t.get("profit_abs"))
+        duration = _safe_float(t.get("trade_duration"), 0.0)
 
         if pair not in pair_map:
             pair_map[pair] = {
@@ -610,7 +682,7 @@ def _parse_summary(data: dict) -> dict:
                 "trades": 0,
                 "total_profit_pct": 0.0,
                 "total_profit_usdt": 0.0,
-                "total_duration_min": 0,
+                "total_duration_min": 0.0,
                 "wins": 0,
                 "losses": 0,
             }
@@ -626,92 +698,137 @@ def _parse_summary(data: dict) -> dict:
             s["losses"] += 1
 
     for s in pair_map.values():
-        s["avg_profit_pct"] = round(
-            s["total_profit_pct"] / s["trades"], 2
-        ) if s["trades"] else 0
-        s["avg_duration_min"] = round(
-            s["total_duration_min"] / s["trades"], 1
-        ) if s["trades"] else 0
-        s["win_rate"] = round(
-            s["wins"] / s["trades"] * 100, 1
-        ) if s["trades"] else 0
+        n = s["trades"]
+        s["avg_profit_pct"] = round(s["total_profit_pct"] / n, 2) if n else 0
+        s["avg_duration_min"] = round(s["total_duration_min"] / n, 1) if n else 0
+        s["win_rate"] = round(s["wins"] / n * 100, 1) if n else 0
         s["total_profit_pct"] = round(s["total_profit_pct"], 2)
         s["total_profit_usdt"] = round(s["total_profit_usdt"], 2)
         pair_stats.append(s)
 
-    winrate_raw = strategy.get("winrate", 0)
+    # ── 4. summary：优先从 strategy 里取（新版），fallback 到 data ──
+    def _pick(*keys, src=None, default=None):
+        """从 strategy 里按顺序找第一个非 None 的 key"""
+        src = src if src is not None else strategy
+        for k in keys:
+            if k in src and src[k] is not None:
+                return src[k]
+        return default
+
+    total_trades = _safe_int(_pick("total_trades", default=data.get("total_trades")), 0)
+
+    winrate_raw = _safe_float(_pick("winrate", "win_rate"), 0.0)
     win_rate = winrate_raw * 100 if winrate_raw <= 1 else winrate_raw
 
+    dd_raw = _safe_float(_pick("max_drawdown_account", "max_drawdown"), 0.0)
+    max_drawdown = dd_raw * 100 if dd_raw <= 1 else dd_raw
+
+    cagr_raw = _safe_float(_pick("cagr"), 0.0)
+    cagr = cagr_raw * 100 if cagr_raw <= 1 else cagr_raw
+
+    # profit_total 是比率（0~1），要 *100 变百分数
+    profit_total_ratio = _safe_float(_pick("profit_total"), 0.0)
+    total_profit_pct = profit_total_ratio * 100
+
+    # 绝对盈亏：profit_total_abs（新版叫法）或 absolute_profit（旧版）
+    absolute_profit = _safe_float(_pick("profit_total_abs", "absolute_profit"), 0.0)
+
     summary = {
-        "backtest_start": data.get("backtest_start"),
-        "backtest_end": data.get("backtest_end"),
-        "starting_balance": data.get("starting_balance", 0),
-        "final_balance": data.get("final_balance", 0),
-        "absolute_profit": data.get("absolute_profit", 0),
-        "total_profit_pct": data.get("total_profit_pct", 0),
+        "backtest_start": _pick("backtest_start", default=data.get("backtest_start")),
+        "backtest_end": _pick("backtest_end", default=data.get("backtest_end")),
+        "starting_balance": _safe_float(_pick("starting_balance", default=data.get("starting_balance")), 0.0),
+        "final_balance": _safe_float(_pick("final_balance", default=data.get("final_balance")), 0.0),
+        "absolute_profit": absolute_profit,
+        "total_profit_pct": round(total_profit_pct, 2),
         "total_trades": total_trades,
-        "max_open_trades": data.get("max_open_trades", 0),
-        "win_rate": win_rate,
-        "profit_factor": strategy.get("profit_factor", 0),
-        "sharpe": strategy.get("sharpe", 0),
-        "sortino": strategy.get("sortino", 0) or data.get("sortino", 0) or 0,
-        "cagr": (data.get("cagr", 0) or 0) * 100 if (data.get("cagr", 0) or 0) <= 1 else (data.get("cagr", 0) or 0),
-        "max_drawdown": (data.get("max_drawdown_account", 0) or 0) * 100,
-        "best_pair": data.get("best_pair"),
-        "worst_pair": data.get("worst_pair"),
-        "best_trade_pct": data.get("best_trade", 0),
-        "worst_trade_pct": data.get("worst_trade", 0),
+        "max_open_trades": _safe_int(_pick("max_open_trades", default=data.get("max_open_trades")), 0),
+        "win_rate": round(win_rate, 2),
+        "profit_factor": _safe_float(_pick("profit_factor", default=data.get("profit_factor")), 0.0),
+        "sharpe": _safe_float(_pick("sharpe", default=data.get("sharpe")), 0.0),
+        "sortino": _safe_float(_pick("sortino", default=data.get("sortino")), 0.0),
+        "cagr": round(cagr, 2),
+        "max_drawdown": round(max_drawdown, 2),
+        "best_pair": _first_not_none(_pick("best_pair"), data.get("best_pair")),
+        "worst_pair": _first_not_none(_pick("worst_pair"), data.get("worst_pair")),
+        "best_trade_pct": _safe_float(_pick("best_trade", default=data.get("best_trade")), 0.0),
+        "worst_trade_pct": _safe_float(_pick("worst_trade", default=data.get("worst_trade")), 0.0),
     }
+
+    # best_pair / worst_pair 在新版是 dict，需要取 key
+    if isinstance(summary["best_pair"], dict):
+        summary["best_pair"] = summary["best_pair"].get("key")
+    if isinstance(summary["worst_pair"], dict):
+        summary["worst_pair"] = summary["worst_pair"].get("key")
+
+    # ── 5. 退出原因统计 ──
+    # 新版：strategy["exit_reason_summary"] 是 list[{key, trades, profit_total_abs, ...}]
+    exit_reasons = []
+    ers_raw = strategy.get("exit_reason_summary") or data.get("exit_reason_summary")
+
+    if isinstance(ers_raw, list):
+        for st in ers_raw:
+            if not isinstance(st, dict):
+                continue
+            key = st.get("key")
+            if not key or key == "TOTAL":
+                continue
+            trades_n = _safe_int(st.get("trades"), 0)
+            wins = _safe_int(st.get("wins"), 0)
+            losses = _safe_int(st.get("losses"), 0)
+            exit_reasons.append({
+                "reason": key,
+                "exits": trades_n,
+                "avg_profit_pct": round(_safe_float(st.get("profit_mean_pct"), 0.0), 2),
+                "total_profit_usdt": round(_safe_float(st.get("profit_total_abs"), 0.0), 2),
+                "total_profit_pct": round(_safe_float(st.get("profit_total_pct"), 0.0), 2),
+                "avg_duration": st.get("duration_avg", ""),
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / trades_n * 100, 1) if trades_n else 0.0,
+            })
+    elif isinstance(ers_raw, dict):
+        # 兼容旧版 dict 结构
+        for reason, st in ers_raw.items():
+            if not isinstance(st, dict):
+                continue
+            wins = _safe_int(st.get("wins"), 0)
+            losses = _safe_int(st.get("losses"), 0)
+            draws = _safe_int(st.get("draws"), 0)
+            total = wins + losses + draws
+            exit_reasons.append({
+                "reason": reason,
+                "exits": total,
+                "avg_profit_pct": _safe_float(st.get("avg_profit"), 0.0) * 100,
+                "total_profit_usdt": _safe_float(st.get("total_profit"), 0.0),
+                "total_profit_pct": _safe_float(st.get("profit_pct"), 0.0),
+                "avg_duration": st.get("avg_duration", ""),
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(wins / total * 100, 1) if total else 0.0,
+            })
 
     return {
         "summary": summary,
         "pairs": pair_stats,
-        "exit_reasons": [],  # ★ 新增，JSON 路径暂不解析，给空数组
+        "exit_reasons": exit_reasons,
         "trades": trades,
     }
 
 
+# ══════════════════════════════════════════════════════════════
+# ★ 同步回测接口
+# ══════════════════════════════════════════════════════════════
 @router.post("/{bot_id}/backtest")
 async def run_backtest(bot_id: int, req: BacktestRequest):
     bot = BotManager.get(bot_id)
     if not bot:
         raise HTTPException(404, "bot not found")
 
-    # 1. 保证配置文件最新
-    ConfigService.generate_configs(bot_id, {
-        "base": {
-            "name": bot["name"],
-            "pair": bot["pair"],
-            "capital": bot["capital"],
-            "stakeAmount": bot.get("stakeAmount", 10),
-            "leverage": bot.get("leverage", 10),
-            "maxOpenTrades": bot.get("maxOpenTrades", 3),
-            "dryRun": bot.get("dryRun", True),
-            "enableLong": bot.get("enableLong", True),
-            "enableShort": bot.get("enableShort", False),
-        },
-        "risk": {
-            "tp_enabled": bot.get("tp_enabled", False),
-            "tp_mode": bot.get("tp_mode", "amount"),
-            "tp_amount": bot.get("tp_amount", 0),
-            "tp_ratio": bot.get("tp_ratio", 0),
-            "sl_enabled": bot.get("sl_enabled", False),
-            "sl_mode": bot.get("sl_mode", "amount"),
-            "sl_amount": bot.get("sl_amount", 0),
-            "sl_ratio": bot.get("sl_ratio", 0),
-            "trail_enabled": bot.get("trail_enabled", False),
-            "trail_mode": bot.get("trail_mode", "ratio"),
-            "trail_activate_amount": bot.get("trail_activate_amount", 0),
-            "trail_activate_ratio": bot.get("trail_activate_ratio", 0),
-            "trail_drawdown_amount": bot.get("trail_drawdown_amount", 0),
-            "trail_drawdown_ratio": bot.get("trail_drawdown_ratio", 0),
-            "auto_stop_on_tp": bot.get("auto_stop_on_tp", True),
-            "auto_stop_on_sl": bot.get("auto_stop_on_sl", True),
-            "auto_stop_on_trail": bot.get("auto_stop_on_trail", True),
-        },
-        "longConfig": bot.get("longConfig"),
-        "shortConfig": bot.get("shortConfig"),
-    })
+    print(f"[debug] bot keys = {list(bot.keys())}")
+    print(
+        f"[debug] exchange-related = { {k: bot[k] for k in bot if 'xchange' in k or 'api' in k.lower() or 'key' in k.lower() or 'secret' in k.lower()} }")
+
+    ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
 
     config_path = _require_config_path(bot, bot_id, req.side)
     print(f"[backtest] config_path = {config_path}, exists = {config_path.exists()}")
@@ -719,12 +836,10 @@ async def run_backtest(bot_id: int, req: BacktestRequest):
     strategy = "DcaTpLong" if req.side == "long" else "DcaTpShort"
     timerange = req.timerange or _default_timerange()
 
-    # ★ 回测前自动下载数据（含 informative 周期）
     print(f"[backtest] auto_download flag = {req.auto_download} (ignored, use /download-data)")
 
     with tempfile.TemporaryDirectory() as tmp:
         export_dir = Path(tmp)
-        # ★ 打印当前 config 的关键策略字段（临时排查用）
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
@@ -732,7 +847,6 @@ async def run_backtest(bot_id: int, req: BacktestRequest):
             print(f"[debug] config = {config_path}")
             print(f"[debug] timeframe = {cfg.get('timeframe')}")
             print(f"[debug] max_open_trades = {cfg.get('max_open_trades')}")
-            # 你的策略配置会以自定义字段的方式写进 config（如果你的 config_service 是这样做的）
             for key in ("longConfig", "shortConfig", "htf_trend_filter",
                         "entry", "htf_trend_filter_enable", "protect_entry"):
                 if key in cfg:
@@ -762,6 +876,9 @@ async def run_backtest(bot_id: int, req: BacktestRequest):
     return result
 
 
+# ══════════════════════════════════════════════════════════════
+# ★ 下载数据接口
+# ══════════════════════════════════════════════════════════════
 class DownloadDataRequest(BaseModel):
     side: str = "long"
     timeframe: str = "30m"
@@ -777,7 +894,6 @@ async def download_data(bot_id: int, req: DownloadDataRequest):
     ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
     config_path = _require_config_path(bot, bot_id, req.side)
 
-    # ★ 从 config 读 exchange / trading_mode，避免硬编码
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     exchange_name = (cfg.get("exchange") or {}).get("name", "binance")
@@ -811,7 +927,6 @@ async def download_data(bot_id: int, req: DownloadDataRequest):
             "timerange": timerange,
         }
 
-    # 下载
     res = _run_freqtrade_download(
         config_path=config_path,
         timeframe=req.timeframe,
@@ -825,7 +940,6 @@ async def download_data(bot_id: int, req: DownloadDataRequest):
             + (res.get("stderr_tail") or res.get("stdout_tail") or "未知错误")
         )
 
-    # ★ 下载成功后清缓存
     _check_cache.clear()
 
     return {
@@ -838,9 +952,7 @@ async def download_data(bot_id: int, req: DownloadDataRequest):
 
 
 def _make_download_parse_fn():
-    """下载完成时的解析函数"""
     def _parse(stdout: str) -> dict:
-        # 清检查缓存（下次再点"下载"会重新判断）
         _check_cache.clear()
         return {
             "success": True,
@@ -852,10 +964,6 @@ def _make_download_parse_fn():
 
 @router.post("/{bot_id}/download-data/start")
 async def download_data_start(bot_id: int, req: DownloadDataRequest):
-    """
-    启动异步下载，立即返回 job_id。
-    前端通过 /download-data/progress/{job_id} 轮询。
-    """
     if not FREQTRADE_EXE:
         raise HTTPException(500, "freqtrade 可执行文件未找到")
 
@@ -863,11 +971,9 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
     if not bot:
         raise HTTPException(404, "bot not found")
 
-    # 1. 生成 config
     ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
     config_path = _require_config_path(bot, bot_id, req.side)
 
-    # 2. 从 config 读 exchange / trading_mode
     with open(config_path, "r", encoding="utf-8") as f:
         cfg = json.load(f)
     exchange_name = (cfg.get("exchange") or {}).get("name", "binance")
@@ -880,7 +986,6 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
         if tf not in tf_list:
             tf_list.append(tf)
 
-    # 3. 本地检查
     local_check = _check_local_data(
         pairs, tf_list, timerange,
         exchange_name=exchange_name,
@@ -889,7 +994,6 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
     print(f"[download:start] 本地数据检查: all_covered={local_check['all_covered']}")
 
     if local_check["all_covered"]:
-        # ★ 直接创建一个已完成的 job，前端看到 success 就提示"已下载"
         job = create_job(bot_id, kind="download")
         job.status = "success"
         job.stage = "已下载"
@@ -907,7 +1011,6 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
             "skipped": True,
         }
 
-    # 4. 组装命令
     tf_set = tf_list
     cmd = [
         FREQTRADE_EXE,
@@ -923,7 +1026,6 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
 
     print(f"[download:start] bot={bot_id} cmd={' '.join(cmd)}")
 
-    # 5. 创建异步 job
     job = create_job(bot_id, kind="download")
     run_job_async(
         job=job,
@@ -964,12 +1066,27 @@ async def download_data_cancel(bot_id: int, job_id: str):
     return {"success": True, "job_id": job_id, "status": job.status}
 
 
-# ============================================================================
-# ★ 异步回测：start / progress / cancel
-# ============================================================================
+def _get_exchange_account(bot: dict) -> dict:
+    acct = bot.get("exchangeAccountJson")
+    if isinstance(acct, str):
+        try:
+            acct = json.loads(acct)
+        except Exception:
+            acct = {}
+    if not isinstance(acct, dict):
+        acct = {}
+    return {
+        "exchange": acct.get("exchange") or "binance",
+        "apiKey": acct.get("apiKey") or "",
+        "apiSecret": acct.get("apiSecret") or "",
+        "passphrase": acct.get("passphrase") or "",
+    }
 
+
+# ══════════════════════════════════════════════════════════════
+# ★ 异步回测：start / progress / cancel
+# ══════════════════════════════════════════════════════════════
 def _build_config_for_backtest(bot: dict):
-    """把 bot 记录组装成 ConfigService 需要的 payload"""
     return {
         "base": {
             "name": bot["name"],
@@ -981,6 +1098,7 @@ def _build_config_for_backtest(bot: dict):
             "dryRun": bot.get("dryRun", True),
             "enableLong": bot.get("enableLong", True),
             "enableShort": bot.get("enableShort", False),
+            "exchangeAccount": _get_exchange_account(bot),
         },
         "risk": {
             "tp_enabled": bot.get("tp_enabled", False),
@@ -1006,33 +1124,32 @@ def _build_config_for_backtest(bot: dict):
     }
 
 
-def _make_parse_fn():
-    """返回一个纯函数：stdout -> dict"""
+def _make_parse_fn(started_at: float):
+    """返回一个纯函数：stdout -> dict。started_at 用于过滤旧结果文件。"""
 
     def _parse_from_stdout(stdout: str) -> dict:
-        result_file = None
-        for cand in [
-            FREQTRADE_DIR / "user_data" / "backtest_results" / "last_backtest_result.json",
-            FREQTRADE_DIR / "last_backtest_result.json",
-            FREQTRADE_DIR.parent / "last_backtest_result.json",
-        ]:
-            if cand.exists():
-                result_file = cand
-                break
-
         result = None
+        result_file = _find_latest_backtest_result()
         if result_file:
-            try:
-                with open(result_file, "r", encoding="utf-8") as f:
-                    raw_json = json.load(f)
-                result = _parse_summary(raw_json)
-            except Exception as e:
-                print(f"[backtest] json parse failed: {e}")
+            # ★ 结果文件的 mtime 应该 >= 本次回测启动时间（允许 10s 时钟偏差）
+            if result_file.stat().st_mtime < started_at - 10:
+                age = time.time() - result_file.stat().st_mtime
+                print(f"[backtest] 忽略旧结果文件（{age:.0f}s 前生成）：{result_file}")
+                result_file = None
+
+        if result_file:
+            print(f"[backtest] result file = {result_file}")
+            raw_json = _read_backtest_result_json(result_file)
+            if raw_json is not None:
+                try:
+                    result = _parse_summary(raw_json)
+                except Exception as e:
+                    print(f"[backtest] json parse failed: {e}")
 
         if result is None:
+            print("[backtest] 使用 stdout 解析")
             result = _parse_stdout_report(stdout)
 
-        # ★ 回测完成后清理旧结果
         try:
             _cleanup_old_results(
                 FREQTRADE_DIR / "user_data" / "backtest_results",
@@ -1048,11 +1165,6 @@ def _make_parse_fn():
 
 @router.post("/{bot_id}/backtest/start")
 async def start_backtest(bot_id: int, req: BacktestRequest):
-    """
-    启动异步回测，立即返回 job_id。前端通过 /progress/{job_id} 轮询。
-    ★ 关键：ConfigService.generate_configs 在此刻冻结参数到 config 文件，
-      之后 DB 里 bot 参数怎么改都不会影响正在跑的子进程。
-    """
     if not FREQTRADE_EXE:
         raise HTTPException(500, "freqtrade 可执行文件未找到")
 
@@ -1060,7 +1172,10 @@ async def start_backtest(bot_id: int, req: BacktestRequest):
     if not bot:
         raise HTTPException(404, "bot not found")
 
-    # ★ 先检查请求的 side 是否合法（用 DB 状态判断）
+    print(f"[debug] bot keys = {list(bot.keys())}")
+    print(
+        f"[debug] exchange-related = { {k: bot[k] for k in bot if 'xchange' in k or 'api' in k.lower() or 'key' in k.lower() or 'secret' in k.lower()} }")
+
     enable_long = bool(bot.get("enableLong", True))
     enable_short = bool(bot.get("enableShort", False))
     if req.side == "long" and not enable_long:
@@ -1068,7 +1183,6 @@ async def start_backtest(bot_id: int, req: BacktestRequest):
     if req.side == "short" and not enable_short:
         raise HTTPException(400, "当前机器人未启用做空，无法回测 short 方向")
 
-    # 1. 生成 config（参数快照）
     ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
     config_path = _require_config_path(bot, bot_id, req.side)
 
@@ -1088,12 +1202,13 @@ async def start_backtest(bot_id: int, req: BacktestRequest):
 
     print(f"[backtest:start] bot={bot_id} job cmd = {' '.join(cmd)}")
 
+    started_at = time.time()
     job = create_job(bot_id)
     run_job_async(
         job=job,
         cmd=cmd,
         cwd=str(FREQTRADE_DIR),
-        parse_result_fn=_make_parse_fn(),
+        parse_result_fn=_make_parse_fn(started_at),  # ← 传入启动时间
     )
 
     return {
@@ -1111,7 +1226,6 @@ async def backtest_progress(bot_id: int, job_id: str):
     if job.bot_id != bot_id:
         raise HTTPException(400, "job / bot 不匹配")
 
-    # 完成时把 result 也带上
     finished = job.status in ("success", "failed", "cancelled")
     return job.to_public(include_result=finished)
 

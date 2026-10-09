@@ -44,8 +44,8 @@
     },
     "exchange": {
         "name": "",
-        "key": "",
-        "secret": "",
+        "key": "uXmUxOCDI3oESglhwPbZiPZ8PlC5T1hT6YY4wcEEE9g8RfmuDNur76chC4bSAHUL",
+        "secret": "fTogg1Vrgi7RMKkZPDNeSrLfoT4NnB2FaTEpnfZhlgsbU6EaFuDJwkYz2ETSzTXs",
         "password": "",
         "ccxt_config": {
             "enableRateLimit": true
@@ -80,8 +80,8 @@
         "listen_port": 8011,
         "verbosity": "error",
         "enable_openapi": true,
-        "jwt_secret_key": "",
-        "ws_token": "",
+        "jwt_secret_key": "somethingRandomSomethingRandom123",
+        "ws_token": "somethingRandomSomethingRandom123",
         "CORS_origins": ["*"],
         "username": "freqtrader",
         "password": "zy147258"

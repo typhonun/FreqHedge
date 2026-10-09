@@ -134,6 +134,8 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
         job.status = "running"
         job.stage = "启动 freqtrade"
         job.percent = 5
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
 
         stdout_buf = []
         stop_estimate = threading.Event()
@@ -148,6 +150,7 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
                 encoding="utf-8",
                 errors="ignore",
                 bufsize=1,
+                env=env,
             )
             with job._lock:
                 job._proc = proc
@@ -195,6 +198,25 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
 
             job.stage = "解析结果"
             job.percent = 98
+
+            # ★ 诊断：确认回测真的跑了
+            full_stdout = "".join(stdout_buf)
+            print(f"[job] kind={job.kind}, rc={rc}, stdout_len={len(full_stdout)}")
+
+            if job.kind == "backtest":
+                has_report = "BACKTESTING REPORT" in full_stdout
+                print(f"[job] has_report={has_report}")
+
+                if not has_report:
+                    job.status = "failed"
+                    job.stage = "回测失败"
+                    job.percent = 100
+                    job.error = (
+                            "freqtrade 未产出回测报告（配置错误/数据缺失）：\n"
+                            + full_stdout[-3000:]
+                    )
+                    job.finished_at = time.time()
+                    return
 
             try:
                 result = parse_result_fn("".join(stdout_buf))
