@@ -7,7 +7,7 @@
         <el-select
           v-model="filterBotId"
           clearable
-          placeholder="全部（聚合）"
+          placeholder="全部"
           style="width: 220px"
         >
           <el-option

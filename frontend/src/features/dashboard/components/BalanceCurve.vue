@@ -53,14 +53,13 @@
 
 import {
   computed,
-  ref
+  ref,
+  watch,
+  nextTick,
+  onMounted
 } from "vue"
 
 import VChart from "vue-echarts"
-import {
-  watch,
-  nextTick
-} from "vue"
 
 const zoomStart = ref(70)
 const zoomEnd = ref(100)
@@ -76,6 +75,48 @@ const props = defineProps({
 })
 
 const chartRef = ref(null)
+
+
+// =========================================================
+// 价格取整：消除 13 位小数
+// =========================================================
+
+const _niceMin = (v) => {
+
+  if (!Number.isFinite(v)) return 0
+
+  // 向下取整到合适的精度
+  const abs = Math.abs(v)
+
+  let step
+
+  if (abs >= 1000) step = 1
+  else if (abs >= 100) step = 0.1
+  else if (abs >= 10) step = 0.01
+  else if (abs >= 1) step = 0.001
+  else step = 0.0001
+
+  return Math.floor(v / step) * step
+
+}
+
+const _niceMax = (v) => {
+
+  if (!Number.isFinite(v)) return 100
+
+  const abs = Math.abs(v)
+
+  let step
+
+  if (abs >= 1000) step = 1
+  else if (abs >= 100) step = 0.1
+  else if (abs >= 10) step = 0.01
+  else if (abs >= 1) step = 0.001
+  else step = 0.0001
+
+  return Math.ceil(v / step) * step
+
+}
 
 
 // =========================================================
@@ -133,10 +174,9 @@ const yAxisRange = computed(() => {
 
     return {
 
-      min: Math.max(0, min - padding),
+      min: _niceMin(Math.max(0, min - padding)),
 
-      max:
-        max + padding
+      max: _niceMax(max + padding)
 
     }
 
@@ -155,10 +195,9 @@ const yAxisRange = computed(() => {
 
   return {
 
-    min: Math.max(0, min - padding),
+    min: _niceMin(Math.max(0, min - padding)),
 
-    max:
-      max + padding
+    max: _niceMax(max + padding)
 
   }
 
@@ -235,7 +274,7 @@ const option = computed(() => ({
 
 
   // =======================================================
-  // Grid
+  // Grid：top 加大，避免 USDT 被遮
   // =======================================================
 
   grid: {
@@ -244,9 +283,9 @@ const option = computed(() => ({
 
     right: 20,
 
-    top: 20,
+    top: 40,
 
-    bottom: 50,
+    bottom: 20,
 
     containLabel: true
 
@@ -292,87 +331,72 @@ const option = computed(() => ({
 
     name: "USDT",
 
+    nameLocation: "end",
+
+    nameGap: 12,
+
+    nameTextStyle: {
+
+      align: "right",
+
+      verticalAlign: "bottom",
+
+      padding: [0, 0, 6, 0]
+
+    },
+
     min:
       yAxisRange.value.min,
 
     max:
-      yAxisRange.value.max
+      yAxisRange.value.max,
+
+    axisLabel: {
+
+      formatter: (value) => {
+
+        // 防止出现 13 位小数
+
+        const n = Number(value)
+
+        if (!Number.isFinite(n)) return ""
+
+        if (Math.abs(n) >= 100) return n.toFixed(0)
+
+        if (Math.abs(n) >= 1) return n.toFixed(2)
+
+        return n.toFixed(4)
+
+      }
+
+    }
 
   },
 
 
   // =======================================================
-  // 核心：DataZoom
+  // DataZoom：只保留滚轮 / 拖拽，无滑块
   // =======================================================
 
-    dataZoom: [
+  dataZoom: [
 
-      {
-        type: "inside",
+    {
 
-        xAxisIndex: 0,
+      type: "inside",
 
-        filterMode: "none",
+      xAxisIndex: 0,
 
-        zoomOnMouseWheel: true,
+      filterMode: "none",
 
-        moveOnMouseMove: true,
+      zoomOnMouseWheel: true,
 
-        moveOnMouseWheel: true
-      },
+      moveOnMouseMove: true,
 
-      {
+      moveOnMouseWheel: true
 
-        filterMode: "none",
+    }
 
-        zoomOnMouseWheel: true,
-
-        moveOnMouseMove: true,
-
-        moveOnMouseWheel: true
-      },
-
-        {
-          type: "slider",
-
-          xAxisIndex: 0,
-
-          start: zoomStart.value,
-
-          end: zoomEnd.value,
-
-          bottom: 5,
-
-          height: 18,
-
-          showDetail: false,
-
-          showDataShadow: false,
-
-          backgroundColor: "transparent",
-
-          borderColor: "transparent",
-
-          dataBackground: {
-            lineStyle: {
-              opacity: 0
-            },
-            areaStyle: {
-              opacity: 0
-            }
-          },
-
-          selectedDataBackground: {
-            lineStyle: {
-              opacity: 0
-            },
-            areaStyle: {
-              opacity: 0
-            }
-          }
-        }
-
-    ],
+  ],
 
 
   // =======================================================
@@ -441,12 +465,12 @@ const option = computed(() => ({
       },
 
 
-        data: periodData.value.map(
+      data: periodData.value.map(
 
-          item =>
-            Number(item.balance)
+        item =>
+          Number(item.balance)
 
-        )
+      )
 
     }
 
@@ -516,10 +540,6 @@ const visibleData = computed(() => {
   )
 
 })
-
-import {
-  onMounted
-} from "vue"
 
 onMounted(() => {
 
@@ -605,4 +625,5 @@ onMounted(() => {
   font-weight: 600;
 
 }
+
 </style>

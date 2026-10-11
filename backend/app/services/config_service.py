@@ -104,7 +104,18 @@ class ConfigService:
         cfg["dry_run"] = bool(base.get("dryRun", True))
         cfg["dry_run_wallet"] = base["capital"]
         cfg["stake_amount"] = base.get("stakeAmount", 10)
-        cfg["leverage"] = base.get("leverage", 10)
+        trading_mode = base.get("tradingMode", "futures")
+        margin_mode = base.get("marginMode", "cross")
+
+        cfg["trading_mode"] = trading_mode
+
+        if trading_mode == "futures":
+            cfg["margin_mode"] = margin_mode
+            cfg["leverage"] = base.get("leverage", 10)
+        else:
+            # spot：margin_mode 必须删掉，否则部分 freqtrade 版本报错
+            cfg.pop("margin_mode", None)
+            cfg["leverage"] = 1
         cfg["max_open_trades"] = int(base.get("maxOpenTrades", 3))
         cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"

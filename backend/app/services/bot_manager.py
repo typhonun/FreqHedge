@@ -6,6 +6,7 @@ from pathlib import Path
 import threading
 from config.settings import DCATP_DB
 from app.services.freqtrade_client import FreqtradeClient
+from app.services.config_service import ConfigService
 
 DB_PATH = Path(DCATP_DB)
 
@@ -34,6 +35,8 @@ def _ensure_table():
             port INTEGER,
             longConfig TEXT,
             shortConfig TEXT,
+            tradingMode TEXT DEFAULT 'futures',
+            marginMode  TEXT DEFAULT 'cross',
             createdAt TEXT,
             updatedAt TEXT,
 
@@ -74,6 +77,8 @@ def _migrate():
             ("dryRun", "ALTER TABLE bots ADD COLUMN dryRun INTEGER DEFAULT 1"),
             ("exchangeAccountId", "ALTER TABLE bots ADD COLUMN exchangeAccountId TEXT DEFAULT NULL"),
             ("exchangeAccountJson", "ALTER TABLE bots ADD COLUMN exchangeAccountJson TEXT DEFAULT NULL"),
+            ("tradingMode", "ALTER TABLE bots ADD COLUMN tradingMode TEXT DEFAULT 'futures'"),
+            ("marginMode", "ALTER TABLE bots ADD COLUMN marginMode  TEXT DEFAULT 'cross'"),
 
             ("tp_enabled", "ALTER TABLE bots ADD COLUMN tp_enabled INTEGER DEFAULT 0"),
             ("tp_mode", "ALTER TABLE bots ADD COLUMN tp_mode TEXT DEFAULT 'amount'"),
@@ -143,6 +148,8 @@ class BotManager:
         bot["dryRun"] = bool(bot.get("dryRun", 1))
         bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or 3)
         bot["exchangeAccountJson"] = _parse_json_field(bot.get("exchangeAccountJson"))
+        bot["tradingMode"] = bot.get("tradingMode") or "futures"
+        bot["marginMode"] = bot.get("marginMode") or "cross"
         # ★ 风控字段
         bot["tp_enabled"] = bool(bot.get("tp_enabled"))
         bot["sl_enabled"] = bool(bot.get("sl_enabled"))
@@ -183,6 +190,7 @@ class BotManager:
                                   enableLong, enableShort,
                                   status, port, longConfig, shortConfig, createdAt,
                                   exchangeAccountId, exchangeAccountJson, 
+                                  tradingMode, marginMode,
                                   tp_enabled, tp_mode, tp_amount, tp_ratio,
                                   sl_enabled, sl_mode, sl_amount, sl_ratio,
                                   trail_enabled, trail_mode,
@@ -193,6 +201,7 @@ class BotManager:
                         ?, ?, ?, ?,
                         ?, ?,
                         'stopped', NULL, ?, ?, datetime('now'),
+                        ?, ?, 
                         ?, ?, 
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
                         ?, ?, ?)
@@ -211,6 +220,9 @@ class BotManager:
                     json.dumps(payload.get("shortConfig") or {}),
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
+
+                    base.get("tradingMode", "futures"),
+                    base.get("marginMode", "cross"),
 
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", "amount"),
@@ -254,6 +266,7 @@ class BotManager:
                     enableLong=?, enableShort=?,
                     longConfig=?, shortConfig=?,
                     exchangeAccountId=?, exchangeAccountJson=?,
+                    tradingMode=?, marginMode=?,
                     
                     tp_enabled=?, tp_mode=?, tp_amount=?, tp_ratio=?,
                     sl_enabled=?, sl_mode=?, sl_amount=?, sl_ratio=?,
@@ -279,6 +292,8 @@ class BotManager:
                     json.dumps(payload.get("shortConfig") or {}),
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
+                    base.get("tradingMode", "futures"),
+                    base.get("marginMode", "cross"),
 
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", "amount"),
@@ -337,6 +352,94 @@ class BotManager:
         with _conn() as c:
             c.execute("DELETE FROM bots WHERE id=?", (bot_id,))
             c.commit()
+
+    @staticmethod
+    def delete_draft(bot_id: int):
+        """
+        仅删除 status='draft' 的 bot。
+        - 会清理 user_data/bots/{id} 目录
+        - 会清理 position_service 缓存（和 delete 一致）
+        - 如果 bot 不存在或状态不是 draft，直接返回 False，不抛错
+        """
+        bot = BotManager.get(bot_id)
+        if not bot:
+            return False
+        if bot.get("status") != "draft":
+            return False
+
+        # 1. 停进程（正常情况下 draft 不会在跑，但保险）
+        try:
+            from app.services.process_service import ProcessService
+            ProcessService.stop_bot(bot)
+        except Exception as e:
+            print(f"[BotManager] delete_draft stop failed bot={bot_id}: {e}")
+
+        # 2. 清缓存（和 delete 一致）
+        try:
+            from app.services import position_service
+            position_service._snapshot_cache.pop(bot_id, None)
+            position_service._snapshot_all_cache["data"] = None
+            position_service._snapshot_all_cache["time"] = 0
+            for key in list(position_service._last_good_data.keys()):
+                if key[0] == bot_id:
+                    position_service._last_good_data.pop(key, None)
+            for key in list(position_service._custom_data_cache.keys()):
+                if key[0] == bot_id:
+                    position_service._custom_data_cache.pop(key, None)
+
+            from app.core import runtime
+            runtime.ROUND_INFO_BY_BOT.pop(bot_id, None)
+            runtime.clear_exit_reasons(bot_id)
+        except Exception as e:
+            print(f"[BotManager] delete_draft clear cache failed bot={bot_id}: {e}")
+
+        # 3. 删 user_data/bots/{id} 目录
+        try:
+            ConfigService.remove_bot_dir(bot_id)
+        except Exception as e:
+            print(f"[BotManager] delete_draft remove dir failed bot={bot_id}: {e}")
+
+        # 4. 删 DB 记录
+        with _conn() as c:
+            c.execute("DELETE FROM bots WHERE id=? AND status='draft'", (bot_id,))
+            c.commit()
+
+        print(f"[BotManager] deleted DRAFT bot_id={bot_id}")
+        return True
+
+    @staticmethod
+    def cleanup_stale_drafts(max_age_minutes: int = 60):
+        from datetime import datetime, timedelta
+        from app.services.config_service import ConfigService, BOTS_DIR  # ★ 一起 import
+
+        cutoff = datetime.utcnow() - timedelta(minutes=max_age_minutes)
+        deleted = []
+
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT id, createdAt FROM bots WHERE status='draft'"
+            ).fetchall()
+
+        for r in rows:
+            bot_id = r["id"]
+            created = r["createdAt"]
+            try:
+                created_dt = datetime.strptime(created, "%Y-%m-%d %H:%M:%S")
+            except Exception:
+                continue
+            if created_dt > cutoff:
+                continue
+
+            try:
+                BotManager.delete_draft(bot_id)
+                deleted.append(bot_id)
+            except Exception as e:
+                print(f"[cleanup] delete draft {bot_id} failed: {e}")
+
+        if deleted:
+            print(f"[cleanup] removed stale drafts: {deleted}")
+        return deleted
+
 
     @staticmethod
     def start(bot_id: int, wait: bool = False):
@@ -432,6 +535,8 @@ class BotManager:
                 "dryRun": True,
                 "enableLong": True,
                 "enableShort": False,
+                "tradingMode": "futures",
+                "marginMode": "cross",
             },
             "risk": {},
             "longConfig": None,
@@ -447,17 +552,21 @@ class BotManager:
                 INSERT INTO bots (name, pair, capital,
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
-                                  status, port, longConfig, shortConfig, createdAt)
+                                  status, port, longConfig, shortConfig, createdAt,
+                                  tradingMode, marginMode)
                 VALUES (?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?,
-                        'draft', NULL, ?, ?, datetime('now'))
+                        'draft', NULL, ?, ?, datetime('now'),
+                        ?, ?)
                 """,
                 (
                     base["name"], json.dumps(base["pair"]), base["capital"],
                     base["stakeAmount"], base["leverage"],
                     base["maxOpenTrades"], int(base["dryRun"]),
                     int(base["enableLong"]), int(base["enableShort"]),
+                    base["tradingMode"],
+                    base["marginMode"],
                     json.dumps({}), json.dumps({}),
                 ),
             )

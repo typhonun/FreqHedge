@@ -9,7 +9,6 @@ import threading
 from contextlib import asynccontextmanager
 from app.models import user as _user_model  # noqa 确保建表
 from app.api import auth
-from app.models import user as _user_model
 from app.api.chart import cache_refresh_loop
 from app.services.risk_service import RiskService
 from app.services.risk_config_service import RiskConfigService
@@ -29,6 +28,7 @@ from app.scheduler.equity_scheduler import (
     start_scheduler,
     stop_scheduler
 )
+from app.services.bot_manager import BotManager
 
 
 @asynccontextmanager
@@ -40,6 +40,11 @@ async def lifespan(app: FastAPI):
     RiskConfigService.load()
 
     start_scheduler()
+
+    try:
+        BotManager.cleanup_stale_drafts(max_age_minutes=60)
+    except Exception as e:
+        print(f"[startup] cleanup_stale_drafts failed: {e}")
 
     threading.Thread(
         target=RiskService.monitor,

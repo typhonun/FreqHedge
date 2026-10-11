@@ -16,10 +16,6 @@
       </el-col>
     </el-row>
 
-    <br />
-    <ProfitCard :profit="store.profit" />
-    <br />
-
     <ProfitCurve
       v-model="profitSelected"
       :data="store.profitCurve"
@@ -61,7 +57,6 @@ import { useRouter } from 'vue-router'
 import { ArrowRight } from '@element-plus/icons-vue'
 
 import AccountCard from '@features/dashboard/components/AccountCard.vue'
-import ProfitCard from '@features/dashboard/components/ProfitCard.vue'
 import ExposureCard from '@features/dashboard/components/ExposureCard.vue'
 import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 

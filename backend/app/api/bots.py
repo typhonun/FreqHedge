@@ -24,14 +24,22 @@ class BotBaseInfo(BaseModel):
     enableShort: bool
     exchangeAccountId: Optional[str] = None
     exchangeAccount: Optional[dict] = None
+    tradingMode: str = "futures"
+    marginMode: str = "cross"
 
     @model_validator(mode="after")
     def _check_direction(self):
-        # ★ 只允许一个方向
         if self.enableLong and self.enableShort:
             raise ValueError("不再支持双向，请只启用多头或空头")
         if not self.enableLong and not self.enableShort:
             raise ValueError("必须启用一个方向（多头或空头）")
+        # ★ 新增校验
+        if self.tradingMode not in ("spot", "futures"):
+            raise ValueError("tradingMode 必须是 spot 或 futures")
+        if self.tradingMode == "futures" and self.marginMode not in ("cross", "isolated"):
+            raise ValueError("marginMode 必须是 cross 或 isolated")
+        if self.tradingMode == "spot" and self.enableShort:
+            raise ValueError("现货模式不支持做空")
         return self
 
 
@@ -118,6 +126,8 @@ async def create_draft_bot():
                 "dryRun": bot.get("dryRun", True),
                 "enableLong": bot.get("enableLong", True),
                 "enableShort": bot.get("enableShort", False),
+                "tradingMode": bot.get("tradingMode", "futures"),
+                "marginMode": bot.get("marginMode", "cross"),
             },
             "risk": {},
             "longConfig": bot.get("longConfig"),
@@ -160,6 +170,21 @@ async def delete_bot(bot_id: int):
     ConfigService.remove_bot_dir(bot_id)
     BotManager.delete(bot_id)
     return {"success": True}
+
+
+@router.delete("/{bot_id}/draft")
+async def delete_draft_bot(bot_id: int):
+    """只允许删除 status='draft' 的 bot；正式 bot 返回 400"""
+    bot = BotManager.get(bot_id)
+    if not bot:
+        # 幂等：不存在也返回成功，方便前端重复调用
+        return {"success": True, "deleted": False, "reason": "not found"}
+
+    if bot.get("status") != "draft":
+        raise HTTPException(400, "只能删除草稿机器人")
+
+    ok = BotManager.delete_draft(bot_id)
+    return {"success": True, "deleted": ok}
 
 
 @router.post("/{bot_id}/start")
