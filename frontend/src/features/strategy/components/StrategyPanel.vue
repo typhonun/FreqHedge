@@ -2,8 +2,8 @@
   <div v-if="config?.entry" class="strategy-panel">
     <!-- 指标配置 -->
     <ToggleSection
-      :model-value="true"
-      hide-switch
+      v-model="panelOpen.indicator"
+      mode="arrow"
       title="指标配置"
       desc="MACD / KDJ / EMA / RSI / BB"
     >
@@ -98,18 +98,16 @@
 
     <!-- ROI 止盈 -->
     <ToggleSection
-      :model-value="true"
-      hide-switch
+      v-model="panelOpen.roi"
+      mode="arrow"
       title="ROI 止盈规则"
       desc="达到目标收益分批止盈"
     >
-      <div class="card-head" style="margin-bottom: 10px;">
-        <span class="card-head__meta">
-          <el-button size="small" type="success" plain @click="addRoi">
-            新增规则
-          </el-button>
-        </span>
-      </div>
+      <template #extra>
+        <el-button size="small" type="success" plain @click="addRoi">
+          新增规则
+        </el-button>
+      </template>
 
       <el-alert class="section-alert" type="success" :closable="false" show-icon>
         持仓达到指定时间后，收益率达到目标值触发 TP
@@ -133,8 +131,8 @@
 
     <!-- 开仓信号 -->
     <ToggleSection
-      :model-value="true"
-      hide-switch
+      v-model="panelOpen.entry"
+      mode="arrow"
       title="开仓信号"
       desc="RSI / MACD / Bollinger / Pump 保护"
     >
@@ -201,8 +199,8 @@
 
     <!-- TP 减仓 -->
     <ToggleSection
-      :model-value="true"
-      hide-switch
+      v-model="panelOpen.tpReduce"
+      mode="arrow"
       title="TP 减仓"
       desc="减仓后自动补回目标仓位"
     >
@@ -669,6 +667,14 @@
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ToggleSection from './ToggleSection.vue'
+import { reactive } from 'vue'
+
+const panelOpen = reactive({
+  indicator: false,   // 指标配置：默认收起
+  roi: false,         // ROI 止盈：默认收起
+  entry: true,        // 开仓信号：默认展开
+  tpReduce: false,    // TP 减仓：默认收起
+})
 
 const props = defineProps({
     config: Object,

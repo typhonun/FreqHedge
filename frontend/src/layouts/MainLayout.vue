@@ -14,31 +14,31 @@
         active-text-color="#FFFFFF"
       >
         <el-menu-item index="/dashboard">
-          <el-icon :size="20"><Odometer /></el-icon>
+          <el-icon :size="30"><Odometer /></el-icon>
           <span>仪表盘</span>
         </el-menu-item>
 
         <!-- 新增：机器人管理 -->
         <el-menu-item index="/bots">
-          <el-icon :size="20"><Monitor /></el-icon>
+          <el-icon :size="30"><Monitor /></el-icon>
           <span>机器人管理</span>
         </el-menu-item>
 
         <el-menu-item index="/positions">
-          <el-icon><List /></el-icon>
+          <el-icon :size="30"><List /></el-icon>
           <span>持仓管理</span>
         </el-menu-item>
 
         <el-menu-item index="/charts">
-          <el-icon :size="20"><TrendCharts /></el-icon>
+          <el-icon :size="30"><TrendCharts /></el-icon>
           <span>K线分析</span>
         </el-menu-item>
         <el-menu-item index="/settings">
-          <el-icon :size="20"><Setting /></el-icon>
+          <el-icon :size="30"><Setting /></el-icon>
           <span>设置</span>
         </el-menu-item>
         <el-menu-item index="/logs">
-          <el-icon :size="20"><Document /></el-icon>
+          <el-icon :size="30"><Document /></el-icon>
           <span>系统日志</span>
         </el-menu-item>
       </el-menu>
