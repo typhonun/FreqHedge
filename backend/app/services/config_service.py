@@ -169,11 +169,27 @@ class ConfigService:
         return base if side == "long" else base + 1
 
     @staticmethod
-    def remove_bot_dir(bot_id: int):
+    def remove_bot_dir(bot_id: int, retries: int = 5, retry_delay: float = 0.5):
         import shutil
+        import time
         bot_dir = BOTS_DIR / str(bot_id)
+        if not bot_dir.exists():
+            return
+
+        for attempt in range(1, retries + 1):
+            try:
+                shutil.rmtree(bot_dir)
+                print(f"[config] 已删除 bot 目录: {bot_dir}")
+                return
+            except PermissionError as e:
+                print(f"[config] 删除失败（{attempt}/{retries}）: {e}")
+                time.sleep(retry_delay * attempt)
+
+        # 兜底
+        print(f"[config] 重试失败，降级忽略错误删除: {bot_dir}")
+        shutil.rmtree(bot_dir, ignore_errors=True)
         if bot_dir.exists():
-            shutil.rmtree(bot_dir)
+            print(f"[config] 警告：目录残留，请手动清理 {bot_dir}")
 
     @staticmethod
     def read_json(path):

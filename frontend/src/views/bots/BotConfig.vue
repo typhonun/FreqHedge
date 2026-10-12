@@ -14,7 +14,7 @@
             <div class="card-head">
               <span class="card-head__title">基础配置</span>
               <el-text type="info" size="small">
-                机器人信息 · 止盈止损
+                机器人信息 · 交易参数 · 账户级风控
               </el-text>
             </div>
           </template>
@@ -40,25 +40,48 @@
                   <div class="field-value">
                     <el-select
                       v-model="botBaseInfo.exchangeAccountId"
-                      placeholder="选择用于实盘下单的 API 账户"
+                      placeholder="Dry Run"
                       style="width: 100%"
                       clearable
                     >
-                      <el-option
-                        v-for="acc in exchangeAccounts"
-                        :key="acc.id"
-                        :label="`${exchangeLabel(acc.exchange)} · ${acc.alias || '未命名'}${acc.isDefault ? ' (默认)' : ''}`"
-                        :value="acc.id"
-                      />
+                      <el-option-group>
+                        <el-option
+                          label="Dry Run"
+                          :value="DRY_RUN_VALUE"
+                        />
+                      </el-option-group>
+
+                      <el-option-group
+                        v-if="exchangeAccounts.length"
+                      >
+                        <el-option
+                          v-for="acc in exchangeAccounts"
+                          :key="acc.id"
+                          :label="`${exchangeLabel(acc.exchange)} · ${acc.alias || '未命名'}${acc.isDefault ? ' (默认)' : ''}`"
+                          :value="acc.id"
+                        />
+                      </el-option-group>
                     </el-select>
+
+                    <span class="inline-field__hint" style="margin-top: 4px">
+                      <template v-if="isDryRun">
+                        Dry Run 使用实时行情模拟撮合，不产生真实订单
+                      </template>
+                      <template v-else>
+                        实盘模式，将使用所选账户的 API 密钥下单
+                      </template>
+                    </span>
+
                     <el-text
                       v-if="!exchangeAccounts.length"
                       type="warning"
                       size="small"
-                      style="margin-left: 8px"
+                      style="margin-top: 4px"
                     >
-                      还没有配置，去
-                      <el-link type="primary" @click="goExchangeSettings">设置 → 交易所 API</el-link>
+                      还没有配置真实账户，去
+                      <el-link type="primary" @click="goExchangeSettings">
+                        设置 → 交易所 API
+                      </el-link>
                       添加
                     </el-text>
                   </div>
@@ -128,18 +151,24 @@
                             做空
                           </el-radio-button>
                         </el-radio-group>
+                        <span
+                          v-if="botBaseInfo.tradingMode === 'spot'"
+                          class="inline-field__hint"
+                        >
+                          现货不支持做空
+                        </span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- 投入资金 / 开仓金额 -->
+                <!-- 钱包总额 / 单笔保证金 -->
                 <div class="field-row">
                   <div class="field-label">资金</div>
                   <div class="field-value">
                     <div class="inline-group inline-group--inputs">
                       <div class="inline-field">
-                        <span class="inline-field__label">投入 (USDT)</span>
+                        <span class="inline-field__label">钱包总额 (USDT)</span>
                         <el-input-number
                           v-model="botBaseInfo.capital"
                           :min="1" :step="100"
@@ -148,7 +177,7 @@
                         />
                       </div>
                       <div class="inline-field">
-                        <span class="inline-field__label">开仓 (USDT)</span>
+                        <span class="inline-field__label">单笔保证金 (USDT)</span>
                         <el-input-number
                           v-model="botBaseInfo.stakeAmount"
                           :min="1" :step="10"
@@ -176,6 +205,12 @@
                           controls-position="right"
                           style="width: 100%"
                         />
+                        <span
+                          v-if="botBaseInfo.tradingMode === 'spot'"
+                          class="inline-field__hint"
+                        >
+                          现货固定 1x
+                        </span>
                       </div>
                       <div class="inline-field">
                         <span class="inline-field__label">最大持仓数</span>
@@ -192,7 +227,17 @@
 
                 <!-- 金额模式 -->
                 <div class="field-row">
-                  <div class="field-label">金额模式</div>
+                  <div class="field-label">
+                    <span>
+                      金额模式
+                      <el-tooltip placement="top" effect="dark">
+                        <template #content>
+                          影响 DCA、网格、趋势加仓、TP 减仓、浮盈回补 的金额单位
+                        </template>
+                        <el-icon class="section-label__info"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                    </span>
+                  </div>
                   <div class="field-value">
                     <el-radio-group
                       :model-value="currentStrategy.amount_mode"
@@ -203,32 +248,26 @@
                     </el-radio-group>
                   </div>
                 </div>
-
-                <!-- Dry Run -->
-                <div class="field-row">
-                  <div class="field-label">Dry Run</div>
-                  <div class="field-value">
-                    <el-switch
-                      v-model="botBaseInfo.dryRun"
-                      active-text="模拟"
-                      inactive-text="实盘"
-                      inline-prompt
-                    />
-                  </div>
-                </div>
               </div>
             </div>
 
-            <!-- ── 第 3 节：止盈止损 ── -->
+            <!-- ── 第 3 节：账户级风控 ── -->
             <div class="config-section">
-              <div class="section-label">止盈止损</div>
+              <div class="section-label">账户级风控</div>
               <div class="field-list">
 
                 <!-- 止盈 -->
                 <div class="field-row field-row--switch">
                   <div class="field-label">
-                    <span>启用止盈</span>
-                    <p class="field-hint">达到目标自动平仓并停止机器人</p>
+                    <span>
+                      启用止盈
+                      <el-tooltip placement="top" effect="dark">
+                        <template #content>
+                          账户总盈亏达到阈值时平掉全部仓位并停止机器人
+                        </template>
+                        <el-icon class="section-label__info"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                    </span>
                   </div>
                   <div class="field-value field-value--right">
                     <el-switch v-model="botRisk.tp_enabled" />
@@ -277,8 +316,15 @@
                 <!-- 止损 -->
                 <div class="field-row field-row--switch">
                   <div class="field-label">
-                    <span>启用止损</span>
-                    <p class="field-hint">达到亏损限制自动平仓并停止机器人</p>
+                    <span>
+                      启用止损
+                      <el-tooltip placement="top" effect="dark">
+                        <template #content>
+                          账户总亏损达到阈值时平掉全部仓位并停止机器人
+                        </template>
+                        <el-icon class="section-label__info"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                    </span>
                   </div>
                   <div class="field-value field-value--right">
                     <el-switch v-model="botRisk.sl_enabled" />
@@ -327,8 +373,15 @@
                 <!-- 追踪止损 -->
                 <div class="field-row field-row--switch">
                   <div class="field-label">
-                    <span>启用追踪止损</span>
-                    <p class="field-hint">回撤/反弹到触发线自动平仓并停止机器人</p>
+                    <span>
+                      启用追踪止损
+                      <el-tooltip placement="top" effect="dark">
+                        <template #content>
+                          浮盈达到激活线后，从最高点回撤超过阈值即平仓并停止机器人
+                        </template>
+                        <el-icon class="section-label__info"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                    </span>
                   </div>
                   <div class="field-value field-value--right">
                     <el-switch v-model="botRisk.trail_enabled" />
@@ -391,6 +444,10 @@
                         触发后停止机器人
                       </el-checkbox>
                     </div>
+
+                    <div class="field-hint" style="margin-top: 6px">
+                      先达到「触发盈亏」激活追踪，随后从浮盈最高点回撤「追踪止损」值时平仓
+                    </div>
                   </div>
                 </div>
 
@@ -431,6 +488,9 @@
                   <el-option label="12h" value="12h" />
                   <el-option label="1d"  value="1d" />
                 </el-select>
+                <div class="form-item-hint">
+                  策略信号计算所用周期；变更后需重新下载数据
+                </div>
               </el-form-item>
             </el-form>
           </div>
@@ -495,7 +555,7 @@
                 </div>
 
                 <div class="bt-range-display">
-                  <span class="bt-range-display__label">当前区间：</span>
+                  <span class="bt-range-display__label">当前区间（滚动窗口）：</span>
                   <span class="bt-range-display__value">{{ displayRange }}</span>
                 </div>
               </div>
@@ -578,7 +638,12 @@
           <div v-else class="backtest-result">
             <div class="bt-summary">
               <div class="bt-metric">
-                <div class="bt-metric__label">总收益</div>
+                <div class="bt-metric__label">
+                  总收益 (%)
+                  <el-tooltip placement="top" content="回测区间内累计收益率">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
                 <div class="bt-metric__value" :class="profitClass(backtestResult.summary.total_profit_pct)">
                   {{ backtestResult.summary.total_profit_pct?.toFixed(2) }}%
                 </div>
@@ -598,27 +663,52 @@
                 <div class="bt-metric__value">{{ backtestResult.summary.win_rate?.toFixed(1) }}%</div>
               </div>
               <div class="bt-metric">
-                <div class="bt-metric__label">最大回撤</div>
-                <div class="bt-metric__value bt-metric__value--danger">
+                <div class="bt-metric__label">
+                  最大回撤 (%)
+                  <el-tooltip placement="top" content="权益曲线从峰值的最大回落">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="bt-metric__value bt-metric__value--neutral">
                   {{ backtestResult.summary.max_drawdown?.toFixed(2) }}%
                 </div>
               </div>
               <div class="bt-metric">
-                <div class="bt-metric__label">Sharpe</div>
+                <div class="bt-metric__label">
+                  Sharpe
+                  <el-tooltip placement="top" content="风险调整后收益；越高越好">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
                 <div class="bt-metric__value">{{ backtestResult.summary.sharpe?.toFixed(2) }}</div>
               </div>
               <div class="bt-metric">
-                <div class="bt-metric__label">Profit Factor</div>
+                <div class="bt-metric__label">
+                  Profit Factor
+                  <el-tooltip placement="top" content="总盈利 / 总亏损">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
                 <div class="bt-metric__value">{{ backtestResult.summary.profit_factor?.toFixed(2) }}</div>
               </div>
               <div class="bt-metric">
-                <div class="bt-metric__label">CAGR</div>
+                <div class="bt-metric__label">
+                  CAGR (%)
+                  <el-tooltip placement="top" content="年化复合增长率">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
                 <div class="bt-metric__value" :class="profitClass(backtestResult.summary.cagr)">
                   {{ backtestResult.summary.cagr?.toFixed(2) }}%
                 </div>
               </div>
               <div class="bt-metric">
-                <div class="bt-metric__label">Sortino</div>
+                <div class="bt-metric__label">
+                  Sortino
+                  <el-tooltip placement="top" content="仅考虑下行波动的风险调整收益">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
                 <div class="bt-metric__value">{{ backtestResult.summary.sortino?.toFixed(2) }}</div>
               </div>
             </div>
@@ -676,7 +766,11 @@
                 class="bt-table"
                 :header-cell-style="{ background: 'var(--el-fill-color-light)' }"
               >
-                <el-table-column prop="reason" label="退出原因" min-width="140" />
+                <el-table-column label="退出原因" min-width="140">
+                  <template #default="{ row }">
+                    {{ exitReasonLabel(row.reason) }}
+                  </template>
+                </el-table-column>
                 <el-table-column prop="exits" label="笔数" width="60" align="center" />
                 <el-table-column label="平均收益%" width="100" align="right">
                   <template #default="{ row }">
@@ -744,7 +838,7 @@
  * ══════════════════════════════════════════════════════════════════ */
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { ArrowLeft, DataAnalysis, Download, Loading } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 import {
@@ -778,6 +872,8 @@ const exchangeLabel = (v) => ({
   gate: 'Gate.io',
   huobi: 'HTX',
 }[v] || v)
+
+const DRY_RUN_VALUE = '__dry_run__'
 
 const goExchangeSettings = () => {
   router.push('/settings/exchanges')
@@ -1015,11 +1111,17 @@ const botBaseInfo = ref({
   stakeAmount: 10,
   leverage: 10,
   maxOpenTrades: 3,
-  dryRun: true,
   direction: 'long',
+  exchangeAccountId: DRY_RUN_VALUE,
   exchangeAccountId: null,
   tradingMode: 'futures',
   marginMode: 'cross',
+})
+
+/* ★ Dry Run 判定：显式字符串 or 空值（clearable 后）都算 Dry Run */
+const isDryRun = computed(() => {
+  const v = botBaseInfo.value.exchangeAccountId
+  return v === DRY_RUN_VALUE || v === null || v === undefined || v === ''
 })
 
 const isDraft = ref(false)
@@ -1198,12 +1300,34 @@ const formatElapsed = (sec) => {
   return `${m}m ${r}s`
 }
 
+/**
+ * 退出原因枚举 → 中文标签
+ * 对应后端 DcaTpBotBase 里 order_filled / custom_exit 写入的 tag
+ */
+const exitReasonLabel = (reason) => {
+  if (!reason) return '-'
+  const s = String(reason)
+  if (s === 'stop_loss') return 'ROI 止损'
+  if (s === 'time_stop') return '时间止损'
+  if (s.startsWith('tp_afterDCA')) return 'DCA 后止盈'
+  if (s.startsWith('tp_')) return 'ROI 止盈'
+  if (s.startsWith('dca_u=')) return `DCA 第 ${s.slice(6)} 层`
+  if (s.startsWith('dca')) return 'DCA 加仓'
+  if (s.startsWith('grid_add')) return '网格加仓'
+  if (s.startsWith('grid_sell')) return '网格减仓'
+  if (s.startsWith('trend_add')) return '趋势加仓'
+  if (s.startsWith('kdj_reduce')) return 'KDJ 减仓'
+  if (s.startsWith('rebuy_')) return '浮盈回补'
+  return s
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * 10. Payload 构造 / 快照
  * ══════════════════════════════════════════════════════════════════ */
 const buildPayload = () => {
   const dir = botBaseInfo.value.direction
-  const acct = getExchangeAccount(botBaseInfo.value.exchangeAccountId)
+  const acct = isDryRun.value ? null : getExchangeAccount(botBaseInfo.value.exchangeAccountId)
+  const dryRun = isDryRun.value
 
   return {
     base: {
@@ -1213,18 +1337,20 @@ const buildPayload = () => {
       stakeAmount: botBaseInfo.value.stakeAmount,
       leverage: botBaseInfo.value.leverage,
       maxOpenTrades: botBaseInfo.value.maxOpenTrades,
-      dryRun: botBaseInfo.value.dryRun,
+      dryRun,
       enableLong: dir === 'long',
       enableShort: dir === 'short',
       exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
-      exchangeAccount: acct
-        ? {
-            exchange: acct.exchange,
-            apiKey: acct.apiKey,
-            apiSecret: acct.apiSecret,
-            passphrase: acct.passphrase || '',
-          }
-        : null,
+      exchangeAccount: dryRun
+        ? null
+        : (acct
+            ? {
+                exchange: acct.exchange,
+                apiKey: acct.apiKey,
+                apiSecret: acct.apiSecret,
+                passphrase: acct.passphrase || '',
+              }
+            : null),
       tradingMode: botBaseInfo.value.tradingMode,
       marginMode: botBaseInfo.value.marginMode,
     },
@@ -1267,16 +1393,12 @@ const validate = () => {
     ElMessage.warning('请至少选择一个交易对')
     return false
   }
-  if (!botBaseInfo.value.dryRun && !botBaseInfo.value.exchangeAccountId) {
-    ElMessage.warning('实盘模式必须选择交易所账户')
-    return false
-  }
   if (!botBaseInfo.value.capital || botBaseInfo.value.capital <= 0) {
-    ElMessage.warning('投入资金必须大于 0')
+    ElMessage.warning('钱包总额必须大于 0')
     return false
   }
   if (!botBaseInfo.value.stakeAmount || botBaseInfo.value.stakeAmount <= 0) {
-    ElMessage.warning('开仓金额必须大于 0')
+    ElMessage.warning('单笔保证金必须大于 0')
     return false
   }
   if (!['spot', 'futures'].includes(botBaseInfo.value.tradingMode)) {
@@ -1402,6 +1524,14 @@ const loadBotDetail = async () => {
       return 'long'
     })()
 
+    /* ★ 关键改动：Dry Run 时强制清空 exchangeAccountId，
+       避免旧数据「dryRun=true 但有 accountId」的歧义 */
+    const isDryRunFromData = data.dryRun !== undefined
+      ? !!data.dryRun
+      : !data.exchangeAccountId
+
+    const accountId = isDryRunFromData ? DRY_RUN_VALUE : (data.exchangeAccountId ?? DRY_RUN_VALUE)
+
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
       pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
@@ -1409,9 +1539,8 @@ const loadBotDetail = async () => {
       stakeAmount: data.stakeAmount ?? 10,
       leverage: data.leverage ?? 10,
       maxOpenTrades: data.maxOpenTrades ?? 5,
-      dryRun: data.dryRun !== undefined ? !!data.dryRun : true,
       direction: dir,
-      exchangeAccountId: data.exchangeAccountId ?? null,
+      exchangeAccountId: accountId,
       tradingMode: data.tradingMode ?? 'futures',
       marginMode: data.marginMode ?? 'cross',
     }
@@ -2093,7 +2222,7 @@ onUnmounted(() => {
 })
 </script>
 
-<<style scoped>
+<style scoped>
 /* ══════════════════════════════════════════════════════════════════
  * 页面骨架
  * ══════════════════════════════════════════════════════════════════ */
@@ -2194,6 +2323,22 @@ onUnmounted(() => {
   margin-bottom: 10px;
   padding-left: 8px;
   border-left: 3px solid var(--el-color-primary);
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 提示图标：金额模式 / 账户级风控 复用 */
+.section-label__info {
+  margin-left: 4px;
+  color: var(--el-color-info);
+  cursor: help;
+  font-size: 13px;
+  vertical-align: middle;
+  transition: color 0.2s;
+}
+
+.section-label__info:hover {
+  color: var(--el-color-primary);
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2218,7 +2363,7 @@ onUnmounted(() => {
 }
 
 .field-row--switch {
-  align-items: flex-start;
+  align-items: center;
   padding: 10px 0;
 }
 
@@ -2240,6 +2385,8 @@ onUnmounted(() => {
   font-weight: 600;
   color: var(--el-text-color-primary);
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
 }
 
 .field-hint {
@@ -2254,10 +2401,13 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 4px;
 }
 .field-value--right {
+  flex-direction: row;
   justify-content: flex-end;
+  align-items: center;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2270,7 +2420,6 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 
-/* 两列等宽（资金、持仓） */
 .inline-group--inputs {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2278,16 +2427,14 @@ onUnmounted(() => {
   width: 100%;
 }
 
-/* 三列自适应（交易模式 / 持仓 / 方向） */
 .inline-group--triple {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 24px;
   flex-wrap: wrap;
   width: 100%;
 }
 
-/* 止盈止损设置的横向栏 */
 .inline-group--risk {
   display: flex;
   align-items: center;
@@ -2296,7 +2443,6 @@ onUnmounted(() => {
   width: 100%;
 }
 
-/* 内联字段：label 在上、控件在下 */
 .inline-field {
   display: flex;
   flex-direction: column;
@@ -2315,9 +2461,23 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-/* 同一栏里的复选框 */
+.inline-field__hint {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  line-height: 1.3;
+  margin-top: 2px;
+  display: block;
+}
+
 .inline-check {
   margin-left: 4px;
+}
+
+.form-item-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
+  margin-top: 4px;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -2340,7 +2500,6 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-/* 输入框高度统一提升一档 */
 .unified-card :deep(.el-input__wrapper),
 .unified-card :deep(.el-select__wrapper),
 .unified-card :deep(.el-input-number .el-input__wrapper) {
@@ -2353,7 +2512,7 @@ onUnmounted(() => {
 }
 
 /* ══════════════════════════════════════════════════════════════════
- * 策略配置卡片：字号放大
+ * 策略配置卡片
  * ══════════════════════════════════════════════════════════════════ */
 .strategy-card .card-head__title {
   font-size: 16px;
@@ -2365,7 +2524,6 @@ onUnmounted(() => {
   color: var(--el-text-color-primary);
 }
 
-/* K 线周期表单 */
 .strategy-card :deep(.compact-form .el-form-item__label) {
   font-size: 14px;
   line-height: 32px;
@@ -2377,19 +2535,17 @@ onUnmounted(() => {
 }
 
 /* ══════════════════════════════════════════════════════════════════
- * 回测卡片：字号放大
+ * 回测卡片
  * ══════════════════════════════════════════════════════════════════ */
 .backtest-card .bt-header__title {
   font-size: 16px;
 }
 
-/* 顶部 7天 / 30天 ... 自定义 快捷标签 */
 .backtest-card :deep(.el-radio-button__inner) {
   font-size: 14px !important;
   padding: 6px 12px;
 }
 
-/* 日期选择器 / 当前区间 */
 .backtest-card :deep(.bt-date-single .el-input__inner) {
   font-size: 13px;
 }
@@ -2402,20 +2558,26 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-/* 回测结果：指标卡片 */
 .backtest-card .bt-metric__label {
   font-size: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 .backtest-card .bt-metric__value {
   font-size: 18px;
 }
 
-/* 回测结果：分区标题 */
+.bt-metric__info {
+  color: var(--el-text-color-placeholder);
+  cursor: help;
+  font-size: 13px;
+}
+
 .backtest-card .bt-section__title {
   font-size: 14px;
 }
 
-/* 回测结果：表格 */
 .backtest-card :deep(.el-table) {
   font-size: 13px;
 }
@@ -2423,7 +2585,6 @@ onUnmounted(() => {
   font-size: 13px;
 }
 
-/* 进度条 / 状态文字 */
 .backtest-card .bt-progress__pct,
 .backtest-card .bt-progress__row,
 .backtest-card .bt-progress__tip,
@@ -2432,14 +2593,10 @@ onUnmounted(() => {
   font-size: 14px;
 }
 
-/* 空状态提示 */
 .backtest-card :deep(.el-empty__description p) {
   font-size: 14px;
 }
 
-/* ══════════════════════════════════════════════════════════════════
- * 回测卡片布局
- * ══════════════════════════════════════════════════════════════════ */
 .backtest-card {
   min-height: calc(100vh - 200px);
   display: flex;
@@ -2485,7 +2642,6 @@ onUnmounted(() => {
   gap: 4px;
 }
 
-/* 日期行：两个单日期 + "至" 分隔 */
 .bt-date-row {
   display: flex;
   align-items: center;
@@ -2495,7 +2651,7 @@ onUnmounted(() => {
 }
 
 .bt-date-single {
-  width: 152px;   /* 从 140 加宽，避免字号放大后日期被截断 */
+  width: 152px;
   flex: none;
 }
 
@@ -2515,7 +2671,6 @@ onUnmounted(() => {
   color: var(--el-text-color-secondary);
 }
 
-/* 当前区间显示 */
 .bt-range-display {
   font-size: 13px;
   color: var(--el-text-color-secondary);
@@ -2615,6 +2770,9 @@ onUnmounted(() => {
 }
 .bt-metric__value.is-loss {
   color: var(--el-color-danger);
+}
+.bt-metric__value--neutral {
+  color: var(--el-color-warning);
 }
 
 .bt-chart {

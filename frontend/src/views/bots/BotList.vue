@@ -223,6 +223,7 @@ const handleDelete = async (bot) => {
   try {
     if (bot.status === 'running') {
       await toggleBot(bot.id, 'running')
+      await new Promise(r => setTimeout(r, 1500))   // ★
     }
     await deleteBot(bot.id)
     ElMessage.success('已删除')

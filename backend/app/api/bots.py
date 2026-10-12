@@ -166,10 +166,47 @@ async def update_bot(bot_id: int, payload: BotPayload):
 
 @router.delete("/{bot_id}")
 async def delete_bot(bot_id: int):
-    BotManager.stop(bot_id)
-    ConfigService.remove_bot_dir(bot_id)
-    BotManager.delete(bot_id)
-    return {"success": True}
+    import time
+
+    bot = BotManager.get(bot_id)
+    if not bot:
+        # 幂等：不存在也返回成功，避免前端重复点击报错
+        return {"ok": True, "deleted": False, "reason": "not found"}
+
+    # 1. 若在运行，先停止并等待子进程退出
+    if bot.get("status") == "running":
+        try:
+            BotManager.stop(bot_id)
+        except Exception as e:
+            print(f"[delete_bot] stop failed: {e}")
+
+        # 最多等 4s 让 freqtrade 释放 log 文件句柄
+        for _ in range(20):
+            try:
+                cur = BotManager.get(bot_id)
+                if not cur or cur.get("status") != "running":
+                    break
+            except Exception:
+                break
+            time.sleep(0.2)
+        time.sleep(0.3)   # Windows 文件句柄释放缓冲
+
+    # 2. 删除数据库记录
+    try:
+        BotManager.delete(bot_id)
+    except Exception as e:
+        print(f"[delete_bot] delete db record failed: {e}")
+        raise HTTPException(500, f"删除记录失败: {e}")
+
+    # 3. 删除目录（ConfigService.remove_bot_dir 内部已有重试）
+    try:
+        ConfigService.remove_bot_dir(bot_id)
+    except Exception as e:
+        print(f"[delete_bot] remove dir failed: {e}")
+        # 目录残留不算致命错误，日志警告即可
+        # 若希望严格失败，改成 raise HTTPException(500, ...)
+
+    return {"ok": True, "deleted": True}
 
 
 @router.delete("/{bot_id}/draft")

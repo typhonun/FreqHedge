@@ -7,6 +7,15 @@
       title="指标配置"
       desc="MACD / KDJ / EMA / RSI / BB"
     >
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            HTF 趋势过滤复用此处 EMA 的快 / 中 / 慢参数
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
+
       <el-divider content-position="left">MACD</el-divider>
       <el-row :gutter="12">
         <el-col :span="8">
@@ -101,28 +110,47 @@
       v-model="panelOpen.roi"
       mode="arrow"
       title="ROI 止盈规则"
-      desc="达到目标收益分批止盈"
+      desc="按持仓时长匹配最近一档收益率目标"
     >
       <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            持仓达到指定时长后，收益率达到目标值触发 TP；<br />
+            取「已满足时长」中 minutes 最大的一条作为当前目标
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
         <el-button size="small" type="success" plain @click="addRoi">
           新增规则
         </el-button>
       </template>
 
-      <el-alert class="section-alert" type="success" :closable="false" show-icon>
-        持仓达到指定时间后，收益率达到目标值触发 TP
-      </el-alert>
+      <div class="roi-header">
+        <span class="roi-header__idx">#</span>
+        <span class="roi-header__col">持仓时长 (分钟)</span>
+        <span class="roi-header__col">目标收益 (%)</span>
+        <span class="roi-header__col"></span>
+      </div>
 
       <div class="roi-list">
         <div v-for="(roi, index) in config.tp.roi_levels || []"
              :key="index" class="roi-row">
           <span class="roi-index">{{ index + 1 }}</span>
-          <el-input-number v-model="roi.minutes" class="roi-input"
-            controls-position="right" :min="0" :max="10080" :step="1"
-            :precision="0" size="small" placeholder="分钟" />
-          <el-input-number v-model="roi.roi" class="roi-input"
-            controls-position="right" :min="-100" :max="100" :step="0.1"
-            :precision="2" size="small" placeholder="收益%" />
+
+          <div class="roi-cell">
+            <el-input-number v-model="roi.minutes" class="roi-input"
+              controls-position="right" :min="0" :max="10080" :step="1"
+              :precision="0" size="small" />
+            <span class="roi-unit">min</span>
+          </div>
+
+          <div class="roi-cell">
+            <el-input-number v-model="roi.roi" class="roi-input"
+              controls-position="right" :min="-100" :max="100" :step="0.1"
+              :precision="2" size="small" />
+            <span class="roi-unit">%</span>
+          </div>
+
           <el-button class="roi-delete" type="danger" link size="small"
             @click="removeRoi(index)">✕</el-button>
         </div>
@@ -136,12 +164,23 @@
       title="开仓信号"
       desc="RSI / MACD / Bollinger / Pump 保护"
     >
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            条件模式仅作用于 RSI / MACD / Bollinger；<br />
+            Pump 保护为独立拦截，不受条件模式影响
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
+
       <el-form class="compact-form" label-width="100px" size="small">
         <el-form-item label="条件模式">
           <el-select v-model="config.entry.condition" class="field-input">
             <el-option label="全部满足 AND" value="and" />
             <el-option label="任意满足 OR"  value="or" />
           </el-select>
+          <span class="field-hint-inline">仅作用于 RSI / MACD / Bollinger</span>
         </el-form-item>
       </el-form>
 
@@ -150,7 +189,9 @@
           <div class="signal-head">
             <div>
               <div class="signal-name">RSI</div>
-              <div class="signal-subtitle">RSI低位允许入场</div>
+              <div class="signal-subtitle">
+                {{ config.side === 'short' ? 'RSI 高于阈值允许入场' : 'RSI 低于阈值允许入场' }}
+              </div>
             </div>
             <el-switch :model-value="config.entry.rsi.enable"
               @change="val => changeEntrySignal('rsi', val)" />
@@ -166,7 +207,9 @@
           <div class="signal-head">
             <div>
               <div class="signal-name">MACD</div>
-              <div class="signal-subtitle">趋势与动能共振确认</div>
+              <div class="signal-subtitle">
+                {{ config.side === 'short' ? 'MACD 死叉（快 < 慢）' : 'MACD 金叉（快 > 慢）' }}
+              </div>
             </div>
             <el-switch :model-value="config.entry.macd.enable"
               @change="val => changeEntrySignal('macd', val)" />
@@ -177,24 +220,29 @@
           <div class="signal-head">
             <div>
               <div class="signal-name">Bollinger</div>
-              <div class="signal-subtitle">价格触及下轨时允许入场</div>
+              <div class="signal-subtitle">
+                {{ config.side === 'short' ? '价格突破上轨' : '价格跌破下轨' }}
+              </div>
             </div>
             <el-switch :model-value="config.entry.bb.enable"
               @change="val => changeEntrySignal('bb', val)" />
           </div>
         </section>
-
-        <section class="signal-card">
-          <div class="signal-head">
-            <div>
-              <div class="signal-name">Pump 保护</div>
-              <div class="signal-subtitle">检测到 Pump 行情时暂停开仓</div>
-            </div>
-            <el-switch :model-value="config.entry.pump_protect.enable"
-              @change="val => changeEntrySignal('pump_protect', val)" />
-          </div>
-        </section>
       </div>
+
+      <section class="signal-card signal-card--standalone">
+        <div class="signal-head">
+          <div>
+            <div class="signal-name">Pump 保护</div>
+            <div class="signal-subtitle">
+              3 根累计涨幅 ≥10% 且量比 ≥3 且 RSI ≥75 时，暂停开仓
+              （独立开关，不参与上方 AND/OR）
+            </div>
+          </div>
+          <el-switch :model-value="config.entry.pump_protect.enable"
+            @change="val => changeEntrySignal('pump_protect', val)" />
+        </div>
+      </section>
     </ToggleSection>
 
     <!-- TP 减仓 -->
@@ -202,11 +250,23 @@
       v-model="panelOpen.tpReduce"
       mode="arrow"
       title="TP 减仓"
-      desc="减仓后自动补回目标仓位"
+      :desc="config.tp.rebuy_enable
+        ? '减仓后自动补回目标仓位'
+        : '达到 ROI 后按设定比例减仓（不补回）'"
     >
-      <el-alert class="section-alert" type="info" :closable="false">
-        达到 ROI 后减仓，并自动补回目标仓位
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            <template v-if="config.tp.rebuy_enable">
+              达到 ROI 后按比例减仓，随后自动补回至「目标仓位」
+            </template>
+            <template v-else>
+              达到 ROI 后按比例减仓；关闭「自动补仓」时将一次性全平
+            </template>
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
         <el-form-item label="自动补仓">
@@ -214,7 +274,7 @@
         </el-form-item>
 
         <el-form-item :label="!config.tp.rebuy_enable
-          ? '减仓比例%'
+          ? '减仓比例%（固定全平）'
           : (config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%')">
           <el-input-number v-if="!config.tp.rebuy_enable"
             :model-value="100" class="field-input" controls-position="right"
@@ -245,14 +305,21 @@
       title="止损"
       desc="固定百分比 / 时间止损"
     >
-      <el-alert class="section-alert" type="warning" :closable="false">
-        达到设定亏损比例后强制平仓
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            固定止损：当前收益率 ≤ 设定值时平仓；<br />
+            时间止损：距上次成交超过设定时长后累计收益低于阈值时平仓
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
-        <el-form-item label="止损百分比">
+        <el-form-item label="止损百分比 (%)">
           <el-input-number v-model="config.sl.stoploss" class="field-input"
             controls-position="right" :min="-999" :max="0" :step="1" :precision="0" />
+          <span class="field-hint-inline">例：-50 表示亏损 50% 平仓</span>
         </el-form-item>
 
         <el-divider content-position="left">时间止损</el-divider>
@@ -260,10 +327,11 @@
         <el-form-item label="启用时间止损">
           <el-switch v-model="config.sl.time_stop.enable" />
         </el-form-item>
-        <el-form-item label="未成交时长(小时)">
+        <el-form-item label="距上次成交时长(小时)">
           <el-input-number v-model="config.sl.time_stop.hours" class="field-input"
             controls-position="right" :min="0.1" :max="720" :step="0.5" :precision="1"
             :disabled="!config.sl.time_stop.enable" />
+          <span class="field-hint-inline">从最近一次成交算起</span>
         </el-form-item>
         <el-form-item label="收益阈值模式">
           <el-select v-model="config.sl.time_stop.mode" class="field-input"
@@ -290,9 +358,15 @@
       title="DCA 加仓"
       desc="回撤时分批补仓"
     >
-      <el-alert class="section-alert" type="warning" :closable="false" show-icon>
-        回撤达到阈值且满足 RSI 或 KDJ 条件时加仓
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            触发价 = 持仓均价 × (1 ± 价格偏差 × 乘数^层数)；<br />
+            实际加仓需同时满足「价格触发」与「RSI / J 条件」
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="100px" size="small">
         <el-row :gutter="12">
@@ -324,14 +398,14 @@
           </el-col>
 
           <el-col :span="8">
-            <el-form-item label="冷却时间">
+            <el-form-item label="冷却时间(分钟)">
               <el-input-number v-model="config.dca.cooldown_minutes" class="field-input"
                 controls-position="right" :min="0" :max="1440" :step="5" :precision="0" />
             </el-form-item>
           </el-col>
 
           <el-col :span="8">
-            <el-form-item label="价格偏差">
+            <el-form-item label="价格偏差%">
               <el-input-number v-model="config.dca.price_offset" class="field-input"
                 controls-position="right" :min="0.1" :max="20" :step="0.1" :precision="2" />
             </el-form-item>
@@ -387,7 +461,7 @@
               <el-input-number v-model="level.rsi_limit" class="field-input"
                 controls-position="right" :min="0" :max="100" :step="1" :precision="0" />
             </el-form-item>
-            <el-form-item label="J值">
+            <el-form-item :label="config.side === 'long' ? 'J <' : 'J >'">
               <el-input-number v-model="level.j_limit" class="field-input"
                 controls-position="right" :min="-100" :max="200" :step="1" :precision="0" />
             </el-form-item>
@@ -409,6 +483,16 @@
       title="浮亏止盈"
       desc="DCA 后达到目标自动减仓"
     >
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            仅在 DCA 后（dca_count &gt; 0）生效；<br />
+            开启「全平仓位」时将忽略目标仓位设置，直接平掉全部仓位
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
+
       <el-form class="compact-form" label-width="140px" size="small">
         <el-row :gutter="12">
           <el-col :span="12">
@@ -446,9 +530,15 @@
       title="趋势加仓"
       desc="MACD / KDJ / EMA 趋势加仓"
     >
-      <el-alert class="section-alert" type="success" :closable="false" show-icon>
-        {{ config.side === 'long' ? 'MACD+KDJ+EMA多头趋势加仓' : 'MACD+KDJ+EMA空头趋势加仓' }}
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            {{ config.side === 'long' ? '多头' : '空头' }}趋势成立时加仓一次；<br />
+            条件模式为 {{ config.trend_add.condition === 'and' ? '全部满足' : '任意满足' }}
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
         <el-form-item :label="config.amount_mode === 'amount'
@@ -495,6 +585,7 @@
         <el-form-item label="启用 KDJ 减仓">
           <el-switch v-model="config.trend_add.kdj_reduce.enable"
             :disabled="!config.trend_add.enable" />
+          <span class="field-hint-inline">仅在趋势加仓已触发（level &gt; 0）后生效</span>
         </el-form-item>
 
         <el-form-item :label="config.amount_mode === 'amount'
@@ -517,11 +608,22 @@
     <ToggleSection
       v-model="config.grid.enable"
       title="网格"
-      desc="价格区间内自动分层挂单"
+      desc="以锚点价为中心，上下沿触发加减仓"
     >
-      <el-alert class="section-alert" type="warning" :closable="false">
-        启用后将在当前仓位下方自动挂网格单
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            <template v-if="config.side === 'long'">
+              跌至「锚点 × (1 + 下沿%)」加仓，涨至「锚点 × (1 + 上沿%)」减仓
+            </template>
+            <template v-else>
+              涨至「锚点 × (1 + 上沿%)」加仓，跌至「锚点 × (1 + 下沿%)」减仓
+            </template>
+            <br />锚点：开仓时为开仓价，之后每次成交重置为成交价
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
         <el-row :gutter="12">
@@ -532,7 +634,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="冷却时间">
+            <el-form-item label="冷却时间(分钟)">
               <el-input-number v-model="config.grid.cooldown_minutes" class="field-input"
                 controls-position="right" :min="0" :max="1440" :step="5" :precision="0" />
             </el-form-item>
@@ -587,9 +689,15 @@
       title="单交易对持仓限制"
       desc="超限停止 DCA 与网格加仓"
     >
-      <el-alert class="section-alert" type="warning" :closable="false" show-icon>
-        该交易对保证金占用超过总资金比例后，停止 DCA 与网格加仓；止盈、止损、趋势加仓等逻辑不受影响
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            该交易对保证金占用 / 账户总 USDT 余额 ≥ 设定比例后，<br />
+            停止 DCA 与网格加仓；止盈、止损、趋势加仓不受影响
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
         <el-form-item label="最大持仓占比%">
@@ -605,12 +713,18 @@
       title="HTF 趋势过滤"
       desc="大周期趋势不利时暂停买入"
     >
-      <el-alert class="section-alert" type="warning" :closable="false" show-icon>
-        {{ config.side === 'long'
-          ? 'HTF 空头排列（快<中<慢）时暂停买入；减仓、止损不受影响'
-          : 'HTF 多头排列（快>中>慢）时暂停买入；减仓、止损不受影响' }}
-        （EMA 参数复用「指标配置」中的快/中/慢）
-      </el-alert>
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            {{ config.side === 'long'
+              ? 'HTF 空头排列（快<中<慢）时暂停买入；减仓、止损不受影响'
+              : 'HTF 多头排列（快>中>慢）时暂停买入；减仓、止损不受影响' }}
+            <br />EMA 参数复用「指标配置」中的快/中/慢
+            <br />需开启「启用」并至少勾选一项保护范围，HTF 数据才会加载
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
         <el-row :gutter="12">
@@ -635,26 +749,41 @@
           <el-col :span="8">
             <el-form-item label="开仓">
               <el-switch v-model="config.htf_trend_filter.protect_entry" />
+              <el-tooltip placement="top" content="拦截 confirm_trade_entry 中的新开仓">
+                <el-icon class="field-info"><InfoFilled /></el-icon>
+              </el-tooltip>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="DCA 加仓">
               <el-switch v-model="config.htf_trend_filter.protect_dca" />
+              <el-tooltip placement="top" content="跳过 adjust_trade_position 中的 dca_add">
+                <el-icon class="field-info"><InfoFilled /></el-icon>
+              </el-tooltip>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="网格加仓">
               <el-switch v-model="config.htf_trend_filter.protect_grid" />
+              <el-tooltip placement="top" content="跳过 grid_single 的加仓分支">
+                <el-icon class="field-info"><InfoFilled /></el-icon>
+              </el-tooltip>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="浮盈回补">
               <el-switch v-model="config.htf_trend_filter.protect_rebuy" />
+              <el-tooltip placement="top" content="跳过 profit_rebuy 浮盈回补">
+                <el-icon class="field-info"><InfoFilled /></el-icon>
+              </el-tooltip>
             </el-form-item>
           </el-col>
           <el-col :span="8">
             <el-form-item label="趋势加仓">
               <el-switch v-model="config.htf_trend_filter.protect_trend" />
+              <el-tooltip placement="top" content="跳过 trend_add 趋势加仓">
+                <el-icon class="field-info"><InfoFilled /></el-icon>
+              </el-tooltip>
             </el-form-item>
           </el-col>
         </el-row>
@@ -666,6 +795,7 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import ToggleSection from './ToggleSection.vue'
 import { reactive } from 'vue'
 
@@ -686,7 +816,6 @@ const emit = defineEmits(['save'])
 const changeEntrySignal = (type, val) => {
     const entry = props.config.entry
 
-    // Pump 保护是独立开关，不参与“至少保留一个”校验
     if (type === "pump_protect") {
         if (!entry.pump_protect) {
             entry.pump_protect = { enable: false }
@@ -780,7 +909,6 @@ const onRebuyChange = (val) => {
     if (!props.config?.tp) return
 
     if (val) {
-        // 补仓：按模式初始化
         if (props.config.amount_mode === "amount") {
             if (!props.config.tp.reduce_amount || props.config.tp.reduce_amount <= 0) {
                 props.config.tp.reduce_amount = 10.0
@@ -791,20 +919,15 @@ const onRebuyChange = (val) => {
             }
         }
     } else {
-        // 不补仓：统一 100%，跟金额模式无关
         props.config.tp.reduce_percent = 100
     }
 }
-
-// 原来的四个都改成 hide-switch + :model-value="true"，不再需要 sectionState
-// 如果还有别的用途就保留空对象，否则直接删掉
 
 const onHtfTimeframeChange = async (newTf) => {
   if (!props.config?.htf_trend_filter) return
 
   const oldTf = props.config.htf_trend_filter.timeframe
 
-  // 相同周期直接返回
   if (oldTf === newTf) return
 
   try {
@@ -822,14 +945,11 @@ const onHtfTimeframeChange = async (newTf) => {
       }
     )
   } catch {
-    // 用户取消：不修改
     return
   }
 
-  // 用户确认：写入新值
   props.config.htf_trend_filter.timeframe = newTf
 
-  // 再弹一个提示，明确告诉用户下一步做什么
   ElMessage.warning({
     message: `请点击「下载数据」按钮下载 ${newTf} 数据后再回测`,
     duration: 5000,
@@ -839,8 +959,6 @@ const onHtfTimeframeChange = async (newTf) => {
 </script>
 
 <style scoped>
-/* ==================== 整体布局 ==================== */
-
 /* ==================== 整体 ==================== */
 .strategy-panel {
   display: flex;
@@ -895,6 +1013,20 @@ const onHtfTimeframeChange = async (newTf) => {
   gap: 8px;
 }
 
+/* ==================== 表头右侧信息图标 ==================== */
+.section-label__info {
+  margin-left: 4px;
+  color: var(--el-color-info);
+  cursor: help;
+  font-size: 14px;
+  vertical-align: middle;
+  transition: color 0.2s;
+}
+
+.section-label__info:hover {
+  color: var(--el-color-primary);
+}
+
 /* ==================== 表单紧凑 ==================== */
 .compact-form :deep(.el-form-item) {
   margin-bottom: 8px;
@@ -919,373 +1051,278 @@ const onHtfTimeframeChange = async (newTf) => {
   width: 140px;
 }
 
-.card-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    width: 100%;
-}
-
-.card-head__title {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--el-text-color-primary);
-}
-
-.card-head__meta {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 8px;
-    flex-wrap: wrap;
-    text-align: right;
-}
-
-/* ==================== 表单通用 ==================== */
-.compact-form :deep(.el-form-item) {
-    margin-bottom: 8px;
-}
-
-.compact-form :deep(.el-form-item:last-child) {
-    margin-bottom: 0;
-}
-
-.compact-form :deep(.el-form-item__label) {
-    line-height: 28px;
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-.dca-level-form :deep(.el-form-item__label) {
-    line-height: 28px;
-    font-size: 13px;
-    white-space: nowrap;
-}
-
-/* 输入控件：固定 140px，不撑满 */
-.field-input {
-    width: 140px;
-    max-width: 100%;
-}
-
-/* el-select 也用同样宽度 */
-.compact-form :deep(.el-select.field-input) {
-    width: 140px;
-}
-
-/* el-input-number 内部数字区允许收缩 */
 .field-input :deep(.el-input__wrapper) {
-    padding-left: 6px;
-    padding-right: 30px;
+  padding-left: 6px;
+  padding-right: 30px;
 }
 
-/* ==================== 分隔线 ==================== */
+/* 表单内联 hint */
+.field-hint-inline {
+  font-size: 12px;
+  color: var(--el-text-color-placeholder);
+  line-height: 1.4;
+  margin-left: 6px;
+  display: inline-block;
+}
+
+/* 表单项旁的小图标 */
+.field-info {
+  margin-left: 4px;
+  color: var(--el-text-color-placeholder);
+  cursor: help;
+  font-size: 13px;
+  vertical-align: middle;
+}
+
+/* 分隔线旁的小图标 */
+.divider-info {
+  margin-left: 4px;
+  color: var(--el-text-color-placeholder);
+  cursor: help;
+  font-size: 13px;
+  vertical-align: middle;
+}
 
 /* ==================== 开仓信号 ==================== */
 .entry-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
 }
 
 .signal-card {
-    background: var(--el-fill-color-extra-light);
-    border: 1px solid var(--el-border-color-light);
-    border-radius: 10px;
-    padding: 12px;
-    min-width: 0;
+  background: var(--el-fill-color-extra-light);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 10px;
+  padding: 12px;
+  min-width: 0;
+}
+
+.signal-card--standalone {
+  background: var(--el-fill-color-light);
+  border-style: dashed;
 }
 
 .signal-head {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 8px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .signal-name {
-    font-size: 13px;
-    font-weight: 600;
-    line-height: 1.2;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .signal-subtitle {
-    margin-top: 2px;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    line-height: 1.4;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.4;
 }
 
-/* ==================== ROI 列表 ==================== */
+/* ==================== ROI 列表（每行两栏） ==================== */
+.roi-header {
+  display: grid;
+  grid-template-columns: 22px 1fr 1fr 20px;
+  gap: 8px;
+  padding: 0 8px 4px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.roi-header__idx {
+  text-align: center;
+}
+
+.roi-header__col {
+  text-align: left;
+}
+
 .roi-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-    gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .roi-row {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 6px 8px;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: 6px;
-    background: var(--el-fill-color-extra-light);
-    min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  background: var(--el-fill-color-extra-light);
+  min-width: 0;
 }
 
 .roi-index {
-    width: 20px;
-    text-align: center;
-    font-weight: 700;
-    font-size: 12px;
-    color: var(--el-text-color-secondary);
-    flex: none;
+  width: 20px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  flex: none;
+}
+
+/* 输入框 + 单位的小组 */
+.roi-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .roi-input {
-    flex: 1;
-    min-width: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .roi-input :deep(.el-input__wrapper) {
-    padding-left: 4px;
-    padding-right: 24px;
+  padding-left: 4px;
+  padding-right: 24px;
 }
 
 .roi-input :deep(.el-input__inner) {
-    font-size: 12px;
-    text-align: left;
+  font-size: 12px;
+  text-align: left;
 }
 
 .roi-input :deep(.el-input-number__increase),
 .roi-input :deep(.el-input-number__decrease) {
-    width: 20px;
+  width: 20px;
+}
+
+.roi-unit {
+  flex: none;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  min-width: 22px;
+  text-align: left;
 }
 
 .roi-delete {
-    width: 20px;
-    padding: 0;
-    flex: none;
-    font-size: 12px;
+  width: 20px;
+  padding: 0;
+  flex: none;
+  font-size: 12px;
 }
 
-/* ==================== 概览描述 ==================== */
-.trade-descriptions :deep(.el-descriptions__label) {
-    width: 96px;
-    white-space: nowrap;
-}
-
-.trade-descriptions :deep(.el-descriptions__content) {
-    word-break: break-word;
-}
-
-.roi-chip-wrap {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-}
-
-.note-list {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.empty-placeholder {
-    display: inline-block;
-    width: 100%;
-    height: 20px;
-}
-
-/* ==================== 提示框 ==================== */
+/* ==================== 提示框（保留兼容） ==================== */
 .section-alert {
-    margin-bottom: 12px;
-}
-
-/* ==================== 面板网格 ==================== */
-.panel-grid {
-    margin: 0 !important;
+  margin-bottom: 12px;
 }
 
 /* ==================== DCA levels ==================== */
 .dca-levels {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .dca-level-row {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 8px 10px;
-    border: 1px solid var(--el-border-color-light);
-    border-radius: 8px;
-    background: var(--el-fill-color-extra-light);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-fill-color-extra-light);
 }
 
 .dca-level-index {
-    width: 22px;
-    text-align: center;
-    font-weight: 700;
-    font-size: 13px;
-    color: var(--el-text-color-secondary);
-    flex: none;
+  width: 22px;
+  text-align: center;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  flex: none;
 }
 
 .dca-level-form {
-    flex: 1;
-    display: flex;
-    gap: 12px;
-    min-width: 0;
+  flex: 1;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
 }
 
 .dca-level-form :deep(.el-form-item) {
-    margin-bottom: 0;
-    flex: 1;
-    min-width: 0;
+  margin-bottom: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .dca-level-form :deep(.el-form-item__label) {
-    line-height: 28px;
-    font-size: 13px;
+  line-height: 28px;
+  font-size: 13px;
 }
 
 .dca-level-form :deep(.el-form-item__content) {
-    line-height: 28px;
-    min-width: 0;
+  line-height: 28px;
+  min-width: 0;
 }
 
 .dca-level-form .field-input {
-    width: 100%;
+  width: 100%;
 }
 
 .dca-level-delete {
-    width: 20px;
-    padding: 0;
-    flex: none;
+  width: 20px;
+  padding: 0;
+  flex: none;
 }
 
 .dca-add-btn {
-    align-self: flex-start;
-    margin-top: 4px;
+  align-self: flex-start;
+  margin-top: 4px;
 }
 
 /* ==================== 单列输入框（网格配置） ==================== */
 .field-input-block {
-    width: 100%;
-    max-width: 320px;
+  width: 100%;
+  max-width: 320px;
 }
 
 .field-input-block :deep(.el-input__wrapper) {
-    padding-left: 8px;
-    padding-right: 32px;
+  padding-left: 8px;
+  padding-right: 32px;
 }
 
 .field-input-block :deep(.el-input__inner) {
-    text-align: left;
-    padding-right: 0;
-    font-size: 13px;
+  text-align: left;
+  padding-right: 0;
+  font-size: 13px;
 }
 
 .field-input-block :deep(.el-input-number__increase),
 .field-input-block :deep(.el-input-number__decrease) {
-    width: 24px;
+  width: 24px;
 }
 
 /* ==================== 保存 ==================== */
 .save-bar {
-    display: flex;
-    justify-content: flex-end;
-    padding-top: 4px;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
 }
 
 /* ==================== 响应式 ==================== */
 @media (max-width: 1400px) {
-    .entry-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+  .entry-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
-<style scoped>
-/* ==================== 整体 ==================== */
-.strategy-panel {
-  display: flex;
-  flex-direction: column;
-}
-
-/* ==================== 卡片通用 ==================== */
-.section-card {
-  border-radius: 8px;
-  margin: 0;                  /* ★ 去掉 el-card 默认 margin */
-  border: 1px solid var(--el-border-color-lighter);
-}
-
-.section-card :deep(.el-card__header) {
-  padding: 8px 12px;
-  background: var(--el-fill-color-light);
-}
-
-.section-card :deep(.el-card__body) {
-  padding: 12px;
-  overflow-x: hidden;
-}
-
-.section-card :deep(.el-row) {
-  margin-left: 0 !important;
-  margin-right: 0 !important;
-}
-
-.section-card :deep(.el-col) {
-  min-width: 0;
-}
-
-/* ==================== 卡片头 ==================== */
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  width: 100%;
-}
-
-.card-head__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-}
-
-.card-head__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* ==================== 表单紧凑 ==================== */
-.compact-form :deep(.el-form-item) {
-  margin-bottom: 8px;
-}
-
-.compact-form :deep(.el-form-item:last-child) {
-  margin-bottom: 0;
-}
-
-.compact-form :deep(.el-form-item__label) {
-  line-height: 28px;
-  font-size: 13px;
-  white-space: nowrap;
-}
-
-.field-input {
-  width: 140px;
-  max-width: 100%;
-}
-
-.compact-form :deep(.el-select.field-input) {
-  width: 140px;
+@media (max-width: 900px) {
+  .roi-list {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
 }
 </style>

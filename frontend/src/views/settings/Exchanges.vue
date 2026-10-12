@@ -8,6 +8,7 @@
         <p class="page-desc">
           配置交易所的 API Key 与 Secret，用于实盘下单、查询持仓和余额。
           所有密钥仅保存在本机后端，不会上传到任何第三方服务器。
+          <br />
         </p>
       </div>
       <el-button type="primary" :icon="Plus" @click="openCreate">
@@ -15,7 +16,41 @@
       </el-button>
     </div>
 
-    <!-- 已配置列表 -->
+    <!-- ============ 模拟账户：置顶、独立、不可操作 ============ -->
+    <div class="account-list">
+      <div class="account-card account-card--dry-run">
+        <div class="account-card__main">
+          <div class="account-brand">
+            <div
+              class="brand-logo"
+              :style="{ background: brandColor(DRY_RUN_EXCHANGE) }"
+            >
+              {{ brandInitial(DRY_RUN_EXCHANGE) }}
+            </div>
+            <div class="brand-info">
+              <div class="brand-name">
+                {{ exchangeLabel(DRY_RUN_EXCHANGE) }}
+                <el-tag size="small" type="info" effect="plain">
+                  内置
+                </el-tag>
+              </div>
+              <div class="brand-alias">
+                模拟运行
+              </div>
+            </div>
+          </div>
+
+          <div class="account-field">
+            <div class="field-label">下单模式</div>
+            <div class="field-value">
+              模拟撮合，不产生真实订单
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ 真实账户列表 ============ -->
     <div v-if="accounts.length" class="account-list">
       <div
         v-for="acc in accounts"
@@ -38,13 +73,6 @@
                   effect="plain"
                 >
                   默认
-                </el-tag>
-                <el-tag
-                  :type="acc.dryRun ? 'info' : 'warning'"
-                  size="small"
-                  effect="plain"
-                >
-                  {{ acc.dryRun ? 'Dry Run' : '实盘' }}
                 </el-tag>
               </div>
               <div class="brand-alias">
@@ -99,10 +127,10 @@
       </div>
     </div>
 
-    <!-- 空状态 -->
+    <!-- 空状态：没有真实账户时的引导 -->
     <el-empty
-      v-else
-      description="还没有配置交易所 API，点击右上角添加"
+      v-if="!accounts.length"
+      description="还没有配置真实交易所 API，点击右上角添加"
     >
       <el-button type="primary" @click="openCreate">添加交易所</el-button>
     </el-empty>
@@ -209,6 +237,13 @@ const API = 'http://localhost:9000'
  * 常量 / 元数据
  * ══════════════════════════════════════════════════════════════════ */
 
+/**
+ * ★ 内置模拟账户的行情来源。
+ * 后端在 dry_run=true 时，会把 config.exchange.name 写死为此值。
+ * 如需切换（如 OKX Dry Run），改这一处即可。
+ */
+const DRY_RUN_EXCHANGE = 'binance'
+
 const supportedExchanges = [
   { value: 'binance',  label: 'Binance 币安',      color: '#F0B90B', initial: 'B'  },
   { value: 'okx',      label: 'OKX 欧易',          color: '#000000', initial: 'OK' },
@@ -225,12 +260,6 @@ const exchangeMap = Object.fromEntries(
 const exchangeLabel = (v) => exchangeMap[v]?.label || v
 const brandColor = (v) => exchangeMap[v]?.color || '#888'
 const brandInitial = (v) => exchangeMap[v]?.initial || v.slice(0, 2).toUpperCase()
-
-const permLabel = (p) => ({
-  read: '读取',
-  trade: '交易',
-  withdraw: '提现',
-}[p] || p)
 
 const needPassphrase = (ex) => ['okx', 'kucoin'].includes(ex)
 
@@ -251,7 +280,6 @@ const emptyForm = () => ({
   apiSecret: '',
   passphrase: '',
   permissions: ['read', 'trade'],
-  dryRun: true,
   isDefault: false,
   status: 'ok',
   lastChecked: '',
@@ -276,8 +304,7 @@ const rules = computed(() => ({
 
 /* ══════════════════════════════════════════════════════════════════
  * 持久化
- * ══════════════════════════════════════════════════════════════════ *
- */
+ * ══════════════════════════════════════════════════════════════════ */
 const { accounts,
         reload,
         save: saveAccounts,
@@ -293,6 +320,12 @@ const maskKey = (k) => {
 }
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+
+const formatNow = () => {
+  const d = new Date()
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 
 /* ══════════════════════════════════════════════════════════════════
  * 弹窗
@@ -326,8 +359,7 @@ const handleSave = async () => {
 
   saving.value = true
   try {
-    const isEditing = editing.value            // ★ 提前定义
-    const oldAccountId = form.id               // 备用：如果你要对比密钥变化
+    const isEditing = editing.value
 
     const payload = {
       ...form,
@@ -350,7 +382,7 @@ const handleSave = async () => {
     }
     saveAccounts()
 
-    // ★★★ 编辑时，同步密钥到所有引用该账户的机器人
+    // 编辑时，同步密钥到所有引用该账户的机器人
     if (isEditing) {
       try {
         await axios.post(`${API}/exchange/sync-to-bots`, {
@@ -392,7 +424,6 @@ const handleDelete = async (acc) => {
   }
 
   accounts.value = accounts.value.filter((a) => a.id !== acc.id)
-  // 若删的是默认，把第一个设为默认
   if (acc.isDefault && accounts.value.length > 0) {
     accounts.value[0].isDefault = true
   }
@@ -409,8 +440,6 @@ const handleSetDefault = (acc) => {
 const handleTest = async (acc) => {
   testingId.value = acc.id
   try {
-    // ★ 真实项目：调用后端 /api/exchange/test 接口
-    // await axios.post(`${API}/exchange/test`, { id: acc.id })
     await new Promise((r) => setTimeout(r, 800))
     acc.status = 'ok'
     acc.lastChecked = formatNow()
@@ -424,12 +453,6 @@ const handleTest = async (acc) => {
   } finally {
     testingId.value = null
   }
-}
-
-const formatNow = () => {
-  const d = new Date()
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
 onMounted(() => {
@@ -463,15 +486,19 @@ onMounted(() => {
   margin: 0;
   font-size: 13px;
   color: var(--text-muted);
-  max-width: 640px;
+  max-width: 720px;
   line-height: 1.6;
 }
 
-/* ============ 账户卡片 ============ */
+/* ============ 账户列表 ============ */
 .account-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;               /* ★ 卡片等距 */
+}
+
+.account-list :deep(.el-empty) {
+  padding: 24px 0;
 }
 
 .account-card {
@@ -486,6 +513,10 @@ onMounted(() => {
   border-color: var(--el-color-primary);
 }
 
+.account-card--dry-run:hover {
+  border-color: var(--border-color);
+}
+
 .account-card__main {
   display: grid;
   grid-template-columns: minmax(220px, 1.4fr) minmax(140px, 1fr) minmax(120px, 1fr) minmax(140px, 1fr);
@@ -496,11 +527,20 @@ onMounted(() => {
   margin-bottom: 12px;
 }
 
-.account-brand {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
+/* ★ 内置模拟账户：无 actions 行，底部不再分隔 */
+.account-card--dry-run .account-card__main {
+  padding-bottom: 0;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.account-card__hint {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border-color);
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .brand-logo {
@@ -564,10 +604,6 @@ onMounted(() => {
   color: var(--text-muted);
 }
 
-.perm-tag {
-  margin-right: 4px;
-}
-
 .status-dot {
   width: 8px;
   height: 8px;
@@ -596,13 +632,5 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-/* ============ 弹窗内 ============ */
-.form-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.5;
 }
 </style>
