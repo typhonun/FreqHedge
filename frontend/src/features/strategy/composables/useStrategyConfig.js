@@ -260,8 +260,8 @@ const buildTradeInfo = (side, config) => {
     }
 }
 
-const defaultLongConfig = () => ({
-    side: "long",
+const createDefaultStrategyConfig = (side = "long") => ({
+    side,
 
     timeframe:"30m",
 
@@ -276,7 +276,7 @@ const defaultLongConfig = () => ({
             enable:true,
 
             // RSI入场阈值
-            value:35
+            value: side === "long" ? 35 : 65
         },
 
 
@@ -448,212 +448,26 @@ const defaultLongConfig = () => ({
     }
 })
 
-const defaultShortConfig = () => ({
-    side: "short",
-
-    timeframe: "30m",
-
-    amount_mode: "percent",
-
-    entry:{
-
-        condition: "and",
-
-        rsi:{
-            enable:true,
-
-            // RSI入场阈值
-            value:65
-        },
-
-
-        macd:{
-            enable:true
-        },
-
-
-        bb:{
-            enable:true
-        },
-
-        pump_protect: {
-            enable: false
-        }
-
-    },
-
-    tp: {
-        enable: true,
-        roi_levels: roiLevels.map((level) => ({
-            minutes: level.minutes,
-            roi: level.roi
-        })),
-        reduce_percent: 30,
-        reduce_amount: 10.0,
-        rebuy_enable: false,
-        target_wallet_percent: 5,
-        target_wallet_amount: 50.0
-    },
-
-    sl: {
-        enable: false,
-        stoploss: -9,
-        time_stop: {
-            enable: false,
-            hours: 24.0,
-            profit_threshold: -5.0,
-            mode: "percent"
-        }
-    },
-
-    pair_max_position: {
-        enable: false,
-        percent: 15
-    },
-
-    // HTF 趋势过滤
-    htf_trend_filter: {
-        enable: false,
-        timeframe: "4h",
-        protect_entry: true,
-        protect_dca: true,
-        protect_grid: true,
-        protect_rebuy: false,
-        protect_trend: false
-    },
-
-    indicator:{
-
-
-        rsi:{
-            period:14
-        },
-
-
-        bb:{
-            period:20,
-            std:2
-        },
-
-
-        macd:{
-            fast:12,
-            slow:26,
-            signal:9
-        },
-
-
-        kdj:{
-            fastk:5,
-            slowk:3,
-            slowd:3
-        },
-
-
-        ema:{
-            fast:9,
-            mid:21,
-            slow:99
-        }
-
-    },
-
-
-    trend_add:{
-
-        enable:false,
-
-        amount_percent:0.5,
-
-        amount_amount: 10.0,
-
-        condition:"and",
-
-        macd_enable:true,
-
-        kdj_enable:true,
-
-        ema_enable:true,
-
-
-        kdj_reduce:{
-            enable:false,
-            reduce_percent:50,
-            reduce_amount: 10.0
-        }
-
-    },
-
-    dca: {
-        enable: false,
-        max_count: 5,
-        condition: "or",
-        cooldown_minutes: 60,
-
-        // 新增：金额模式，"auto" 或 "manual"
-        amount_mode: "auto",
-
-        // 自动模式用
-        base_percent: 1,
-        amount_multiplier: 1.0,
-        base_amount: 10.0,
-
-        // 价格触发
-        price_offset: 1.2,
-        price_multiplier: 1.5,
-
-        // 手动模式用
-        levels: [
-            {
-                amount: 10.0,
-                percent: 1.0,
-                rsi_limit: 30,
-                j_limit: 0
-            }
-        ]
-    },
-    loss_tp:{
-        enable:false,
-
-        dca_tp_profit:3,
-
-        close_all: false,
-
-        target_wallet_percent:5,
-
-        target_wallet_amount: 50.0
-    },
-
-    grid: {
-        enable: false,
-        max_count: 5,
-        grid_lower: -2,
-        grid_upper: 2,
-        buy_percent: 1,
-        buy_amount: 10.0,
-        sell_percent: 1,
-        sell_amount: 10.0,
-        order_scale: 1,
-        cooldown_minutes: 30
-    }
-})
+export function getDefaultStrategyConfig(side = "long") {
+    return JSON.parse(JSON.stringify(createDefaultStrategyConfig(side)))
+}
 
 export function getDefaultLongConfig() {
-    return JSON.parse(JSON.stringify(defaultLongConfig()))
+    return getDefaultStrategyConfig("long")
 }
 
 export function getDefaultShortConfig() {
-    return JSON.parse(JSON.stringify(defaultShortConfig()))
+    return getDefaultStrategyConfig("short")
 }
 
 export function useStrategyConfig() {
 
 const longConfig = ref(
-    defaultLongConfig()
+    createDefaultStrategyConfig("long")
 )
 
 const shortConfig = ref(
-    defaultShortConfig()
+    createDefaultStrategyConfig("short")
 )
 
 
@@ -862,7 +676,7 @@ const loadConfig = async () => {
     longConfig.value = normalizeEntry(
         normalizeAmountMode(
             normalizeDca(
-                mergeConfig(defaultLongConfig(), res.data.long)
+                mergeConfig(createDefaultStrategyConfig("long"), res.data.long)
             )
         )
     )
@@ -870,7 +684,7 @@ const loadConfig = async () => {
     shortConfig.value = normalizeEntry(
         normalizeAmountMode(
             normalizeDca(
-                mergeConfig(defaultShortConfig(), res.data.short)
+                mergeConfig(createDefaultStrategyConfig("short"), res.data.short)
             )
         )
     )

@@ -8,6 +8,7 @@ from pydantic import model_validator
 from app.services.bot_manager import BotManager
 from app.services.position_service import PositionService   # ★ 新增
 from app.services.config_service import ConfigService
+from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
 
 router = APIRouter()
 
@@ -16,16 +17,16 @@ class BotBaseInfo(BaseModel):
     name: str
     pair: list[str]
     capital: float
-    stakeAmount: float = 50
-    leverage: int = 5
-    maxOpenTrades: int = 3
-    dryRun: bool = True
-    enableLong: bool
-    enableShort: bool
+    stakeAmount: float = BOT_DEFAULTS["stakeAmount"]
+    leverage: int = BOT_DEFAULTS["leverage"]
+    maxOpenTrades: int = BOT_DEFAULTS["maxOpenTrades"]
+    dryRun: bool = BOT_DEFAULTS["dryRun"]
+    enableLong: bool = BOT_DEFAULTS["enableLong"]
+    enableShort: bool = BOT_DEFAULTS["enableShort"]
     exchangeAccountId: Optional[str] = None
     exchangeAccount: Optional[dict] = None
-    tradingMode: str = "futures"
-    marginMode: str = "cross"
+    tradingMode: str = BOT_DEFAULTS["tradingMode"]
+    marginMode: str = BOT_DEFAULTS["marginMode"]
 
     @model_validator(mode="after")
     def _check_direction(self):
@@ -44,26 +45,23 @@ class BotBaseInfo(BaseModel):
 
 
 class BotRiskConfig(BaseModel):
-    tp_enabled: bool = False
-    tp_mode: str = "amount"
-    tp_amount: float = 0
-    tp_ratio: float = 0
-
-    sl_enabled: bool = False
-    sl_mode: str = "amount"
-    sl_amount: float = 0
-    sl_ratio: float = 0
-
-    trail_enabled: bool = False
-    trail_mode: str = "ratio"
-    trail_activate_amount: float = 10
-    trail_activate_ratio: float = 1
-    trail_drawdown_amount: float = 5 
-    trail_drawdown_ratio: float = 0.5
-
-    auto_stop_on_tp: bool = True
-    auto_stop_on_sl: bool = True
-    auto_stop_on_trail: bool = True
+    tp_enabled: bool = RISK_DEFAULTS["tp_enabled"]
+    tp_mode: str = RISK_DEFAULTS["tp_mode"]
+    tp_amount: float = RISK_DEFAULTS["tp_amount"]
+    tp_ratio: float = RISK_DEFAULTS["tp_ratio"]
+    sl_enabled: bool = RISK_DEFAULTS["sl_enabled"]
+    sl_mode: str = RISK_DEFAULTS["sl_mode"]
+    sl_amount: float = RISK_DEFAULTS["sl_amount"]
+    sl_ratio: float = RISK_DEFAULTS["sl_ratio"]
+    trail_enabled: bool = RISK_DEFAULTS["trail_enabled"]
+    trail_mode: str = RISK_DEFAULTS["trail_mode"]
+    trail_activate_amount: float = RISK_DEFAULTS["trail_activate_amount"]
+    trail_activate_ratio: float = RISK_DEFAULTS["trail_activate_ratio"]
+    trail_drawdown_amount: float = RISK_DEFAULTS["trail_drawdown_amount"]
+    trail_drawdown_ratio: float = RISK_DEFAULTS["trail_drawdown_ratio"]
+    auto_stop_on_tp: bool = RISK_DEFAULTS["auto_stop_on_tp"]
+    auto_stop_on_sl: bool = RISK_DEFAULTS["auto_stop_on_sl"]
+    auto_stop_on_trail: bool = RISK_DEFAULTS["auto_stop_on_trail"]
 
 
 class BotPayload(BaseModel):
@@ -119,15 +117,15 @@ async def create_draft_bot():
             "base": {
                 "name": bot["name"],
                 "pair": bot["pair"],
-                "capital": bot["capital"],
-                "stakeAmount": bot.get("stakeAmount", 50),
-                "leverage": bot.get("leverage", 5),
-                "maxOpenTrades": bot.get("maxOpenTrades", 3),
-                "dryRun": bot.get("dryRun", True),
-                "enableLong": bot.get("enableLong", True),
-                "enableShort": bot.get("enableShort", False),
-                "tradingMode": bot.get("tradingMode", "futures"),
-                "marginMode": bot.get("marginMode", "cross"),
+                "capital": bot.get("capital", BOT_DEFAULTS["capital"]),
+                "stakeAmount": bot.get("stakeAmount", BOT_DEFAULTS["stakeAmount"]),
+                "leverage": bot.get("leverage", BOT_DEFAULTS["leverage"]),
+                "maxOpenTrades": bot.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]),
+                "dryRun": bot.get("dryRun", BOT_DEFAULTS["dryRun"]),
+                "enableLong": bot.get("enableLong", BOT_DEFAULTS["enableLong"]),
+                "enableShort": bot.get("enableShort", BOT_DEFAULTS["enableShort"]),
+                "tradingMode": bot.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
+                "marginMode": bot.get("marginMode", BOT_DEFAULTS["marginMode"]),
             },
             "risk": {},
             "longConfig": bot.get("longConfig"),

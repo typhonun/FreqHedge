@@ -813,6 +813,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
+import { BOT_DEFAULTS, RISK_DEFAULTS, getDirectionalDefaults } from '@/config/botDefaults.js'
 import {
   startBacktest,
   getBacktestProgress,
@@ -823,7 +824,7 @@ import {
   downloadData
 } from '@/api/backtest.js'
 import StrategyPanel from '@features/strategy/components/StrategyPanel.vue'
-import { getDefaultLongConfig } from '@features/strategy/composables/useStrategyConfig.js'
+import { getDefaultStrategyConfig } from '@features/strategy/composables/useStrategyConfig.js'
 import { useBotStore } from '@/stores/botStore.js'
 import axios from 'axios'
 
@@ -1079,15 +1080,9 @@ const inferPresetFromRange = () => {
 const botBaseInfo = ref({
   name: '',
   pair: [],
-  capital: 1000,
-  stakeAmount: 50,
-  leverage: 5,
-  maxOpenTrades: 3,
+  ...BOT_DEFAULTS,
   direction: 'long',
   exchangeAccountId: DRY_RUN_VALUE,
-  exchangeAccountId: null,
-  tradingMode: 'futures',
-  marginMode: 'cross',
 })
 
 /* ★ Dry Run 判定：显式字符串 or 空值（clearable 后）都算 Dry Run */
@@ -1099,29 +1094,10 @@ const isDryRun = computed(() => {
 const isDraft = ref(false)
 
 const botRisk = ref({
-  tp_enabled: false,
-  tp_mode: 'amount',
-  tp_amount: 0,
-  tp_ratio: 0,
-
-  sl_enabled: false,
-  sl_mode: 'amount',
-  sl_amount: 0,
-  sl_ratio: 0,
-
-  trail_enabled: false,
-  trail_mode: 'ratio',
-  trail_activate_amount: 10,
-  trail_activate_ratio: 1,
-  trail_drawdown_amount: 5,
-  trail_drawdown_ratio: 0.5,
-
-  auto_stop_on_tp: true,
-  auto_stop_on_sl: true,
-  auto_stop_on_trail: true,
+  ...RISK_DEFAULTS,
 })
 
-const localConfig = reactive(getDefaultLongConfig())
+const localConfig = reactive(getDefaultStrategyConfig('long'))
 const currentConfig = computed(() => localConfig)
 const currentStrategy = computed(() => localConfig)
 
@@ -1197,13 +1173,13 @@ const loaded = ref(false)
  * 8. 方向相关字段
  * ══════════════════════════════════════════════════════════════════ */
 const sideFields = reactive({
-  long: { entryRsiValue: 35, dcaLevels: [] },
-  short: { entryRsiValue: 65, dcaLevels: [] },
+  long: { entryRsiValue: getDirectionalDefaults('long').entryRsiValue, dcaLevels: [] },
+  short: { entryRsiValue: getDirectionalDefaults('short').entryRsiValue, dcaLevels: [] },
 })
 
-const defaultRsiLimit = (dir) => (dir === 'long' ? 20 : 80)
-const defaultJLimit = (dir) => (dir === 'long' ? 0 : 100)
-const defaultEntryRsi = (dir) => (dir === 'long' ? 35 : 65)
+const defaultRsiLimit = (dir) => getDirectionalDefaults(dir).rsiLimit
+const defaultJLimit = (dir) => getDirectionalDefaults(dir).jLimit
+const defaultEntryRsi = (dir) => getDirectionalDefaults(dir).entryRsiValue
 
 /* ══════════════════════════════════════════════════════════════════
  * 9. 工具函数
@@ -1507,35 +1483,22 @@ const loadBotDetail = async () => {
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
       pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
-      capital: data.capital ?? 1000,
-      stakeAmount: data.stakeAmount ?? 50,
-      leverage: data.leverage ?? 5,
-      maxOpenTrades: data.maxOpenTrades ?? 3,
+      capital: data.capital ?? BOT_DEFAULTS.capital,
+      stakeAmount: data.stakeAmount ?? BOT_DEFAULTS.stakeAmount,
+      leverage: data.leverage ?? BOT_DEFAULTS.leverage,
+      maxOpenTrades: data.maxOpenTrades ?? BOT_DEFAULTS.maxOpenTrades,
       direction: dir,
       exchangeAccountId: accountId,
-      tradingMode: data.tradingMode ?? 'futures',
-      marginMode: data.marginMode ?? 'cross',
+      tradingMode: data.tradingMode ?? BOT_DEFAULTS.tradingMode,
+      marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
     }
 
-    botRisk.value = {
-      tp_enabled: !!data.tp_enabled,
-      tp_mode: data.tp_mode || 'amount',
-      tp_amount: data.tp_amount ?? 0,
-      tp_ratio: data.tp_ratio ?? 0,
-      sl_enabled: !!data.sl_enabled,
-      sl_mode: data.sl_mode || 'amount',
-      sl_amount: data.sl_amount ?? 0,
-      sl_ratio: data.sl_ratio ?? 0,
-      trail_enabled: !!data.trail_enabled,
-      trail_mode: data.trail_mode || 'ratio',
-      trail_activate_amount: data.trail_activate_amount ?? 10,
-      trail_activate_ratio: data.trail_activate_ratio ?? 1,
-      trail_drawdown_amount: data.trail_drawdown_amount ?? 5,
-      trail_drawdown_ratio: data.trail_drawdown_ratio ?? 0.5,
-      auto_stop_on_tp: data.auto_stop_on_tp !== false,
-      auto_stop_on_sl: data.auto_stop_on_sl !== false,
-      auto_stop_on_trail: data.auto_stop_on_trail !== false,
-    }
+    botRisk.value = Object.fromEntries(
+      Object.keys(RISK_DEFAULTS).map((key) => [
+        key,
+        data[key] ?? RISK_DEFAULTS[key],
+      ])
+    )
 
     const longCfg = parseCfg(data.longConfig)
     const shortCfg = parseCfg(data.shortConfig)

@@ -5,6 +5,7 @@ from typing import Optional
 from config.settings import (
     FREQTRADE_DIR,
 )
+from app.core.defaults import BOT_DEFAULTS
 FREQTRADE_ROOT = Path(FREQTRADE_DIR)
 USER_DATA = FREQTRADE_ROOT / "user_data"
 BOTS_DIR = USER_DATA / "bots"
@@ -101,22 +102,22 @@ class ConfigService:
         cfg["side"] = side
         cfg["strategy"] = "DcaTpShort" if side == "short" else "DcaTpLong"
 
-        cfg["dry_run"] = bool(base.get("dryRun", True))
+        cfg["dry_run"] = bool(base.get("dryRun", BOT_DEFAULTS["dryRun"]))
         cfg["dry_run_wallet"] = base["capital"]
-        cfg["stake_amount"] = base.get("stakeAmount", 50)
-        trading_mode = base.get("tradingMode", "futures")
-        margin_mode = base.get("marginMode", "cross")
+        cfg["stake_amount"] = base.get("stakeAmount", BOT_DEFAULTS["stakeAmount"])
+        trading_mode = base.get("tradingMode", BOT_DEFAULTS["tradingMode"])
+        margin_mode = base.get("marginMode", BOT_DEFAULTS["marginMode"])
 
         cfg["trading_mode"] = trading_mode
 
         if trading_mode == "futures":
             cfg["margin_mode"] = margin_mode
-            cfg["leverage"] = base.get("leverage", 5)
+            cfg["leverage"] = base.get("leverage", BOT_DEFAULTS["leverage"])
         else:
             # spot：margin_mode 必须删掉，否则部分 freqtrade 版本报错
             cfg.pop("margin_mode", None)
             cfg["leverage"] = 1
-        cfg["max_open_trades"] = int(base.get("maxOpenTrades", 3))
+        cfg["max_open_trades"] = int(base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]))
         cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"
 

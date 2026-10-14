@@ -4,6 +4,7 @@ import traceback
 
 from app.core import runtime
 from app.services.position_service import PositionService
+from app.core.defaults import RISK_DEFAULTS
 from app.services.bot_runtime import list_running_bots
 
 
@@ -201,7 +202,7 @@ class RiskService:
 
         # ---- 止盈 ----
         if risk.get("tp_enabled"):
-            mode = risk.get("tp_mode", "amount")
+            mode = risk.get("tp_mode", RISK_DEFAULTS["tp_mode"])
             hit = False
             if mode == "ratio":
                 th = float(risk.get("tp_ratio", 0) or 0)
@@ -213,14 +214,14 @@ class RiskService:
             if hit:
                 cls._handle_exit(
                     bot_id, "bot_tp", "单bot止盈", "单bot止盈",
-                    auto_stop=risk.get("auto_stop_on_tp", True),
+                    auto_stop=risk.get("auto_stop_on_tp", RISK_DEFAULTS["auto_stop_on_tp"]),
                 )
                 info["global_tp_count"] += 1
                 return
 
         # ---- 止损 ----
         if risk.get("sl_enabled"):
-            mode = risk.get("sl_mode", "amount")
+            mode = risk.get("sl_mode", RISK_DEFAULTS["sl_mode"])
             hit = False
             if mode == "ratio":
                 th = float(risk.get("sl_ratio", 0) or 0)
@@ -232,21 +233,21 @@ class RiskService:
             if hit:
                 cls._handle_exit(
                     bot_id, "bot_sl", "单bot止损", "单bot止损",
-                    auto_stop=risk.get("auto_stop_on_sl", True),
+                    auto_stop=risk.get("auto_stop_on_sl", RISK_DEFAULTS["auto_stop_on_sl"]),
                 )
                 info["global_sl_count"] += 1
                 return
 
         # ---- 追踪止损 ----
         if risk.get("trail_enabled"):
-            mode = risk.get("trail_mode", "ratio")
+            mode = risk.get("trail_mode", RISK_DEFAULTS["trail_mode"])
             if mode == "ratio":
-                activate = float(risk.get("trail_activate_ratio", 0) or 0)
-                drawdown = float(risk.get("trail_drawdown_ratio", 0) or 0)
+                activate = float(risk.get("trail_activate_ratio", RISK_DEFAULTS["trail_activate_ratio"]) or 0)
+                drawdown = float(risk.get("trail_drawdown_ratio", RISK_DEFAULTS["trail_drawdown_ratio"]) or 0)
                 current, peak, trough = ratio, info["peak_ratio"], info["trough_ratio"]
             else:
-                activate = float(risk.get("trail_activate_amount", 0) or 0)
-                drawdown = float(risk.get("trail_drawdown_amount", 0) or 0)
+                activate = float(risk.get("trail_activate_amount", RISK_DEFAULTS["trail_activate_amount"]) or 0)
+                drawdown = float(risk.get("trail_drawdown_amount", RISK_DEFAULTS["trail_drawdown_amount"]) or 0)
                 current, peak, trough = profit, info["peak_profit"], info["trough_profit"]
 
             if drawdown > 0 and activate != 0:
@@ -273,7 +274,7 @@ class RiskService:
                         info["global_trail_count"] = info.get("global_trail_count", 0) + 1
                         cls._handle_exit(
                             bot_id, "bot_trail", "单bot追踪止损", "单bot追踪止损",
-                            auto_stop=risk.get("auto_stop_on_trail", True),
+                            auto_stop=risk.get("auto_stop_on_trail", RISK_DEFAULTS["auto_stop_on_trail"]),
                         )
                         return
 

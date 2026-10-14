@@ -7,6 +7,7 @@ import threading
 from config.settings import DCATP_DB
 from app.services.freqtrade_client import FreqtradeClient
 from app.services.config_service import ConfigService
+from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
 
 DB_PATH = Path(DCATP_DB)
 
@@ -16,19 +17,23 @@ def _conn():
     conn.row_factory = sqlite3.Row
     return conn
 
+_c = BOT_DEFAULTS["capital"]
+_s = BOT_DEFAULTS["stakeAmount"]
+_l = BOT_DEFAULTS["leverage"]
+_m = BOT_DEFAULTS["maxOpenTrades"]
 
 def _ensure_table():
     with _conn() as c:
-        c.execute("""
+        c.execute(f"""
         CREATE TABLE IF NOT EXISTS bots (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             pair TEXT NOT NULL,
             capital REAL NOT NULL,
-            stakeAmount REAL DEFAULT 50,
-            leverage INTEGER DEFAULT 5,
+            stakeAmount REAL DEFAULT {_s},
+            leverage INTEGER DEFAULT {_l},
             dryRun INTEGER DEFAULT 1,
-            maxOpenTrades INTEGER DEFAULT 3,
+            maxOpenTrades INTEGER DEFAULT {_m},
             enableLong INTEGER DEFAULT 1,
             enableShort INTEGER DEFAULT 0,
             status TEXT DEFAULT 'stopped',
@@ -71,9 +76,9 @@ def _migrate():
         cols = {row["name"] for row in c.execute("PRAGMA table_info(bots)").fetchall()}
 
         migrations = [
-            ("stakeAmount", "ALTER TABLE bots ADD COLUMN stakeAmount REAL DEFAULT 50"),
-            ("leverage", "ALTER TABLE bots ADD COLUMN leverage INTEGER DEFAULT 5"),
-            ("maxOpenTrades", "ALTER TABLE bots ADD COLUMN maxOpenTrades INTEGER DEFAULT 3"),
+            ("stakeAmount", f"ALTER TABLE bots ADD COLUMN stakeAmount REAL DEFAULT {_s}"),
+            ("leverage", f"ALTER TABLE bots ADD COLUMN leverage INTEGER DEFAULT {_l}"),
+            ("maxOpenTrades", f"ALTER TABLE bots ADD COLUMN maxOpenTrades INTEGER DEFAULT {_m}"),
             ("dryRun", "ALTER TABLE bots ADD COLUMN dryRun INTEGER DEFAULT 1"),
             ("exchangeAccountId", "ALTER TABLE bots ADD COLUMN exchangeAccountId TEXT DEFAULT NULL"),
             ("exchangeAccountJson", "ALTER TABLE bots ADD COLUMN exchangeAccountJson TEXT DEFAULT NULL"),
@@ -146,10 +151,10 @@ class BotManager:
         bot["enableLong"] = bool(bot.get("enableLong"))
         bot["enableShort"] = bool(bot.get("enableShort"))
         bot["dryRun"] = bool(bot.get("dryRun", 1))
-        bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or 3)
+        bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or BOT_DEFAULTS["maxOpenTrades"])
         bot["exchangeAccountJson"] = _parse_json_field(bot.get("exchangeAccountJson"))
-        bot["tradingMode"] = bot.get("tradingMode") or "futures"
-        bot["marginMode"] = bot.get("marginMode") or "cross"
+        bot["tradingMode"] = bot.get("tradingMode") or BOT_DEFAULTS["tradingMode"]
+        bot["marginMode"] = bot.get("marginMode") or BOT_DEFAULTS["marginMode"]
         # ★ 风控字段
         bot["tp_enabled"] = bool(bot.get("tp_enabled"))
         bot["sl_enabled"] = bool(bot.get("sl_enabled"))
@@ -209,10 +214,10 @@ class BotManager:
                 (
                     base["name"], json.dumps(base["pair"]), base["capital"],
 
-                    base.get("stakeAmount", 50),
-                    base.get("leverage", 5),
-                    int(base.get("dryRun", True)),  # ★ 对应 maxOpenTrades 列
-                    base.get("maxOpenTrades", 3),
+                    base.get("stakeAmount", BOT_DEFAULTS["stakeAmount"]),
+                    base.get("leverage", BOT_DEFAULTS["leverage"]),
+                    base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]),
+                    int(base.get("dryRun", BOT_DEFAULTS["dryRun"])),
 
                     int(base["enableLong"]), int(base["enableShort"]),
 
@@ -221,29 +226,29 @@ class BotManager:
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
 
-                    base.get("tradingMode", "futures"),
-                    base.get("marginMode", "cross"),
+                    base.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
+                    base.get("marginMode", BOT_DEFAULTS["marginMode"]),
 
                     int(risk.get("tp_enabled", False)),
-                    risk.get("tp_mode", "amount"),
+                    risk.get("tp_mode", RISK_DEFAULTS["tp_mode"]),
                     float(risk.get("tp_amount", 0) or 0),
                     float(risk.get("tp_ratio", 0) or 0),
 
                     int(risk.get("sl_enabled", False)),
-                    risk.get("sl_mode", "amount"),
+                    risk.get("sl_mode", RISK_DEFAULTS["sl_mode"]),
                     float(risk.get("sl_amount", 0) or 0),
                     float(risk.get("sl_ratio", 0) or 0),
 
                     int(risk.get("trail_enabled", False)),
-                    risk.get("trail_mode", "ratio"),
-                    float(risk.get("trail_activate_amount", 0) or 0),
-                    float(risk.get("trail_activate_ratio", 0) or 0),
-                    float(risk.get("trail_drawdown_amount", 0) or 0),
-                    float(risk.get("trail_drawdown_ratio", 0) or 0),
+                    risk.get("trail_mode", RISK_DEFAULTS["trail_mode"]),
+                    float(risk.get("trail_activate_amount", RISK_DEFAULTS["trail_activate_amount"]) or 0),
+                    float(risk.get("trail_activate_ratio", RISK_DEFAULTS["trail_activate_ratio"]) or 0),
+                    float(risk.get("trail_drawdown_amount", RISK_DEFAULTS["trail_drawdown_amount"]) or 0),
+                    float(risk.get("trail_drawdown_ratio", RISK_DEFAULTS["trail_drawdown_ratio"]) or 0),
 
-                    int(risk.get("auto_stop_on_tp", True)),
-                    int(risk.get("auto_stop_on_sl", True)),
-                    int(risk.get("auto_stop_on_trail", True)),
+                    int(risk.get("auto_stop_on_tp", RISK_DEFAULTS["auto_stop_on_tp"])),
+                    int(risk.get("auto_stop_on_sl", RISK_DEFAULTS["auto_stop_on_sl"])),
+                    int(risk.get("auto_stop_on_trail", RISK_DEFAULTS["auto_stop_on_trail"])),
                 ),
             )
             bot_id = cur.lastrowid
@@ -282,39 +287,39 @@ class BotManager:
                     base["name"],
                     json.dumps(base["pair"]),
                     base["capital"],
-                    base.get("stakeAmount", 50),
-                    base.get("leverage", 5),
-                    int(base.get("dryRun", True)),
-                    base.get("maxOpenTrades", 3),
+                    base.get("stakeAmount", BOT_DEFAULTS["stakeAmount"]),
+                    base.get("leverage", BOT_DEFAULTS["leverage"]),
+                    int(base.get("dryRun", BOT_DEFAULTS["dryRun"])),
+                    base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]),
                     int(base["enableLong"]),
                     int(base["enableShort"]),
                     json.dumps(payload.get("longConfig") or {}),
                     json.dumps(payload.get("shortConfig") or {}),
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
-                    base.get("tradingMode", "futures"),
-                    base.get("marginMode", "cross"),
+                    base.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
+                    base.get("marginMode", BOT_DEFAULTS["marginMode"]),
 
                     int(risk.get("tp_enabled", False)),
-                    risk.get("tp_mode", "amount"),
+                    risk.get("tp_mode", RISK_DEFAULTS["tp_mode"]),
                     float(risk.get("tp_amount", 0) or 0),
                     float(risk.get("tp_ratio", 0) or 0),
 
                     int(risk.get("sl_enabled", False)),
-                    risk.get("sl_mode", "amount"),
+                    risk.get("sl_mode", RISK_DEFAULTS["sl_mode"]),
                     float(risk.get("sl_amount", 0) or 0),
                     float(risk.get("sl_ratio", 0) or 0),
 
                     int(risk.get("trail_enabled", False)),
-                    risk.get("trail_mode", "ratio"),
-                    float(risk.get("trail_activate_amount", 0) or 0),
-                    float(risk.get("trail_activate_ratio", 0) or 0),
-                    float(risk.get("trail_drawdown_amount", 0) or 0),
-                    float(risk.get("trail_drawdown_ratio", 0) or 0),
+                    risk.get("trail_mode", RISK_DEFAULTS["trail_mode"]),
+                    float(risk.get("trail_activate_amount", RISK_DEFAULTS["trail_activate_amount"]) or 0),
+                    float(risk.get("trail_activate_ratio", RISK_DEFAULTS["trail_activate_ratio"]) or 0),
+                    float(risk.get("trail_drawdown_amount", RISK_DEFAULTS["trail_drawdown_amount"]) or 0),
+                    float(risk.get("trail_drawdown_ratio", RISK_DEFAULTS["trail_drawdown_ratio"]) or 0),
 
-                    int(risk.get("auto_stop_on_tp", True)),
-                    int(risk.get("auto_stop_on_sl", True)),
-                    int(risk.get("auto_stop_on_trail", True)),
+                    int(risk.get("auto_stop_on_tp", RISK_DEFAULTS["auto_stop_on_tp"])),
+                    int(risk.get("auto_stop_on_sl", RISK_DEFAULTS["auto_stop_on_sl"])),
+                    int(risk.get("auto_stop_on_trail", RISK_DEFAULTS["auto_stop_on_trail"])),
 
                     bot_id,
                 ),
@@ -528,15 +533,7 @@ class BotManager:
             "base": {
                 "name": "未命名机器人",
                 "pair": [],
-                "capital": 1000,
-                "stakeAmount": 50,
-                "leverage": 5,
-                "maxOpenTrades": 3,
-                "dryRun": True,
-                "enableLong": True,
-                "enableShort": False,
-                "tradingMode": "futures",
-                "marginMode": "cross",
+                **BOT_DEFAULTS,
             },
             "risk": {},
             "longConfig": None,
