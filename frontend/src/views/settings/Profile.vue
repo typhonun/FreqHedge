@@ -100,7 +100,7 @@
       <div class="row">
         <div>
           <div class="row-title">修改密码</div>
-          <div class="row-desc">建议定期更换，长度至少 8 位，包含大小写和数字</div>
+          <div class="row-desc">建议定期更换，长度至少 6 位</div>
         </div>
         <el-button @click="pwdDialogVisible = true">修改</el-button>
       </div>

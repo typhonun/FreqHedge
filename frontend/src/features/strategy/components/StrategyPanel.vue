@@ -16,6 +16,32 @@
         </el-tooltip>
       </template>
 
+      <!-- K 线周期 -->
+      <el-form class="compact-form" label-width="100px" size="small">
+        <el-form-item label="K 线周期">
+          <el-select
+            :model-value="config.timeframe"
+            @update:model-value="onTimeframeChange"
+            style="width: 220px"
+          >
+            <el-option label="1m"  value="1m" />
+            <el-option label="3m"  value="3m" />
+            <el-option label="5m"  value="5m" />
+            <el-option label="15m" value="15m" />
+            <el-option label="30m" value="30m" />
+            <el-option label="1h"  value="1h" />
+            <el-option label="2h"  value="2h" />
+            <el-option label="4h"  value="4h" />
+            <el-option label="6h"  value="6h" />
+            <el-option label="12h" value="12h" />
+            <el-option label="1d"  value="1d" />
+          </el-select>
+          <span class="field-hint-inline">
+            策略信号计算所用周期；变更后需重新下载数据
+          </span>
+        </el-form-item>
+      </el-form>
+
       <el-divider content-position="left">MACD</el-divider>
       <el-row :gutter="12">
         <el-col :span="8">
@@ -274,7 +300,7 @@
         </el-form-item>
 
         <el-form-item :label="!config.tp.rebuy_enable
-          ? '减仓比例%（固定全平）'
+          ? '触发止盈全部平仓'
           : (config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%')">
           <el-input-number v-if="!config.tp.rebuy_enable"
             :model-value="100" class="field-input" controls-position="right"
@@ -288,7 +314,7 @@
         </el-form-item>
 
         <el-form-item :label="config.amount_mode === 'amount'
-          ? '加仓至(USDT)' : '目标仓位占比%'">
+          ? '调整仓位至(USDT)' : '调整仓位至总资金%'">
           <el-input-number v-if="config.amount_mode === 'amount'"
             v-model="config.tp.target_wallet_amount" class="field-input"
             controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
@@ -511,7 +537,7 @@
         <el-row :gutter="12" v-if="!config.loss_tp.close_all">
           <el-col :span="12">
             <el-form-item :label="config.amount_mode === 'amount'
-              ? '减仓至(USDT)' : '减仓至目标仓位%'">
+              ? '减仓至(USDT)' : '调整仓位至总资金%'">
               <el-input-number v-if="config.amount_mode === 'amount'"
                 v-model="config.loss_tp.target_wallet_amount" class="field-input"
                 controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
@@ -811,7 +837,11 @@ const props = defineProps({
     tradeInfo: Object
 })
 
-const emit = defineEmits(['save'])
+const emit = defineEmits(['save', 'timeframe-change'])
+
+const onTimeframeChange = (val) => {
+  emit('timeframe-change', val)
+}
 
 const changeEntrySignal = (type, val) => {
     const entry = props.config.entry

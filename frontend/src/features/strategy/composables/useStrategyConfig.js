@@ -80,7 +80,7 @@ const buildTradeInfo = (side, config) => {
 
 
         leverage:
-            `${config.leverage || 10}x`,
+            `${config.leverage || 5}x`,
 
 
         stoploss:
@@ -303,13 +303,13 @@ const defaultLongConfig = () => ({
         })),
         reduce_percent: 30,
         reduce_amount: 10.0,
-        rebuy_enable: true,
+        rebuy_enable: false,
         target_wallet_percent: 5,
         target_wallet_amount: 50.0
     },
 
     sl: {
-        enable: true,
+        enable: false,
         stoploss: -9,
 
         time_stop: {
@@ -323,17 +323,17 @@ const defaultLongConfig = () => ({
     // 单交易对最大持仓限制（占总资金百分比）
     pair_max_position: {
         enable: false,
-        percent: 30
+        percent: 15
     },
 
     // HTF 趋势过滤
     htf_trend_filter: {
         enable: false,
         timeframe: "4h",
-        protect_entry: false,
+        protect_entry: true,
         protect_dca: true,
         protect_grid: true,
-        protect_rebuy: true,
+        protect_rebuy: false,
         protect_trend: false
     },
 
@@ -400,8 +400,8 @@ const defaultLongConfig = () => ({
     },
 
     dca: {
-        enable: true,
-        max_count: 7,
+        enable: false,
+        max_count: 5,
         condition: "or",
         cooldown_minutes: 60,
 
@@ -409,39 +409,39 @@ const defaultLongConfig = () => ({
         amount_mode: "auto",
 
         // 自动模式用
-        base_percent: 2,
+        base_percent: 1,
         base_amount: 10.0,
-        amount_multiplier: 1.5,
+        amount_multiplier: 1.0,
 
         // 价格触发
-        price_offset: 1.0,
+        price_offset: 1.2,
         price_multiplier: 1.5,
 
         // 手动模式用
         levels: [
             {
-                amount: 100,
-                percent: 2.0,
-                rsi_limit: 25,
-                j_limit: 10
+                amount: 10.0,
+                percent: 1.0,
+                rsi_limit: 30,
+                j_limit: 0
             }
         ]
     },
     loss_tp:{
-        enable:true,
+        enable:false,
         dca_tp_profit:3,
         close_all: false,
         target_wallet_percent:5,
         target_wallet_amount: 50.0
     },
     grid: {
-        enable: true,
+        enable: false,
         max_count: 5,
         grid_lower: -2,
         grid_upper: 2,
-        buy_percent: 2,
+        buy_percent: 1,
         buy_amount: 10.0,
-        sell_percent: 2,
+        sell_percent: 1,
         sell_amount: 10.0,
         order_scale: 1,
         cooldown_minutes: 30
@@ -490,13 +490,13 @@ const defaultShortConfig = () => ({
         })),
         reduce_percent: 30,
         reduce_amount: 10.0,
-        rebuy_enable: true,
+        rebuy_enable: false,
         target_wallet_percent: 5,
         target_wallet_amount: 50.0
     },
 
     sl: {
-        enable: true,
+        enable: false,
         stoploss: -9,
         time_stop: {
             enable: false,
@@ -508,17 +508,17 @@ const defaultShortConfig = () => ({
 
     pair_max_position: {
         enable: false,
-        percent: 30
+        percent: 15
     },
 
     // HTF 趋势过滤
     htf_trend_filter: {
         enable: false,
         timeframe: "4h",
-        protect_entry: false,
+        protect_entry: true,
         protect_dca: true,
         protect_grid: true,
-        protect_rebuy: true,
+        protect_rebuy: false,
         protect_trend: false
     },
 
@@ -585,8 +585,8 @@ const defaultShortConfig = () => ({
     },
 
     dca: {
-        enable: true,
-        max_count: 7,
+        enable: false,
+        max_count: 5,
         condition: "or",
         cooldown_minutes: 60,
 
@@ -594,26 +594,26 @@ const defaultShortConfig = () => ({
         amount_mode: "auto",
 
         // 自动模式用
-        base_percent: 2,
-        amount_multiplier: 1.5,
+        base_percent: 1,
+        amount_multiplier: 1.0,
         base_amount: 10.0,
 
         // 价格触发
-        price_offset: 1.0,
+        price_offset: 1.2,
         price_multiplier: 1.5,
 
         // 手动模式用
         levels: [
             {
-                amount: 100,
-                percent: 2.0,
-                rsi_limit: 25,
-                j_limit: 10
+                amount: 10.0,
+                percent: 1.0,
+                rsi_limit: 30,
+                j_limit: 0
             }
         ]
     },
     loss_tp:{
-        enable:true,
+        enable:false,
 
         dca_tp_profit:3,
 
@@ -625,13 +625,13 @@ const defaultShortConfig = () => ({
     },
 
     grid: {
-        enable: true,
+        enable: false,
         max_count: 5,
         grid_lower: -2,
         grid_upper: 2,
-        buy_percent: 2,
+        buy_percent: 1,
         buy_amount: 10.0,
-        sell_percent: 2,
+        sell_percent: 1,
         sell_amount: 10.0,
         order_scale: 1,
         cooldown_minutes: 30
@@ -699,25 +699,25 @@ const normalizeDca = (config) => {
     }
 
     if (config.dca.base_percent == null) {
-        config.dca.base_percent = 2
+        config.dca.base_percent = 1
     }
 
     if (config.dca.base_amount == null) {          // 新增
-        config.dca.base_amount = 100.0
+        config.dca.base_amount = 10.0
     }
 
     if (!config.dca.amount_multiplier) {
-        config.dca.amount_multiplier = 1.5
+        config.dca.amount_multiplier = 1.0
     }
 
         // levels 兜底
     if (Array.isArray(config.dca.levels)) {        // 新增
         config.dca.levels.forEach((level) => {
             if (level.amount == null) {
-                level.amount = 100
+                level.amount = 10.0
             }
             if (level.percent == null) {
-                level.percent = 2.0
+                level.percent = 1.0
             }
         })
     }
@@ -802,13 +802,13 @@ const normalizeAmountMode = (config) => {
 
     // 单交易对最大持仓限制兜底
     if (!config.pair_max_position) {
-        config.pair_max_position = { enable: false, percent: 30 }
+        config.pair_max_position = { enable: false, percent: 15 }
     }
     if (config.pair_max_position.enable == null) {
         config.pair_max_position.enable = false
     }
     if (config.pair_max_position.percent == null) {
-        config.pair_max_position.percent = 30
+        config.pair_max_position.percent = 15
     }
 
     // HTF 趋势过滤兜底
@@ -816,19 +816,19 @@ const normalizeAmountMode = (config) => {
         config.htf_trend_filter = {
             enable: false,
             timeframe: "4h",
-            protect_entry: false,
+            protect_entry: true,
             protect_dca: true,
             protect_grid: true,
-            protect_rebuy: true,
+            protect_rebuy: false,
             protect_trend: false
         }
     }
     if (config.htf_trend_filter.enable == null) config.htf_trend_filter.enable = false
     if (!config.htf_trend_filter.timeframe) config.htf_trend_filter.timeframe = "4h"
-    if (config.htf_trend_filter.protect_entry == null) config.htf_trend_filter.protect_entry = false
+    if (config.htf_trend_filter.protect_entry == null) config.htf_trend_filter.protect_entry = true
     if (config.htf_trend_filter.protect_dca == null) config.htf_trend_filter.protect_dca = true
     if (config.htf_trend_filter.protect_grid == null) config.htf_trend_filter.protect_grid = true
-    if (config.htf_trend_filter.protect_rebuy == null) config.htf_trend_filter.protect_rebuy = true
+    if (config.htf_trend_filter.protect_rebuy == null) config.htf_trend_filter.protect_rebuy = false
     if (config.htf_trend_filter.protect_trend == null) config.htf_trend_filter.protect_trend = false
 
     // timeframe 兜底

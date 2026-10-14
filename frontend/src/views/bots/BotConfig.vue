@@ -29,7 +29,6 @@
                   <div class="field-value">
                     <el-input
                       v-model="botBaseInfo.name"
-                      placeholder="如：BTC 多头激进"
                       style="width: 100%"
                     />
                   </div>
@@ -171,7 +170,7 @@
                         <span class="inline-field__label">钱包总额 (USDT)</span>
                         <el-input-number
                           v-model="botBaseInfo.capital"
-                          :min="1" :step="100"
+                          :min="1" :step="10"
                           controls-position="right"
                           style="width: 100%"
                         />
@@ -467,38 +466,11 @@
             </div>
           </template>
 
-          <div class="strategy-section">
-            <div class="strategy-section__label">主周期</div>
-            <el-form class="compact-form" label-width="100px" size="small">
-              <el-form-item label="K 线周期">
-                <el-select
-                  :model-value="currentStrategy.timeframe"
-                  @update:model-value="onTimeframeChange"
-                  style="width: 220px"
-                >
-                  <el-option label="1m"  value="1m" />
-                  <el-option label="3m"  value="3m" />
-                  <el-option label="5m"  value="5m" />
-                  <el-option label="15m" value="15m" />
-                  <el-option label="30m" value="30m" />
-                  <el-option label="1h"  value="1h" />
-                  <el-option label="2h"  value="2h" />
-                  <el-option label="4h"  value="4h" />
-                  <el-option label="6h"  value="6h" />
-                  <el-option label="12h" value="12h" />
-                  <el-option label="1d"  value="1d" />
-                </el-select>
-                <div class="form-item-hint">
-                  策略信号计算所用周期；变更后需重新下载数据
-                </div>
-              </el-form-item>
-            </el-form>
-          </div>
-
           <StrategyPanel
             v-if="currentConfig.entry"
             :config="currentConfig"
             @save="handleSaveStrategy"
+            @timeframe-change="onTimeframeChange"
           />
         </el-card>
       </div>
@@ -713,18 +685,6 @@
               </div>
             </div>
 
-            <div v-if="equityCurve.length" class="bt-chart">
-              <div class="bt-chart__title">资金曲线</div>
-              <svg :viewBox="`0 0 ${chartWidth} ${chartHeight}`" class="bt-chart__svg">
-                <polyline
-                  :points="equityCurvePoints"
-                  fill="none"
-                  stroke="var(--el-color-primary)"
-                  stroke-width="2"
-                />
-              </svg>
-            </div>
-
             <div class="bt-section">
               <div class="bt-section__title">交易对</div>
               <el-table
@@ -793,6 +753,18 @@
                   </template>
                 </el-table-column>
               </el-table>
+            </div>
+
+            <div v-if="equityCurve.length" class="bt-chart">
+              <div class="bt-chart__title">资金曲线</div>
+              <svg :viewBox="`0 0 ${chartWidth} ${chartHeight}`" class="bt-chart__svg">
+                <polyline
+                  :points="equityCurvePoints"
+                  fill="none"
+                  stroke="var(--el-color-primary)"
+                  stroke-width="2"
+                />
+              </svg>
             </div>
           </div>
         </el-card>
@@ -1107,9 +1079,9 @@ const inferPresetFromRange = () => {
 const botBaseInfo = ref({
   name: '',
   pair: [],
-  capital: 100,
-  stakeAmount: 10,
-  leverage: 10,
+  capital: 1000,
+  stakeAmount: 50,
+  leverage: 5,
   maxOpenTrades: 3,
   direction: 'long',
   exchangeAccountId: DRY_RUN_VALUE,
@@ -1535,10 +1507,10 @@ const loadBotDetail = async () => {
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
       pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
-      capital: data.capital ?? 100,
-      stakeAmount: data.stakeAmount ?? 10,
-      leverage: data.leverage ?? 10,
-      maxOpenTrades: data.maxOpenTrades ?? 5,
+      capital: data.capital ?? 1000,
+      stakeAmount: data.stakeAmount ?? 50,
+      leverage: data.leverage ?? 5,
+      maxOpenTrades: data.maxOpenTrades ?? 3,
       direction: dir,
       exchangeAccountId: accountId,
       tradingMode: data.tradingMode ?? 'futures',
@@ -1734,7 +1706,7 @@ watch(
       botBaseInfo.value.marginMode = 'cross'
     } else {
       if (!botBaseInfo.value.leverage || botBaseInfo.value.leverage < 2) {
-        botBaseInfo.value.leverage = 10
+        botBaseInfo.value.leverage = 5
       }
     }
   }
@@ -2516,12 +2488,6 @@ onUnmounted(() => {
  * ══════════════════════════════════════════════════════════════════ */
 .strategy-card .card-head__title {
   font-size: 16px;
-}
-
-.strategy-section__label {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
 }
 
 .strategy-card :deep(.compact-form .el-form-item__label) {

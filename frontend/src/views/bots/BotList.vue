@@ -1,25 +1,17 @@
 <template>
   <div class="bot-list-page">
-    <!-- 顶部操作栏（不变） -->
-    <div class="page-header">
-      <div class="header-left">
-        <h2 class="page-title">机器人管理</h2>
-        <el-text type="info" size="small">共 {{ bots.length }} 个机器人</el-text>
-      </div>
-      <div class="header-right">
-        <el-button type="primary" size="large" :icon="Plus" @click="goCreate">
+    <el-card class="toolbar-card" shadow="never">
+      <div class="toolbar">
+        <el-radio-group v-model="filterStatus" size="default">
+          <el-radio-button value="all">全部</el-radio-button>
+          <el-radio-button value="running">运行中</el-radio-button>
+          <el-radio-button value="stopped">已停止</el-radio-button>
+        </el-radio-group>
+
+        <el-button type="primary" :icon="Plus" @click="goCreate">
           新建机器人
         </el-button>
       </div>
-    </div>
-
-    <!-- 筛选（不变） -->
-    <el-card class="filter-card" shadow="never">
-      <el-radio-group v-model="filterStatus" size="default">
-        <el-radio-button value="all">全部</el-radio-button>
-        <el-radio-button value="running">运行中</el-radio-button>
-        <el-radio-button value="stopped">已停止</el-radio-button>
-      </el-radio-group>
     </el-card>
 
     <!-- 机器人卡片列表 -->
@@ -299,27 +291,16 @@ onUnmounted(stopTimer)
   gap: 16px;
 }
 
-.page-header {
+.toolbar-card {
+  border-radius: 12px;
+}
+
+.toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.page-title {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.header-left {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-}
-
-.filter-card {
-  border-radius: 12px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 /* 卡片网格 */

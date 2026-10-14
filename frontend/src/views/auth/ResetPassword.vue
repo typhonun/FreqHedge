@@ -9,7 +9,7 @@
 
       <el-form v-if="token" ref="formRef" :model="form" :rules="rules">
         <el-form-item prop="password">
-          <el-input v-model="form.password" type="password" placeholder="新密码（至少 8 位）" size="large" show-password :prefix-icon="Lock" />
+          <el-input v-model="form.password" type="password" placeholder="新密码（至少 6 位）" size="large" show-password :prefix-icon="Lock" />
         </el-form-item>
         <el-form-item prop="confirm">
           <el-input v-model="form.confirm" type="password" placeholder="确认新密码" size="large" show-password :prefix-icon="Lock" />
@@ -46,7 +46,7 @@ const validateConfirm = (_r, v, cb) =>
 const rules = {
   password: [
     { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 8, message: '密码至少 8 位', trigger: 'blur' },
+    { min: 6, message: '密码至少 6 位', trigger: 'blur' },
   ],
   confirm: [{ required: true, validator: validateConfirm, trigger: 'blur' }],
 }

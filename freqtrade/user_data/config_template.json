@@ -44,8 +44,8 @@
     },
     "exchange": {
         "name": "",
-        "key": "uXmUxOCDI3oESglhwPbZiPZ8PlC5T1hT6YY4wcEEE9g8RfmuDNur76chC4bSAHUL",
-        "secret": "fTogg1Vrgi7RMKkZPDNeSrLfoT4NnB2FaTEpnfZhlgsbU6EaFuDJwkYz2ETSzTXs",
+        "key": "Put_Your_Exchange_Key_Here",
+        "secret": "Put_Your_Exchange_Keys_Secret_Here",
         "password": "",
         "ccxt_config": {
             "enableRateLimit": true

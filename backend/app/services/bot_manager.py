@@ -25,8 +25,8 @@ def _ensure_table():
             name TEXT NOT NULL,
             pair TEXT NOT NULL,
             capital REAL NOT NULL,
-            stakeAmount REAL DEFAULT 10,
-            leverage INTEGER DEFAULT 10,
+            stakeAmount REAL DEFAULT 50,
+            leverage INTEGER DEFAULT 5,
             dryRun INTEGER DEFAULT 1,
             maxOpenTrades INTEGER DEFAULT 3,
             enableLong INTEGER DEFAULT 1,
@@ -71,8 +71,8 @@ def _migrate():
         cols = {row["name"] for row in c.execute("PRAGMA table_info(bots)").fetchall()}
 
         migrations = [
-            ("stakeAmount", "ALTER TABLE bots ADD COLUMN stakeAmount REAL DEFAULT 10"),
-            ("leverage", "ALTER TABLE bots ADD COLUMN leverage INTEGER DEFAULT 10"),
+            ("stakeAmount", "ALTER TABLE bots ADD COLUMN stakeAmount REAL DEFAULT 50"),
+            ("leverage", "ALTER TABLE bots ADD COLUMN leverage INTEGER DEFAULT 5"),
             ("maxOpenTrades", "ALTER TABLE bots ADD COLUMN maxOpenTrades INTEGER DEFAULT 3"),
             ("dryRun", "ALTER TABLE bots ADD COLUMN dryRun INTEGER DEFAULT 1"),
             ("exchangeAccountId", "ALTER TABLE bots ADD COLUMN exchangeAccountId TEXT DEFAULT NULL"),
@@ -209,8 +209,8 @@ class BotManager:
                 (
                     base["name"], json.dumps(base["pair"]), base["capital"],
 
-                    base.get("stakeAmount", 10),
-                    base.get("leverage", 10),
+                    base.get("stakeAmount", 50),
+                    base.get("leverage", 5),
                     int(base.get("dryRun", True)),  # ★ 对应 maxOpenTrades 列
                     base.get("maxOpenTrades", 3),
 
@@ -282,8 +282,8 @@ class BotManager:
                     base["name"],
                     json.dumps(base["pair"]),
                     base["capital"],
-                    base.get("stakeAmount", 10),
-                    base.get("leverage", 10),
+                    base.get("stakeAmount", 50),
+                    base.get("leverage", 5),
                     int(base.get("dryRun", True)),
                     base.get("maxOpenTrades", 3),
                     int(base["enableLong"]),
@@ -528,9 +528,9 @@ class BotManager:
             "base": {
                 "name": "未命名机器人",
                 "pair": [],
-                "capital": 100,
-                "stakeAmount": 10,
-                "leverage": 10,
+                "capital": 1000,
+                "stakeAmount": 50,
+                "leverage": 5,
                 "maxOpenTrades": 3,
                 "dryRun": True,
                 "enableLong": True,

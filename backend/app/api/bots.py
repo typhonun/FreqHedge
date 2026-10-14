@@ -16,8 +16,8 @@ class BotBaseInfo(BaseModel):
     name: str
     pair: list[str]
     capital: float
-    stakeAmount: float = 10
-    leverage: int = 10
+    stakeAmount: float = 50
+    leverage: int = 5
     maxOpenTrades: int = 3
     dryRun: bool = True
     enableLong: bool
@@ -56,10 +56,10 @@ class BotRiskConfig(BaseModel):
 
     trail_enabled: bool = False
     trail_mode: str = "ratio"
-    trail_activate_amount: float = 0
-    trail_activate_ratio: float = 0
-    trail_drawdown_amount: float = 0
-    trail_drawdown_ratio: float = 0
+    trail_activate_amount: float = 10
+    trail_activate_ratio: float = 1
+    trail_drawdown_amount: float = 5 
+    trail_drawdown_ratio: float = 0.5
 
     auto_stop_on_tp: bool = True
     auto_stop_on_sl: bool = True
@@ -120,8 +120,8 @@ async def create_draft_bot():
                 "name": bot["name"],
                 "pair": bot["pair"],
                 "capital": bot["capital"],
-                "stakeAmount": bot.get("stakeAmount", 10),
-                "leverage": bot.get("leverage", 10),
+                "stakeAmount": bot.get("stakeAmount", 50),
+                "leverage": bot.get("leverage", 5),
                 "maxOpenTrades": bot.get("maxOpenTrades", 3),
                 "dryRun": bot.get("dryRun", True),
                 "enableLong": bot.get("enableLong", True),
