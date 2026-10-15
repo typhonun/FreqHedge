@@ -459,19 +459,36 @@
         <el-card class="strategy-card" shadow="never">
           <template #header>
             <div class="card-head">
-              <span class="card-head__title">策略配置</span>
+              <!-- ★ 动态标题 -->
+              <span class="card-head__title">
+                {{ isGridBot ? '网格策略配置' : 'DCA 策略配置' }}
+              </span>
               <el-text type="info" size="small">
                 {{ botBaseInfo.direction === 'short' ? '空头策略' : '多头策略' }}
               </el-text>
             </div>
           </template>
 
+          <!-- ★ 条件渲染：如果是 DCA 机器人，展示 StrategyPanel -->
           <StrategyPanel
-            v-if="currentConfig.entry"
+            v-if="!isGridBot && currentConfig.entry"
             :config="currentConfig"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"
           />
+
+          <!-- ★ 如果是网格机器人，展示空白占位页 -->
+          <div v-else-if="isGridBot" class="empty-grid-placeholder">
+            <el-empty description="网格机器人配置页面（空白占位）">
+              <template #image>
+                <el-icon :size="80" color="#909399"><Grid /></el-icon>
+              </template>
+              <p style="color: #909399; font-size: 14px;">
+                这里将用于配置网格数量、上下限价格、每格数量等参数。<br>
+                目前保留为空白页面。
+              </p>
+            </el-empty>
+          </div>
         </el-card>
       </div>
 
@@ -810,7 +827,7 @@
  * ══════════════════════════════════════════════════════════════════ */
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled, Grid } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 import { BOT_DEFAULTS, RISK_DEFAULTS, getDirectionalDefaults } from '@/config/botDefaults.js'
@@ -856,6 +873,10 @@ const goExchangeSettings = () => {
  * 3. 派生状态
  * ══════════════════════════════════════════════════════════════════ */
 const botId = computed(() => route.params.id)
+// ★ 新增：判断当前是什么策略类型
+const strategyType = computed(() => route.query.strategyType || 'dca')
+const isGridBot = computed(() => strategyType.value === 'grid')
+
 const copyFromId = computed(() => route.query.copyFrom)
 const isCopy = computed(() => !!copyFromId.value)
 const isEdit = computed(() => !!botId.value && !isCopy.value)
@@ -2158,6 +2179,23 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+/* ══════════════════════════════════════════════════════════════════
+ * 网格机器人空白占位页
+ * ══════════════════════════════════════════════════════════════════ */
+.empty-grid-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  min-height: 400px;
+}
+.empty-grid-placeholder p {
+  margin-top: 12px;
+  text-align: center;
+  line-height: 1.8;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * 页面骨架
  * ══════════════════════════════════════════════════════════════════ */

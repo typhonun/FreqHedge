@@ -148,6 +148,12 @@
     <el-empty v-else description="暂无机器人，点击右上角新建">
       <el-button type="primary" @click="goCreate">新建机器人</el-button>
     </el-empty>
+
+    <!-- ★ 新增策略选择弹窗 -->
+    <StrategySelectDialog
+      v-model="showStrategyDialog"
+      @select="handleStrategySelect"
+    />
   </div>
 </template>
 
@@ -159,10 +165,13 @@ import {
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBotStore } from '@/stores/botStore.js'
+import StrategySelectDialog from '@/components/common/StrategySelectDialog.vue'
 
 const router = useRouter()
 
 const filterStatus = ref('all')
+// ★ 新增弹窗控制变量
+const showStrategyDialog = ref(false)
 
 // 只拿 BotList 需要的方法
 const { state, fetchBots, toggleBot, deleteBot, createDraft } = useBotStore()
@@ -175,17 +184,34 @@ const filteredBots = computed(() => {
   return bots.value.filter(b => b.status === filterStatus.value)
 })
 
-const goCreate = async () => {
+// ★ 修改：点击新建时，打开弹窗，不再直接跳转
+const goCreate = () => {
+  showStrategyDialog.value = true
+}
+
+// ★ 新增：处理策略选择
+const handleStrategySelect = async (type) => {
   try {
     const bot = await createDraft()
-    router.push({ name: 'BotDetail', params: { id: bot.id } })
+    // 根据选择的类型，带上 query 参数跳转
+    router.push({
+      name: 'BotDetail',
+      params: { id: bot.id },
+      query: { strategyType: type } // dca 或 grid
+    })
   } catch (e) {
     console.error('[goCreate] failed:', e)
     ElMessage.error('创建草稿失败：' + (e?.message || e))
   }
 }
 
-const goDetail = (id) => router.push({ name: 'BotDetail', params: { id } })
+const goDetail = (bot) => {
+  router.push({
+    name: 'BotDetail',
+    params: { id: bot.id },
+    query: { strategyType: bot.strategyType || 'dca' }
+  })
+}
 
 const handleToggle = async (bot) => {
   loadingIds.value.add(bot.id)
@@ -229,34 +255,24 @@ const handleDelete = async (bot) => {
 
 const handleCommand = async (cmd, bot) => {
   switch (cmd) {
-    case 'edit':
-      goDetail(bot.id)
-      break
-    case 'copy':
-      await goCopy(bot.id)
-      break
-    case 'logs':
-      router.push({ name: 'BotLogs', params: { id: bot.id } })
-      break
-    case 'delete':
-      await handleDelete(bot)
-      break
+    case 'edit': goDetail(bot); break
+    case 'copy': await goCopy(bot); break
+    case 'logs': router.push({ name: 'BotLogs', params: { id: bot.id } }); break
+    case 'delete': await handleDelete(bot); break
   }
 }
 
 // ★ 复制：先建草稿，带上源 id
-const goCopy = async (sourceId) => {
-  try {
-    const draft = await createDraft()
-    router.push({
-      name: 'BotDetail',
-      params: { id: draft.id },
-      query: { copyFrom: sourceId },
-    })
-  } catch (e) {
-    console.error('[goCopy] failed:', e)
-    ElMessage.error('复制失败：' + (e?.message || e))
-  }
+const goCopy = async (bot) => {
+  const draft = await createDraft()
+  router.push({
+    name: 'BotDetail',
+    params: { id: draft.id },
+    query: {
+      copyFrom: bot.id,
+      strategyType: bot.strategyType || 'dca',
+    },
+  })
 }
 
 // ============ ★ 定时刷新累计收益 ============
