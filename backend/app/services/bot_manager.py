@@ -1,6 +1,5 @@
 # backend/app/services/bot_manager.py
 import sqlite3
-import socket
 import json
 from pathlib import Path
 import threading
@@ -21,6 +20,7 @@ _c = BOT_DEFAULTS["capital"]
 _s = BOT_DEFAULTS["stakeAmount"]
 _l = BOT_DEFAULTS["leverage"]
 _m = BOT_DEFAULTS["maxOpenTrades"]
+
 
 def _ensure_table():
     with _conn() as c:
@@ -119,15 +119,57 @@ def _migrate():
 _ensure_table()
 _migrate()
 
+_alloc_lock = threading.Lock()
 
-def _find_free_port(start=8011, end=9000):
-    port = start
-    while port < end:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            if s.connect_ex(("127.0.0.1", port)) != 0:
+
+def _alloc_port(start=None, end=None):
+    """
+    为每个 bot 分配 2 个连续端口（long=base, short=base+1）。
+    从 start 开始找第一个「base 和 base+1 都未被占用」的位置。
+    """
+    from config.settings import PORT_START, PORT_END
+    start = start if start is not None else PORT_START
+    end = end if end is not None else PORT_END
+
+    with _conn() as c:
+        rows = c.execute(
+            "SELECT port FROM bots WHERE port IS NOT NULL"
+        ).fetchall()
+
+    used = set()
+    for r in rows:
+        p = r["port"]
+        if p:
+            used.add(p)
+            used.add(p + 1)   # short 占用的也标记
+
+    with _alloc_lock:
+        port = start
+        while port + 1 < end:
+            if port not in used and (port + 1) not in used:
                 return port
-        port += 1
-    raise RuntimeError("no free port")
+            port += 2
+    raise RuntimeError(f"no free port in [{start}, {end})")
+
+
+def _backfill_null_ports():
+    """启动时给历史 NULL port 记录补端口"""
+    with _conn() as c:
+        rows = c.execute("SELECT id FROM bots WHERE port IS NULL").fetchall()
+    if not rows:
+        return
+    for r in rows:
+        try:
+            p = _alloc_port()
+            with _conn() as c:
+                c.execute("UPDATE bots SET port=? WHERE id=?", (p, r["id"]))
+                c.commit()
+            print(f"[port] backfilled bot_id={r['id']} port={p}")
+        except Exception as e:
+            print(f"[port] backfill failed bot_id={r['id']}: {e}")
+
+
+_backfill_null_ports()
 
 
 def _parse_json_field(v):
@@ -148,6 +190,7 @@ class BotManager:
     @staticmethod
     def _normalize(row: dict) -> dict:
         bot = dict(row)
+        bot["port"] = int(bot.get("port") or 0) or None
         bot["enableLong"] = bool(bot.get("enableLong"))
         bot["enableShort"] = bool(bot.get("enableShort"))
         bot["dryRun"] = bool(bot.get("dryRun", 1))
@@ -187,6 +230,10 @@ class BotManager:
         base = payload["base"]
         risk = payload.get("risk", {})
 
+        # ★ 1. 先算端口（事务外，独立完成）
+        port = _alloc_port()
+
+        # ★ 2. 一次 INSERT 直接把 port 写进去
         with _conn() as c:
             cur = c.execute(
                 """
@@ -194,7 +241,7 @@ class BotManager:
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
                                   status, port, longConfig, shortConfig, createdAt,
-                                  exchangeAccountId, exchangeAccountJson, 
+                                  exchangeAccountId, exchangeAccountJson,
                                   tradingMode, marginMode,
                                   tp_enabled, tp_mode, tp_amount, tp_ratio,
                                   sl_enabled, sl_mode, sl_amount, sl_ratio,
@@ -205,9 +252,9 @@ class BotManager:
                 VALUES (?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?,
-                        'stopped', NULL, ?, ?, datetime('now'),
-                        ?, ?, 
-                        ?, ?, 
+                        'stopped', ?, ?, ?, datetime('now'),
+                        ?, ?,
+                        ?, ?,
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
                         ?, ?, ?)
                 """,
@@ -221,6 +268,7 @@ class BotManager:
 
                     int(base["enableLong"]), int(base["enableShort"]),
 
+                    port,
                     json.dumps(payload.get("longConfig") or {}),
                     json.dumps(payload.get("shortConfig") or {}),
                     base.get("exchangeAccountId"),
@@ -252,16 +300,15 @@ class BotManager:
                 ),
             )
             bot_id = cur.lastrowid
-            port = 8011 + bot_id * 2
-            c.execute("UPDATE bots SET port=? WHERE id=?", (port, bot_id))
             c.commit()
-            print(f"[BotManager] created bot_id={bot_id} port={port} risk={risk}")
+
+        print(f"[BotManager] created bot_id={bot_id} port={port} risk={risk}")
         return BotManager.get(bot_id)
 
     @staticmethod
     def update(bot_id: int, payload: dict):
         base = payload["base"]
-        risk = payload.get("risk", {}) or {}  # ★
+        risk = payload.get("risk", {}) or {}
         with _conn() as c:
             c.execute(
                 """
@@ -272,7 +319,7 @@ class BotManager:
                     longConfig=?, shortConfig=?,
                     exchangeAccountId=?, exchangeAccountJson=?,
                     tradingMode=?, marginMode=?,
-                    
+
                     tp_enabled=?, tp_mode=?, tp_amount=?, tp_ratio=?,
                     sl_enabled=?, sl_mode=?, sl_amount=?, sl_ratio=?,
                     trail_enabled=?, trail_mode=?,
@@ -325,7 +372,7 @@ class BotManager:
                 ),
             )
             c.commit()
-            print(f"[BotManager] created bot_id={bot_id} risk={risk}")
+        print(f"[BotManager] updated bot_id={bot_id} risk={risk}")
         return BotManager.get(bot_id)
 
     @staticmethod
@@ -445,7 +492,6 @@ class BotManager:
             print(f"[cleanup] removed stale drafts: {deleted}")
         return deleted
 
-
     @staticmethod
     def start(bot_id: int, wait: bool = False):
         """
@@ -541,7 +587,9 @@ class BotManager:
         }
 
         base = default_payload["base"]
-        risk = default_payload["risk"]
+
+        # ★ 先算端口（事务外）
+        port = _alloc_port()
 
         with _conn() as c:
             cur = c.execute(
@@ -554,7 +602,7 @@ class BotManager:
                 VALUES (?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?,
-                        'draft', NULL, ?, ?, datetime('now'),
+                        'draft', ?, ?, ?, datetime('now'),
                         ?, ?)
                 """,
                 (
@@ -562,16 +610,16 @@ class BotManager:
                     base["stakeAmount"], base["leverage"],
                     base["maxOpenTrades"], int(base["dryRun"]),
                     int(base["enableLong"]), int(base["enableShort"]),
+                    port,
+                    json.dumps({}), json.dumps({}),
                     base["tradingMode"],
                     base["marginMode"],
-                    json.dumps({}), json.dumps({}),
                 ),
             )
             bot_id = cur.lastrowid
-            port = 8011 + bot_id * 2
-            c.execute("UPDATE bots SET port=? WHERE id=?", (port, bot_id))
             c.commit()
-            print(f"[BotManager] created DRAFT bot_id={bot_id} port={port}")
+
+        print(f"[BotManager] created DRAFT bot_id={bot_id} port={port}")
         return BotManager.get(bot_id)
 
     @staticmethod

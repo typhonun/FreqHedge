@@ -19,13 +19,12 @@ def get_bot_or_raise(bot_id: int) -> dict:
 
 
 def get_bot_port(bot_id: int, side: str) -> int:
-    """
-    端口规则必须与 ConfigService._get_port 保持一致。
-    long : 8011 + bot_id * 2
-    short: 8011 + bot_id * 2 + 1
-    """
-    base_port = 8011 + bot_id * 2
-    return base_port if side == "long" else base_port + 1
+    """★ 从 DB 读 port 字段"""
+    bot = get_bot_or_raise(bot_id)
+    base = bot.get("port")
+    if not base:
+        raise ValueError(f"bot {bot_id} 没有分配端口")
+    return int(base) if side == "long" else int(base) + 1
 
 
 def get_bot_url(bot_id: int, side: str) -> str:

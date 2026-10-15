@@ -6,6 +6,10 @@ BASE_DIR = Path(__file__).resolve().parents[2]
 
 FREQTRADE_DIR = BASE_DIR / "freqtrade"
 
+# 每个 bot 占 2 个连续端口：long = base, short = base + 1
+PORT_START = 8100
+PORT_END   = 8900
+
 AUTH_USER = "freqtrader"
 AUTH_PASSWORD = "zy147258"
 

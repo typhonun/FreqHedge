@@ -133,8 +133,16 @@ class ProcessService:
         return result
 
     @staticmethod
-    def _get_port(bot_id, side):
-        base = 8011 + bot_id * 2
+    def _get_port(bot_id: int, side: str) -> int:
+        """
+        ★ 改为从 DB 读 port 字段
+        """
+        from app.services.bot_manager import BotManager
+        bot = BotManager.get(bot_id)
+        if not bot or not bot.get("port"):
+            raise ValueError(f"bot {bot_id} 没有分配端口，请检查 DB 完整性")
+        else:
+            base = int(bot["port"])
         return base if side == "long" else base + 1
 
     @classmethod

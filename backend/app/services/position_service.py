@@ -266,7 +266,9 @@ class PositionService:
         if bot_id is None:
             # 聚合
             all_long, all_short = [], []
-            for bot in list_running_bots():
+            for bot in list_all_bots():
+                if bot.get("status") == "draft":
+                    continue
                 pos = PositionService.get_open_positions(bot_id=bot["id"])
                 for t in pos["long"]:
                     t.setdefault("bot_id", bot["id"])
@@ -639,7 +641,9 @@ class PositionService:
     def get_closed_positions(bot_id: int | None = None):
         if bot_id is None:
             all_long, all_short = [], []
-            for bot in list_running_bots():
+            for bot in list_all_bots():
+                if bot.get("status") == "draft":
+                    continue
                 pos = PositionService.get_closed_positions(bot_id=bot["id"])
                 for t in pos["long"]:
                     t.setdefault("bot_id", bot["id"])

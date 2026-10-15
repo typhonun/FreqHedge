@@ -387,7 +387,8 @@
       <template #extra>
         <el-tooltip placement="top" effect="dark">
           <template #content>
-            触发价 = 持仓均价 × (1 ± 价格偏差 × 乘数^层数)；<br />
+            触发价 = 持仓均价 × (1 ± 价格偏差 × 乘数^已加仓次数)；<br />
+            首次加仓时「已加仓次数 = 0」，即倍率为 1（不放大）；<br />
             实际加仓需同时满足「价格触发」与「RSI / J 条件」
           </template>
           <el-icon class="section-label__info"><InfoFilled /></el-icon>
@@ -551,7 +552,9 @@
     </ToggleSection>
 
     <!-- 趋势加仓 -->
+
     <ToggleSection
+    v-if="false"
       v-model="config.trend_add.enable"
       title="趋势加仓"
       desc="MACD / KDJ / EMA 趋势加仓"
@@ -805,7 +808,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="8">
-            <el-form-item label="趋势加仓">
+            <el-form-item label="趋势加仓" v-if="false">
               <el-switch v-model="config.htf_trend_filter.protect_trend" />
               <el-tooltip placement="top" content="跳过 trend_add 趋势加仓">
                 <el-icon class="field-info"><InfoFilled /></el-icon>

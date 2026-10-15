@@ -39,13 +39,13 @@
                   <div class="field-value">
                     <el-select
                       v-model="botBaseInfo.exchangeAccountId"
-                      placeholder="Dry Run"
+                      placeholder="Demo"
                       style="width: 100%"
                       clearable
                     >
                       <el-option-group>
                         <el-option
-                          label="Dry Run"
+                          label="Demo"
                           :value="DRY_RUN_VALUE"
                         />
                       </el-option-group>

@@ -118,13 +118,9 @@ class DcaTpBotBase(IStrategy):
 
     def informative_pairs(self):
         """
-        ★ 动态声明 informative 周期：只声明 UI 选中的那个。
-        ★ 如果 HTF 过滤未真正生效，直接返回 []，完全不加载 HTF 数据。
+        ★ 始终声明 HTF 周期（不再用 _is_htf_effective 做开关）。
+        这样热加载时，从「关」→「开」也能生效。
         """
-        if not self._is_htf_effective():
-            logger.info("[HTF] 过滤未生效，跳过 informative_pairs")
-            return []
-
         pairs = self.dp.current_whitelist()
         htf_tf = self._get_htf_timeframe()
         logger.info(f"[HTF] informative_pairs → {len(pairs)} pairs × {htf_tf}")
@@ -742,13 +738,6 @@ class DcaTpBotBase(IStrategy):
         self._set(trade, "grid_reduced_total_usdt", 0.0)
         self._set(trade, "initialized", True)
 
-        tag = getattr(order, 'ft_order_tag', '') or ''
-        # ★ 只有减仓方向的 tp_ 才置 need_rebuy
-        if tag.startswith("tp_") and order.side == self._exit_order_side:
-            tp_cfg = self.get_runtime_config().get("tp", {})
-            if bool(tp_cfg.get("rebuy_enable", True)):
-                self._set(trade, 'need_rebuy', True)
-
     # ============================================================
     # 序列化辅助
     # ============================================================
@@ -845,13 +834,6 @@ class DcaTpBotBase(IStrategy):
             }
             for name, series in series_map.items():
                 dataframe[name] = pd.Series(series, index=df_tf.index)
-
-        # ============================================================
-        # ★ 动态合并 HTF 数据
-        # 只在 HTF 过滤生效时才计算，否则完全跳过
-        # ============================================================
-        if not self._is_htf_effective():
-            return dataframe
 
         htf_tf = self._get_htf_timeframe()
         try:
@@ -1640,18 +1622,25 @@ class DcaTpBotBase(IStrategy):
             triggered_cond = cond_j or cond_rsi
             triggered_label = f"J{label_op}{j_limit:g} 或 RSI{label_op}{rsi_limit:g}"
 
+        # ★ 优先用实时价；实时价拿不到时回退到 K 线收盘价
         try:
-            candle_close = float(last.get('close')) if last.get('close') is not None else None
+            trigger_price = float(current_rate) if current_rate is not None else None
         except Exception:
-            candle_close = None
+            trigger_price = None
+
+        if trigger_price is None or trigger_price <= 0:
+            try:
+                trigger_price = float(last.get('close')) if last.get('close') is not None else None
+            except Exception:
+                trigger_price = None
 
         if within_dca_cooldown or dca_done:
             return None
 
         # ★ 价格触发方向
-        if candle_close is None:
+        if trigger_price is None:
             return None
-        price_hit = (candle_close >= threshold) if self._is_short else (candle_close <= threshold)
+        price_hit = (trigger_price >= threshold) if self._is_short else (trigger_price <= threshold)
 
         if not (triggered_cond and price_hit):
             return None
@@ -1701,10 +1690,10 @@ class DcaTpBotBase(IStrategy):
             prev_qty = 0.0
 
         lev = float(self.leverage(trade.pair))
-        added_qty = self._qty_from_usdt(buy_amt, candle_close, lev)
+        added_qty = self._qty_from_usdt(buy_amt, trigger_price, lev)
 
         prev_value = prev_qty * avg_entry
-        added_value = added_qty * candle_close
+        added_value = added_qty * trigger_price
         new_avg_entry = (prev_value + added_value) / (prev_qty + added_qty)
 
         self._set(trade, 'dca_count', u + 1)
@@ -1727,7 +1716,7 @@ class DcaTpBotBase(IStrategy):
             f"订单规模倍率：{amount_multiplier ** u:.2f})], u=({u}->{u + 1}), "
             f"{amount_text}, 触发条件={triggered_label}, "
             f"RSI={rsi_val_text}, J={j_val_text}, "
-            f"触发价={threshold:.4f}, 收盘价={candle_close:.4f}, "
+            f"触发价={threshold:.4f}, 实时价={trigger_price:.4f}, "
             f"{YELLOW}保证金={margin:.4f}{RESET}, 加仓={buy_amt:.4f} USDT, 新均价={new_avg_entry:.4f}"
         )
         return float(buy_amt), f"dca_u={u + 1}"
@@ -1870,21 +1859,30 @@ class DcaTpBotBase(IStrategy):
             collateral_total = self._collateral_total()
             close_all = bool(dca_tp_cfg.get("close_all", False))
 
+            # ★ 全平分支：提前返回，不参与下面的按目标仓位计算
             if close_all:
-                target_usdt = 0.0
-                target_wallet_percent = 0.0
+                self._set(trade, 'dca_count', 0)
+                self._set(trade, 'dca_done', False)
+                self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
+                logger.info(
+                    f"[{trade.pair}] {GREEN}[浮亏止盈全平]{RESET}, "
+                    f"DCA次数={u}, 当前收益={account_profit * 100:.2f}%, "
+                    f"{YELLOW}保证金={margin_val:.2f}{RESET}, 当前价={price:.4f}"
+                )
+                return float(-margin_val), "tp_afterDCA_close_all"
+
+            # 非全平：按目标仓位减仓
+            if amount_mode == "amount":
+                try:
+                    target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
+                except Exception:
+                    target_usdt = 50.0
             else:
-                if amount_mode == "amount":
-                    try:
-                        target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
-                    except Exception:
-                        target_usdt = 50.0
-                else:
-                    try:
-                        target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
-                    except Exception:
-                        target_wallet_percent = 5.0
-                    target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
+                try:
+                    target_wallet_percent = float(dca_tp_cfg.get("target_wallet_percent", 5) or 5)
+                except Exception:
+                    target_wallet_percent = 5.0
+                target_usdt = float(collateral_total) * (target_wallet_percent / 100.0)
 
             target_qty = (target_usdt * lev) / price
             sell_qty = max(0.0, current_qty_abs - target_qty)

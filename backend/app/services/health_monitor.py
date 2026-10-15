@@ -75,8 +75,12 @@ def _check_one(bot_id: int, side: str):
     if state["restarting"]:
         return
 
-    url = get_bot_url(bot_id, side)
-    db_path = get_bot_db_path(bot_id, side)
+    try:
+        url = get_bot_url(bot_id, side)
+        db_path = get_bot_db_path(bot_id, side)
+    except Exception as e:
+        print(f"[health] skip bot={bot_id} side={side}: {e}")
+        return
 
     try:
         if not _has_open_trades(db_path):
