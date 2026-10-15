@@ -1,3 +1,4 @@
+# backend/app/services/process_service.py
 import subprocess
 import sys
 import time
@@ -10,9 +11,29 @@ from pathlib import Path
 class ProcessService:
 
     # =========================================================
+    # ★ 新增：统一从 config 里读策略类名
+    # =========================================================
+    @staticmethod
+    def _resolve_strategy(cfg_path: Path, side: str) -> str:
+        """
+        优先从 config_botX_<side>.json 的 "strategy" 字段读；
+        读不到再按 side 兜底到 DCA。
+        """
+        from app.services.config_service import ConfigService  # 延迟 import 避免循环
+        try:
+            cfg = ConfigService.read_json(cfg_path)
+            s = (cfg or {}).get("strategy")
+            if s:
+                return s
+        except Exception as e:
+            print(f"[ProcessService] 读取 strategy 失败 {cfg_path}: {e}")
+
+        # 兜底：老 config 或 config 缺 strategy 字段
+        return "DcaTpLong" if side == "long" else "DcaTpShort"
+
+    # =========================================================
     # 多实例：启停单 bot
     # =========================================================
-
     @classmethod
     def start_bot(cls, bot: dict):
         from app.services.config_service import ConfigService
@@ -38,7 +59,9 @@ class ProcessService:
             time.sleep(0.5)
 
             log_path = ConfigService.log_path(bot_id, side)
-            strategy = "DcaTpLong" if side == "long" else "DcaTpShort"
+
+            # ★ 从 config 里读策略类名（支持 grid / dca）
+            strategy = cls._resolve_strategy(cfg, side)
 
             proc = subprocess.Popen(
                 [
@@ -51,6 +74,7 @@ class ProcessService:
                 cwd=str(base_dir),
                 creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
             )
+            print(f"[ProcessService] started bot={bot_id} side={side} strategy={strategy} pid={proc.pid}")
             started.append((side, proc.pid))
 
         for side, _ in started:
@@ -104,7 +128,9 @@ class ProcessService:
         time.sleep(0.5)
 
         log_path = ConfigService.log_path(bot_id, side)
-        strategy = "DcaTpLong" if side == "long" else "DcaTpShort"
+
+        # ★ 从 config 里读策略类名（支持 grid / dca）
+        strategy = cls._resolve_strategy(cfg, side)
 
         subprocess.Popen(
             [
@@ -117,6 +143,7 @@ class ProcessService:
             cwd=str(base_dir),
             creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
         )
+        print(f"[ProcessService] restarted bot={bot_id} side={side} strategy={strategy}")
 
         url = f"http://127.0.0.1:{port}"
         cls.wait_until_alive(url, timeout=30)

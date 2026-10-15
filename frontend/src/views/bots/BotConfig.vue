@@ -459,7 +459,6 @@
         <el-card class="strategy-card" shadow="never">
           <template #header>
             <div class="card-head">
-              <!-- ★ 动态标题 -->
               <span class="card-head__title">
                 {{ isGridBot ? '网格策略配置' : 'DCA 策略配置' }}
               </span>
@@ -469,26 +468,17 @@
             </div>
           </template>
 
-          <!-- ★ 条件渲染：如果是 DCA 机器人，展示 StrategyPanel -->
+          <!-- ★ 一进一出：网格 / DCA -->
+          <GridPanel
+            v-if="isGridBot"
+            :config="gridConfig"
+          />
           <StrategyPanel
-            v-if="!isGridBot && currentConfig.entry"
+            v-else-if="currentConfig.entry"
             :config="currentConfig"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"
           />
-
-          <!-- ★ 如果是网格机器人，展示空白占位页 -->
-          <div v-else-if="isGridBot" class="empty-grid-placeholder">
-            <el-empty description="网格机器人配置页面（空白占位）">
-              <template #image>
-                <el-icon :size="80" color="#909399"><Grid /></el-icon>
-              </template>
-              <p style="color: #909399; font-size: 14px;">
-                这里将用于配置网格数量、上下限价格、每格数量等参数。<br>
-                目前保留为空白页面。
-              </p>
-            </el-empty>
-          </div>
         </el-card>
       </div>
 
@@ -827,9 +817,11 @@
  * ══════════════════════════════════════════════════════════════════ */
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled, Grid } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
+import GridPanel from '@features/strategy/components/GridPanel.vue'
+import { getDefaultGridConfig } from '@/config/gridDefaults.js'
 import { BOT_DEFAULTS, RISK_DEFAULTS, getDirectionalDefaults } from '@/config/botDefaults.js'
 import {
   startBacktest,
@@ -1118,6 +1110,9 @@ const botRisk = ref({
   ...RISK_DEFAULTS,
 })
 
+// ★ 网格配置（新增/恢复）
+const gridConfig = reactive(getDefaultGridConfig())
+
 const localConfig = reactive(getDefaultStrategyConfig('long'))
 const currentConfig = computed(() => localConfig)
 const currentStrategy = computed(() => localConfig)
@@ -1298,31 +1293,51 @@ const buildPayload = () => {
   const acct = isDryRun.value ? null : getExchangeAccount(botBaseInfo.value.exchangeAccountId)
   const dryRun = isDryRun.value
 
+  const common = {
+    name: botBaseInfo.value.name,
+    pair: botBaseInfo.value.pair,
+    capital: botBaseInfo.value.capital,
+    stakeAmount: botBaseInfo.value.stakeAmount,
+    leverage: botBaseInfo.value.leverage,
+    maxOpenTrades: botBaseInfo.value.maxOpenTrades,
+    dryRun,
+    enableLong: dir === 'long',
+    enableShort: dir === 'short',
+    exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
+    exchangeAccount: dryRun ? null : (acct ? {
+      exchange: acct.exchange,
+      apiKey: acct.apiKey,
+      apiSecret: acct.apiSecret,
+      passphrase: acct.passphrase || '',
+    } : null),
+    tradingMode: botBaseInfo.value.tradingMode,
+    marginMode: botBaseInfo.value.marginMode,
+    strategyType: strategyType.value,    // ★ 让后端知道是 DCA 还是 grid
+  }
+
+  if (isGridBot.value) {
+    return {
+      base: common,
+      risk: botRisk.value,
+      gridConfig: {                          // ★ 后端读这个字段走 GridBotBase
+        grid: {
+          lower_price: gridConfig.lower_price,
+          upper_price: gridConfig.upper_price,
+          grid_count: gridConfig.grid_count,
+          spacing_algo: gridConfig.spacing_algo,
+          amount_per_grid: gridConfig.amount_per_grid,
+          tp_per_grid_pct: gridConfig.tp_per_grid_pct,
+          stop_below_lower: gridConfig.stop_below_lower,
+          stop_above_upper: gridConfig.stop_above_upper,
+          start_mode: gridConfig.start_mode,
+          max_open_grids: 1,
+        }
+      }
+    }
+  }
+
   return {
-    base: {
-      name: botBaseInfo.value.name,
-      pair: botBaseInfo.value.pair,
-      capital: botBaseInfo.value.capital,
-      stakeAmount: botBaseInfo.value.stakeAmount,
-      leverage: botBaseInfo.value.leverage,
-      maxOpenTrades: botBaseInfo.value.maxOpenTrades,
-      dryRun,
-      enableLong: dir === 'long',
-      enableShort: dir === 'short',
-      exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
-      exchangeAccount: dryRun
-        ? null
-        : (acct
-            ? {
-                exchange: acct.exchange,
-                apiKey: acct.apiKey,
-                apiSecret: acct.apiSecret,
-                passphrase: acct.passphrase || '',
-              }
-            : null),
-      tradingMode: botBaseInfo.value.tradingMode,
-      marginMode: botBaseInfo.value.marginMode,
-    },
+    base: common,
     risk: botRisk.value,
     longConfig: localConfig,
     shortConfig: localConfig,
@@ -1499,7 +1514,9 @@ const loadBotDetail = async () => {
       ? !!data.dryRun
       : !data.exchangeAccountId
 
-    const accountId = isDryRunFromData ? DRY_RUN_VALUE : (data.exchangeAccountId ?? DRY_RUN_VALUE)
+    const accountId = isDryRunFromData
+      ? DRY_RUN_VALUE
+      : (data.exchangeAccountId ?? DRY_RUN_VALUE)
 
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
@@ -1521,49 +1538,69 @@ const loadBotDetail = async () => {
       ])
     )
 
-    const longCfg = parseCfg(data.longConfig)
-    const shortCfg = parseCfg(data.shortConfig)
-
-    let cfgToLoad = null
-    if (dir === 'short' && shortCfg && shortCfg.entry) {
-      cfgToLoad = shortCfg
-    } else if (dir === 'long' && longCfg && longCfg.entry) {
-      cfgToLoad = longCfg
-    } else if (longCfg && longCfg.entry) {
-      cfgToLoad = longCfg
-    }
-
-    if (cfgToLoad) {
-      deepMerge(localConfig, cfgToLoad)
-    }
-
-    const dcaLevelCount = (localConfig.dca?.levels || []).length
-
-    if (cfgToLoad && cfgToLoad.entry) {
-      sideFields[dir].entryRsiValue =
-        cfgToLoad.entry?.rsi?.value ?? defaultEntryRsi(dir)
-
-      const cfgLevels = cfgToLoad.dca?.levels || []
-      sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, (_, i) => ({
-        rsi_limit: cfgLevels[i]?.rsi_limit ?? defaultRsiLimit(dir),
-        j_limit: cfgLevels[i]?.j_limit ?? defaultJLimit(dir),
-      }))
+    /* ════════════════════════════════════════════════════════
+     * ★ 网格机器人与 DCA 机器人的加载路径分叉
+     * ════════════════════════════════════════════════════════ */
+    if (isGridBot.value) {
+      const gridCfg = parseCfg(data.gridConfig)
+      const g = gridCfg?.grid || gridCfg || {}
+      Object.assign(gridConfig, {
+        lower_price:       g.lower_price       ?? gridConfig.lower_price,
+        upper_price:       g.upper_price       ?? gridConfig.upper_price,
+        grid_count:        g.grid_count        ?? gridConfig.grid_count,
+        spacing_algo:      g.spacing_algo      ?? gridConfig.spacing_algo,
+        amount_per_grid:   g.amount_per_grid   ?? gridConfig.amount_per_grid,
+        tp_per_grid_pct:   g.tp_per_grid_pct   ?? gridConfig.tp_per_grid_pct,
+        stop_below_lower:  g.stop_below_lower  ?? gridConfig.stop_below_lower,
+        stop_above_upper:  g.stop_above_upper  ?? gridConfig.stop_above_upper,
+        start_mode:        g.start_mode        ?? gridConfig.start_mode,
+      })
     } else {
-      sideFields[dir].entryRsiValue = defaultEntryRsi(dir)
-      sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
-        rsi_limit: defaultRsiLimit(dir),
-        j_limit: defaultJLimit(dir),
+      // ── DCA 路径（保持原逻辑）──
+      const longCfg = parseCfg(data.longConfig)
+      const shortCfg = parseCfg(data.shortConfig)
+
+      let cfgToLoad = null
+      if (dir === 'short' && shortCfg && shortCfg.entry) {
+        cfgToLoad = shortCfg
+      } else if (dir === 'long' && longCfg && longCfg.entry) {
+        cfgToLoad = longCfg
+      } else if (longCfg && longCfg.entry) {
+        cfgToLoad = longCfg
+      }
+
+      if (cfgToLoad) {
+        deepMerge(localConfig, cfgToLoad)
+      }
+
+      const dcaLevelCount = (localConfig.dca?.levels || []).length
+
+      if (cfgToLoad && cfgToLoad.entry) {
+        sideFields[dir].entryRsiValue =
+          cfgToLoad.entry?.rsi?.value ?? defaultEntryRsi(dir)
+
+        const cfgLevels = cfgToLoad.dca?.levels || []
+        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, (_, i) => ({
+          rsi_limit: cfgLevels[i]?.rsi_limit ?? defaultRsiLimit(dir),
+          j_limit: cfgLevels[i]?.j_limit ?? defaultJLimit(dir),
+        }))
+      } else {
+        sideFields[dir].entryRsiValue = defaultEntryRsi(dir)
+        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
+          rsi_limit: defaultRsiLimit(dir),
+          j_limit: defaultJLimit(dir),
+        }))
+      }
+
+      const otherDir = dir === 'long' ? 'short' : 'long'
+      sideFields[otherDir].entryRsiValue = defaultEntryRsi(otherDir)
+      sideFields[otherDir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
+        rsi_limit: defaultRsiLimit(otherDir),
+        j_limit: defaultJLimit(otherDir),
       }))
+
+      localConfig.side = dir
     }
-
-    const otherDir = dir === 'long' ? 'short' : 'long'
-    sideFields[otherDir].entryRsiValue = defaultEntryRsi(otherDir)
-    sideFields[otherDir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
-      rsi_limit: defaultRsiLimit(otherDir),
-      j_limit: defaultJLimit(otherDir),
-    }))
-
-    localConfig.side = dir
 
     if (!isCopy.value) {
       updateSnapshot()
@@ -1628,7 +1665,7 @@ const syncConfig = async () => {
 const syncConfigDebounced = debounce(syncConfig, 600)
 
 watch(
-  () => [botBaseInfo.value, botRisk.value, localConfig],
+  () => [botBaseInfo.value, botRisk.value, localConfig, gridConfig],
   () => {
     if (!loaded.value) return
 

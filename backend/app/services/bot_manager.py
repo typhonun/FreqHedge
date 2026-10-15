@@ -6,7 +6,7 @@ import threading
 from config.settings import DCATP_DB
 from app.services.freqtrade_client import FreqtradeClient
 from app.services.config_service import ConfigService
-from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
+from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS, GRID_DEFAULTS
 
 DB_PATH = Path(DCATP_DB)
 
@@ -40,6 +40,8 @@ def _ensure_table():
             port INTEGER,
             longConfig TEXT,
             shortConfig TEXT,
+            gridConfig TEXT,
+            strategyType TEXT DEFAULT 'dca',
             tradingMode TEXT DEFAULT 'futures',
             marginMode  TEXT DEFAULT 'cross',
             createdAt TEXT,
@@ -84,6 +86,9 @@ def _migrate():
             ("exchangeAccountJson", "ALTER TABLE bots ADD COLUMN exchangeAccountJson TEXT DEFAULT NULL"),
             ("tradingMode", "ALTER TABLE bots ADD COLUMN tradingMode TEXT DEFAULT 'futures'"),
             ("marginMode", "ALTER TABLE bots ADD COLUMN marginMode  TEXT DEFAULT 'cross'"),
+
+            ("gridConfig", "ALTER TABLE bots ADD COLUMN gridConfig TEXT"),
+            ("strategyType", "ALTER TABLE bots ADD COLUMN strategyType TEXT DEFAULT 'dca'"),
 
             ("tp_enabled", "ALTER TABLE bots ADD COLUMN tp_enabled INTEGER DEFAULT 0"),
             ("tp_mode", "ALTER TABLE bots ADD COLUMN tp_mode TEXT DEFAULT 'amount'"),
@@ -209,6 +214,8 @@ class BotManager:
         bot["pair"] = _parse_json_field(bot.get("pair")) or []
         bot["longConfig"] = _parse_json_field(bot.get("longConfig"))
         bot["shortConfig"] = _parse_json_field(bot.get("shortConfig"))
+        bot["gridConfig"] = _parse_json_field(bot.get("gridConfig"))
+        bot["strategyType"] = bot.get("strategyType") or "dca"
         return bot
 
     @staticmethod
@@ -230,17 +237,30 @@ class BotManager:
         base = payload["base"]
         risk = payload.get("risk", {})
 
-        # ★ 1. 先算端口（事务外，独立完成）
+        # ★ 先算端口（事务外，独立完成）
         port = _alloc_port()
 
-        # ★ 2. 一次 INSERT 直接把 port 写进去
+        # ★ 按策略类型决定 long/short/grid 分别写什么
+        strategy_type = (base.get("strategyType") or "dca")
+
+        if strategy_type == "grid":
+            long_config_json = json.dumps({})
+            short_config_json = json.dumps({})
+            grid_config_json = json.dumps(payload.get("gridConfig") or {})
+        else:
+            long_config_json = json.dumps(payload.get("longConfig") or {})
+            short_config_json = json.dumps(payload.get("shortConfig") or {})
+            grid_config_json = json.dumps({})
+
         with _conn() as c:
             cur = c.execute(
                 """
                 INSERT INTO bots (name, pair, capital,
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
-                                  status, port, longConfig, shortConfig, createdAt,
+                                  status, port,
+                                  longConfig, shortConfig, gridConfig, strategyType,
+                                  createdAt,
                                   exchangeAccountId, exchangeAccountJson,
                                   tradingMode, marginMode,
                                   tp_enabled, tp_mode, tp_amount, tp_ratio,
@@ -252,7 +272,9 @@ class BotManager:
                 VALUES (?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?,
-                        'stopped', ?, ?, ?, datetime('now'),
+                        'stopped', ?,
+                        ?, ?, ?, ?,
+                        datetime('now'),
                         ?, ?,
                         ?, ?,
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
@@ -269,8 +291,10 @@ class BotManager:
                     int(base["enableLong"]), int(base["enableShort"]),
 
                     port,
-                    json.dumps(payload.get("longConfig") or {}),
-                    json.dumps(payload.get("shortConfig") or {}),
+                    long_config_json,
+                    short_config_json,
+                    grid_config_json,
+                    strategy_type,
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
 
@@ -302,21 +326,32 @@ class BotManager:
             bot_id = cur.lastrowid
             c.commit()
 
-        print(f"[BotManager] created bot_id={bot_id} port={port} risk={risk}")
+        print(f"[BotManager] created bot_id={bot_id} port={port} type={strategy_type} risk={risk}")
         return BotManager.get(bot_id)
 
     @staticmethod
     def update(bot_id: int, payload: dict):
         base = payload["base"]
         risk = payload.get("risk", {}) or {}
+
+        strategy_type = (base.get("strategyType") or "dca")
+
+        if strategy_type == "grid":
+            long_config_json = json.dumps({})
+            short_config_json = json.dumps({})
+            grid_config_json = json.dumps(payload.get("gridConfig") or {})
+        else:
+            long_config_json = json.dumps(payload.get("longConfig") or {})
+            short_config_json = json.dumps(payload.get("shortConfig") or {})
+            grid_config_json = json.dumps({})
+
         with _conn() as c:
             c.execute(
                 """
                 UPDATE bots SET
                     name=?, pair=?, capital=?,
                     stakeAmount=?, leverage=?, dryRun=?, maxOpenTrades=?,
-                    enableLong=?, enableShort=?,
-                    longConfig=?, shortConfig=?,
+                    longConfig=?, shortConfig=?, gridConfig=?, strategyType=?,
                     exchangeAccountId=?, exchangeAccountJson=?,
                     tradingMode=?, marginMode=?,
 
@@ -338,10 +373,10 @@ class BotManager:
                     base.get("leverage", BOT_DEFAULTS["leverage"]),
                     int(base.get("dryRun", BOT_DEFAULTS["dryRun"])),
                     base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]),
-                    int(base["enableLong"]),
-                    int(base["enableShort"]),
-                    json.dumps(payload.get("longConfig") or {}),
-                    json.dumps(payload.get("shortConfig") or {}),
+                    long_config_json,
+                    short_config_json,
+                    grid_config_json,
+                    strategy_type,
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
                     base.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
@@ -372,8 +407,9 @@ class BotManager:
                 ),
             )
             c.commit()
-        print(f"[BotManager] updated bot_id={bot_id} risk={risk}")
+        print(f"[BotManager] updated bot_id={bot_id} type={strategy_type} risk={risk}")
         return BotManager.get(bot_id)
+
 
     @staticmethod
     def delete(bot_id: int):
@@ -597,12 +633,12 @@ class BotManager:
                 INSERT INTO bots (name, pair, capital,
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
-                                  status, port, longConfig, shortConfig, createdAt,
+                                  status, port, longConfig, shortConfig, gridConfig, strategyType, createdAt,
                                   tradingMode, marginMode)
                 VALUES (?, ?, ?,
                         ?, ?, ?, ?,
                         ?, ?,
-                        'draft', ?, ?, ?, datetime('now'),
+                        'draft', ?, ?, ?, ?, ?, datetime('now'),
                         ?, ?)
                 """,
                 (
@@ -611,7 +647,10 @@ class BotManager:
                     base["maxOpenTrades"], int(base["dryRun"]),
                     int(base["enableLong"]), int(base["enableShort"]),
                     port,
-                    json.dumps({}), json.dumps({}),
+                    json.dumps({}),                       # longConfig
+                    json.dumps({}),                       # shortConfig
+                    json.dumps({"grid": GRID_DEFAULTS}),  # gridConfig
+                    "dca",                                 # strategyType（占位，用户选了类型后由 update 覆盖）
                     base["tradingMode"],
                     base["marginMode"],
                 ),

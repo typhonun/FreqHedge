@@ -400,13 +400,15 @@ class DcaTpBotBase(IStrategy):
     # ============================================================
     def get_runtime_config(self):
         custom = (self.config or {}).get("custom_params", {}) or {}
-        side_key = self._side_str  # "long" / "short"
-        if side_key in custom and custom[side_key]:
-            return custom[side_key]
-
-        # 兜底：ConfigManager（旧单例模式）
+        # 1) 优先 custom_params.grid（推荐：后端注入）
+        if custom.get("grid"):
+            return custom["grid"]
+        # 2) 兼容 custom_params.gridConfig
+        if custom.get("gridConfig"):
+            return custom["gridConfig"]
+        # 3) 兜底 ConfigManager 的 grid 键
         from core.config_manager import ConfigManager
-        return ConfigManager.get(side_key)
+        return ConfigManager.get("grid") or {}
 
     def _cfg(self, cfg: dict, *keys, default=None):
         cur = cfg

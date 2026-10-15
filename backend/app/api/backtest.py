@@ -332,7 +332,10 @@ def _parse_stdout_report(stdout: str) -> dict:
     # ── STRATEGY SUMMARY 一行 ──
     for line in stdout.splitlines():
         parts = _split_table_row(line)
-        if len(parts) >= 7 and parts[0].startswith("DcaTp"):
+        if len(parts) >= 7 and (
+                parts[0].startswith("DcaTp")
+                or parts[0].startswith("GridBot")
+        ):
             try:
                 result["summary"]["total_trades"] = int(parts[1])
                 result["summary"]["absolute_profit"] = float(parts[3])
@@ -833,7 +836,10 @@ async def run_backtest(bot_id: int, req: BacktestRequest):
     config_path = _require_config_path(bot, bot_id, req.side)
     print(f"[backtest] config_path = {config_path}, exists = {config_path.exists()}")
 
-    strategy = "DcaTpLong" if req.side == "long" else "DcaTpShort"
+    from app.services.config_service import ConfigService
+    cfg_dict = ConfigService.read_json(config_path)
+    strategy = cfg_dict.get("strategy") or ("DcaTpLong" if req.side == "long" else "DcaTpShort")
+
     timerange = req.timerange or _default_timerange()
 
     print(f"[backtest] auto_download flag = {req.auto_download} (ignored, use /download-data)")
@@ -1099,6 +1105,7 @@ def _build_config_for_backtest(bot: dict):
             "enableLong": bot.get("enableLong", True),
             "enableShort": bot.get("enableShort", False),
             "exchangeAccount": _get_exchange_account(bot),
+            "strategyType": bot.get("strategyType") or "dca",
         },
         "risk": {
             "tp_enabled": bot.get("tp_enabled", False),
@@ -1121,6 +1128,7 @@ def _build_config_for_backtest(bot: dict):
         },
         "longConfig": bot.get("longConfig"),
         "shortConfig": bot.get("shortConfig"),
+        "gridConfig": bot.get("gridConfig"),
     }
 
 

@@ -13,18 +13,19 @@ BASE_TEMPLATE = USER_DATA / "config_template.json"
 BASE_LONG = BASE_TEMPLATE
 BASE_SHORT = BASE_TEMPLATE
 
+# ★ 策略类型 × 方向 → freqtrade 策略类名
+STRATEGY_CLASS_MAP = {
+    ("dca",  "long"):  "DcaTpLong",
+    ("dca",  "short"): "DcaTpShort",
+    ("grid", "long"):  "GridBotLong",
+    ("grid", "short"): "GridBotShort",
+}
 
 class ConfigService:
 
     # ================== 新增：多实例配置生成 ==================
     @staticmethod
     def generate_configs(bot_id: int, payload: dict):
-        """
-        按 base.enableLong / base.enableShort 决定写哪些 config：
-          - 只 long  → 只写 config_botX_long.json（并删 short）
-          - 只 short → 只写 config_botX_short.json（并删 long）
-          - both     → 两份都写
-        """
         bot_dir = BOTS_DIR / str(bot_id)
         bot_dir.mkdir(parents=True, exist_ok=True)
         (bot_dir / "logs").mkdir(exist_ok=True)
@@ -32,17 +33,24 @@ class ConfigService:
         base = payload["base"]
         enable_long = bool(base.get("enableLong", True))
         enable_short = bool(base.get("enableShort", False))
+        strategy_type = base.get("strategyType") or "dca"
 
         long_path = bot_dir / f"config_bot{bot_id}_long.json"
         short_path = bot_dir / f"config_bot{bot_id}_short.json"
 
         # ---------- 1. 写需要的 ----------
         if enable_long:
+            if strategy_type == "grid":
+                sp = payload.get("gridConfig") or {}
+            else:
+                sp = payload.get("longConfig") or {}
+
             cfg = ConfigService._build_config(
                 bot_id=bot_id,
                 side="long",
                 base=base,
-                strategy_params=payload.get("longConfig") or {},
+                strategy_params=sp,
+                strategy_type=strategy_type,
                 template=BASE_TEMPLATE,
             )
             long_path.write_text(
@@ -51,11 +59,17 @@ class ConfigService:
             )
 
         if enable_short:
+            if strategy_type == "grid":
+                sp = payload.get("gridConfig") or {}
+            else:
+                sp = payload.get("shortConfig") or {}
+
             cfg = ConfigService._build_config(
                 bot_id=bot_id,
                 side="short",
                 base=base,
-                strategy_params=payload.get("shortConfig") or {},
+                strategy_params=sp,
+                strategy_type=strategy_type,
                 template=BASE_TEMPLATE,
             )
             short_path.write_text(
@@ -78,6 +92,7 @@ class ConfigService:
             except Exception as e:
                 print(f"[config] 删除失败 {short_path}: {e}")
 
+
     @staticmethod
     def resolve_config_path(bot_id: int, side: str) -> Optional[Path]:
         """
@@ -87,7 +102,7 @@ class ConfigService:
         return p if p.exists() else None
 
     @staticmethod
-    def _build_config(bot_id, side, base, strategy_params, template):
+    def _build_config(bot_id, side, base, strategy_params, strategy_type, template):
         cfg = ConfigService.read_json(template)
 
         port = ConfigService._get_port(bot_id, side)
@@ -100,7 +115,12 @@ class ConfigService:
 
         cfg["bot_id"] = bot_id
         cfg["side"] = side
-        cfg["strategy"] = "DcaTpShort" if side == "short" else "DcaTpLong"
+
+        # ★ 按 (strategy_type, side) 选策略类名
+        strategy_cls = STRATEGY_CLASS_MAP.get((strategy_type, side))
+        if strategy_cls is None:
+            raise ValueError(f"未知策略类型: {strategy_type}/{side}")
+        cfg["strategy"] = strategy_cls
 
         cfg["dry_run"] = bool(base.get("dryRun", BOT_DEFAULTS["dryRun"]))
         cfg["dry_run_wallet"] = base["capital"]
@@ -114,17 +134,20 @@ class ConfigService:
             cfg["margin_mode"] = margin_mode
             cfg["leverage"] = base.get("leverage", BOT_DEFAULTS["leverage"])
         else:
-            # spot：margin_mode 必须删掉，否则部分 freqtrade 版本报错
             cfg.pop("margin_mode", None)
             cfg["leverage"] = 1
         cfg["max_open_trades"] = int(base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]))
         cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"
 
+        # ★ 网格固定用 5m 主周期（避免与 DCA 的 30m 混在一起）
+        if strategy_type == "grid":
+            cfg["timeframe"] = "5m"
+
         cfg.setdefault("exchange", {})
         cfg["exchange"]["pair_whitelist"] = list(base["pair"])
 
-        # ★★★ 关键：注入用户选择的交易所账户 ★★★
+        # ★ 交易所账户注入
         acct = base.get("exchangeAccount") or {}
         if acct.get("exchange"):
             cfg["exchange"]["name"] = acct["exchange"]
@@ -135,7 +158,6 @@ class ConfigService:
             cfg["exchange"].setdefault("ccxt_config", {})
             cfg["exchange"].setdefault("ccxt_async_config", {})
 
-        # ★ 兜底：回测不需要真实 API key，但必须要有合法的交易所名
         if not cfg["exchange"].get("name"):
             cfg["exchange"]["name"] = "binance"
             cfg["exchange"].setdefault("key", "")
@@ -144,10 +166,21 @@ class ConfigService:
             cfg["exchange"].setdefault("ccxt_async_config", {"enableRateLimit": True, "rateLimit": 200})
             print("[config] exchange.name 为空，回退到 binance")
 
-        cfg["custom_params"] = {
-            "bot_id": bot_id,
-            side: strategy_params,
-        }
+        # ★★★ custom_params 分叉 ★★★
+        if strategy_type == "grid":
+            # GridBotBase.get_runtime_config 会读 custom_params["config"]
+            cfg["custom_params"] = {
+                "bot_id": bot_id,
+                "strategyType": "grid",
+                "config": strategy_params,        # 里面就是 {"grid": {...}}
+            }
+        else:
+            # DcaTpBotBase.get_runtime_config 读 custom_params[side]
+            cfg["custom_params"] = {
+                "bot_id": bot_id,
+                "strategyType": "dca",
+                side: strategy_params,
+            }
 
         return cfg
 
