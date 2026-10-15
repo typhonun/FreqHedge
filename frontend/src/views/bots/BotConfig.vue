@@ -93,18 +93,13 @@
                       v-model="botBaseInfo.pair"
                       multiple
                       filterable
+                      :multiple-limit="isGridStrategy ? 1 : 0"
                       collapse-tags
                       collapse-tags-tooltip
-                      placeholder="选择交易对（可多选）"
+                      :placeholder="isGridStrategy ? '选择交易对（网格仅支持单个）' : '选择交易对（可多选）'"
                       style="width: 100%"
                       :loading="pairLoading"
                     >
-                      <el-option
-                        v-for="p in pairOptions"
-                        :key="p.name"
-                        :label="p.name"
-                        :value="p.name"
-                      />
                     </el-select>
                   </div>
                 </div>
@@ -278,8 +273,8 @@
                   <div class="field-value">
                     <div class="inline-group inline-group--risk">
                       <el-radio-group v-model="botRisk.tp_mode" size="small">
-                        <el-radio-button label="amount">金额</el-radio-button>
-                        <el-radio-button label="ratio">百分比</el-radio-button>
+                        <el-radio-button value="amount">金额</el-radio-button>
+                        <el-radio-button value="ratio">百分比</el-radio-button>
                       </el-radio-group>
 
                       <div class="inline-field inline-field--compact">
@@ -335,8 +330,8 @@
                   <div class="field-value">
                     <div class="inline-group inline-group--risk">
                       <el-radio-group v-model="botRisk.sl_mode" size="small">
-                        <el-radio-button label="amount">金额</el-radio-button>
-                        <el-radio-button label="ratio">百分比</el-radio-button>
+                        <el-radio-button value="amount">金额</el-radio-button>
+                        <el-radio-button value="ratio">百分比</el-radio-button>
                       </el-radio-group>
 
                       <div class="inline-field inline-field--compact">
@@ -392,8 +387,8 @@
                   <div class="field-value">
                     <div class="inline-group inline-group--risk">
                       <el-radio-group v-model="botRisk.trail_mode" size="small">
-                        <el-radio-button label="amount">金额</el-radio-button>
-                        <el-radio-button label="ratio">百分比</el-radio-button>
+                        <el-radio-button value="amount">金额</el-radio-button>
+                        <el-radio-button value="ratio">百分比</el-radio-button>
                       </el-radio-group>
 
                       <div class="inline-field inline-field--compact">
@@ -455,12 +450,12 @@
           </div>
         </el-card>
 
-        <!-- 策略配置区 -->
+        <!-- ★ 策略配置区 -->
         <el-card class="strategy-card" shadow="never">
           <template #header>
             <div class="card-head">
               <span class="card-head__title">
-                {{ isGridBot ? '网格策略配置' : 'DCA 策略配置' }}
+                {{ strategyDef.label }} 配置
               </span>
               <el-text type="info" size="small">
                 {{ botBaseInfo.direction === 'short' ? '空头策略' : '多头策略' }}
@@ -468,14 +463,9 @@
             </div>
           </template>
 
-          <!-- ★ 一进一出：网格 / DCA -->
-          <GridPanel
-            v-if="isGridBot"
-            :config="gridConfig"
-          />
-          <StrategyPanel
-            v-else-if="currentConfig.entry"
-            :config="currentConfig"
+          <component
+            :is="strategyDef.panel"
+            :config="strategyConfig"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"
           />
@@ -820,9 +810,8 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
-import GridPanel from '@features/strategy/components/GridPanel.vue'
-import { getDefaultGridConfig } from '@/config/gridDefaults.js'
 import { BOT_DEFAULTS, RISK_DEFAULTS, getDirectionalDefaults } from '@/config/botDefaults.js'
+import { getStrategyDef } from '@/config/strategyRegistry.js'
 import {
   startBacktest,
   getBacktestProgress,
@@ -832,8 +821,6 @@ import {
   cancelDownload,
   downloadData
 } from '@/api/backtest.js'
-import StrategyPanel from '@features/strategy/components/StrategyPanel.vue'
-import { getDefaultStrategyConfig } from '@features/strategy/composables/useStrategyConfig.js'
 import { useBotStore } from '@/stores/botStore.js'
 import axios from 'axios'
 
@@ -867,7 +854,8 @@ const goExchangeSettings = () => {
 const botId = computed(() => route.params.id)
 // ★ 新增：判断当前是什么策略类型
 const strategyType = computed(() => route.query.strategyType || 'dca')
-const isGridBot = computed(() => strategyType.value === 'grid')
+const strategyDef = computed(() => getStrategyDef(strategyType.value))
+const isGridStrategy = computed(() => strategyType.value === 'grid')
 
 const copyFromId = computed(() => route.query.copyFrom)
 const isCopy = computed(() => !!copyFromId.value)
@@ -1110,12 +1098,12 @@ const botRisk = ref({
   ...RISK_DEFAULTS,
 })
 
-// ★ 网格配置（新增/恢复）
-const gridConfig = reactive(getDefaultGridConfig())
+// ★ 单一配置对象（网格/DCA/未来类型共用）
+const strategyConfig = reactive(strategyDef.value.defaultConfig('long'))
 
-const localConfig = reactive(getDefaultStrategyConfig('long'))
-const currentConfig = computed(() => localConfig)
-const currentStrategy = computed(() => localConfig)
+// ★ 兼容旧命名（DCA 特有的 amount_mode、currentConfig.entry 等仍在用）
+const currentConfig = computed(() => strategyConfig)
+const currentStrategy = computed(() => strategyConfig)
 
 const pairOptions = ref([])
 const pairLoading = ref(false)
@@ -1312,35 +1300,14 @@ const buildPayload = () => {
     } : null),
     tradingMode: botBaseInfo.value.tradingMode,
     marginMode: botBaseInfo.value.marginMode,
-    strategyType: strategyType.value,    // ★ 让后端知道是 DCA 还是 grid
+    strategyType: strategyType.value,
   }
 
-  if (isGridBot.value) {
-    return {
-      base: common,
-      risk: botRisk.value,
-      gridConfig: {                          // ★ 后端读这个字段走 GridBotBase
-        grid: {
-          lower_price: gridConfig.lower_price,
-          upper_price: gridConfig.upper_price,
-          grid_count: gridConfig.grid_count,
-          spacing_algo: gridConfig.spacing_algo,
-          amount_per_grid: gridConfig.amount_per_grid,
-          tp_per_grid_pct: gridConfig.tp_per_grid_pct,
-          stop_below_lower: gridConfig.stop_below_lower,
-          stop_above_upper: gridConfig.stop_above_upper,
-          start_mode: gridConfig.start_mode,
-          max_open_grids: 1,
-        }
-      }
-    }
-  }
-
+  // ★ 表驱动：configKey 从注册表拿，strategyConfig 就是要提交的配置
   return {
     base: common,
     risk: botRisk.value,
-    longConfig: localConfig,
-    shortConfig: localConfig,
+    [strategyDef.value.configKey]: strategyConfig,
   }
 }
 
@@ -1375,6 +1342,10 @@ const validate = () => {
   }
   if (!botBaseInfo.value.pair?.length) {
     ElMessage.warning('请至少选择一个交易对')
+    return false
+  }
+  if (strategyType.value === 'grid' && botBaseInfo.value.pair.length !== 1) {
+    ElMessage.warning('网格机器人只能选择 1 个交易对')
     return false
   }
   if (!botBaseInfo.value.capital || botBaseInfo.value.capital <= 0) {
@@ -1490,6 +1461,26 @@ const loadBotDetail = async () => {
   try {
     const { data } = await axios.get(`${API}/bots/${sourceId}`)
 
+    /* ════════════════════════════════════════════════════════
+     * ★ 以 DB 为准，校正 URL 的 strategyType
+     * ════════════════════════════════════════════════════════ */
+    if (!isCopy.value) {
+      const realType = data.strategyType || 'dca'
+      if (realType !== strategyType.value) {
+        console.warn(
+          `[loadBotDetail] strategyType 不一致：URL=${strategyType.value}, DB=${realType}，强制刷新`
+        )
+        router.replace({
+          name: route.name,
+          params: route.params,
+          query: { ...route.query, strategyType: realType },
+        }).finally(() => {
+          window.location.reload()
+        })
+        return
+      }
+    }
+
     if (isCopy.value) {
       try {
         const { data: cur } = await axios.get(`${API}/bots/${botId.value}`)
@@ -1541,39 +1532,23 @@ const loadBotDetail = async () => {
     /* ════════════════════════════════════════════════════════
      * ★ 网格机器人与 DCA 机器人的加载路径分叉
      * ════════════════════════════════════════════════════════ */
-    if (isGridBot.value) {
-      const gridCfg = parseCfg(data.gridConfig)
-      const g = gridCfg?.grid || gridCfg || {}
-      Object.assign(gridConfig, {
-        lower_price:       g.lower_price       ?? gridConfig.lower_price,
-        upper_price:       g.upper_price       ?? gridConfig.upper_price,
-        grid_count:        g.grid_count        ?? gridConfig.grid_count,
-        spacing_algo:      g.spacing_algo      ?? gridConfig.spacing_algo,
-        amount_per_grid:   g.amount_per_grid   ?? gridConfig.amount_per_grid,
-        tp_per_grid_pct:   g.tp_per_grid_pct   ?? gridConfig.tp_per_grid_pct,
-        stop_below_lower:  g.stop_below_lower  ?? gridConfig.stop_below_lower,
-        stop_above_upper:  g.stop_above_upper  ?? gridConfig.stop_above_upper,
-        start_mode:        g.start_mode        ?? gridConfig.start_mode,
-      })
-    } else {
-      // ── DCA 路径（保持原逻辑）──
+    // ★ 表驱动：从注册表拿 unwrap 函数
+    const raw = strategyDef.value.unwrap(data, dir)
+    if (raw) {
+      deepMerge(strategyConfig, raw)
+    }
+
+    // ★ DCA 特有：维护 sideFields（entryRsiValue / dcaLevels）
+    if (strategyType.value === 'dca') {
       const longCfg = parseCfg(data.longConfig)
       const shortCfg = parseCfg(data.shortConfig)
 
       let cfgToLoad = null
-      if (dir === 'short' && shortCfg && shortCfg.entry) {
-        cfgToLoad = shortCfg
-      } else if (dir === 'long' && longCfg && longCfg.entry) {
-        cfgToLoad = longCfg
-      } else if (longCfg && longCfg.entry) {
-        cfgToLoad = longCfg
-      }
+      if (dir === 'short' && shortCfg && shortCfg.entry) cfgToLoad = shortCfg
+      else if (dir === 'long' && longCfg && longCfg.entry) cfgToLoad = longCfg
+      else if (longCfg && longCfg.entry) cfgToLoad = longCfg
 
-      if (cfgToLoad) {
-        deepMerge(localConfig, cfgToLoad)
-      }
-
-      const dcaLevelCount = (localConfig.dca?.levels || []).length
+      const dcaLevelCount = (strategyConfig.dca?.levels || []).length
 
       if (cfgToLoad && cfgToLoad.entry) {
         sideFields[dir].entryRsiValue =
@@ -1599,7 +1574,7 @@ const loadBotDetail = async () => {
         j_limit: defaultJLimit(otherDir),
       }))
 
-      localConfig.side = dir
+      strategyConfig.side = dir
     }
 
     if (!isCopy.value) {
@@ -1665,7 +1640,7 @@ const syncConfig = async () => {
 const syncConfigDebounced = debounce(syncConfig, 600)
 
 watch(
-  () => [botBaseInfo.value, botRisk.value, localConfig, gridConfig],
+  () => [botBaseInfo.value, botRisk.value, strategyConfig],
   () => {
     if (!loaded.value) return
 
@@ -1681,8 +1656,9 @@ watch(
 )
 
 watch(
-  () => localConfig.entry?.rsi?.value,
+  () => strategyConfig.entry?.rsi?.value,
   (val) => {
+    if (strategyType.value !== 'dca') return   // ★ 新增
     if (!loaded.value) return
     if (val == null) return
     const dir = botBaseInfo.value.direction
@@ -1692,11 +1668,12 @@ watch(
 )
 
 watch(
-  () => (localConfig.dca?.levels || []).map((lv) => ({
+  () => (strategyConfig.dca?.levels || []).map((lv) => ({
     rsi_limit: lv.rsi_limit,
     j_limit: lv.j_limit,
   })),
   (newArr) => {
+    if (strategyType.value !== 'dca') return   // ★ 新增
     if (!loaded.value) return
     if (!newArr) return
     const dir = botBaseInfo.value.direction
@@ -1736,16 +1713,17 @@ watch(
 watch(
   () => botBaseInfo.value.direction,
   (dir, oldDir) => {
+    if (strategyType.value !== 'dca') return   // ★ 新增
     if (!loaded.value) return
     if (dir === oldDir) return
 
     const newFields = sideFields[dir]
 
-    if (localConfig.entry?.rsi) {
-      localConfig.entry.rsi.value = newFields.entryRsiValue
+    if (strategyConfig.entry?.rsi) {           // ★ localConfig → strategyConfig
+      strategyConfig.entry.rsi.value = newFields.entryRsiValue
     }
 
-    const curLevels = localConfig.dca?.levels || []
+    const curLevels = strategyConfig.dca?.levels || []   // ★ localConfig → strategyConfig
     if (curLevels.length > 0) {
       if (newFields.dcaLevels.length !== curLevels.length) {
         newFields.dcaLevels = curLevels.map(() => ({
@@ -1760,7 +1738,7 @@ watch(
       })
     }
 
-    localConfig.side = dir
+    strategyConfig.side = dir                  // ★ localConfig → strategyConfig
     console.log(`[direction] 切换到 ${dir}，已换入方向相关字段`)
   }
 )
@@ -2094,7 +2072,7 @@ const goBack = () => {
 /* ══════════════════════════════════════════════════════════════════
  * 17. 路由离开守卫
  * ══════════════════════════════════════════════════════════════════ */
-onBeforeRouteLeave(async (to, from, next) => {
+onBeforeRouteLeave(async (to, from) => {
   if (downloading.value) {
     try {
       await ElMessageBox.confirm(
@@ -2103,14 +2081,11 @@ onBeforeRouteLeave(async (to, from, next) => {
         { type: 'warning' }
       )
     } catch {
-      next(false)
-      return
+      return false
     }
 
     if (downloadJobId.value && botId.value) {
-      try {
-        await cancelDownload(botId.value, downloadJobId.value)
-      } catch {}
+      try { await cancelDownload(botId.value, downloadJobId.value) } catch {}
     }
     clearDownloadTimers()
     downloading.value = false
@@ -2124,21 +2099,15 @@ onBeforeRouteLeave(async (to, from, next) => {
         { type: 'warning' }
       )
     } catch {
-      next(false)
-      return
+      return false
     }
 
     if (configDirtyDuringBacktest.value) {
       configDirtyDuringBacktest.value = false
-      try {
-        await syncConfig()
-      } catch {}
+      try { await syncConfig() } catch {}
     }
-
     if (backtestJobId.value && botId.value) {
-      try {
-        await cancelBacktest(botId.value, backtestJobId.value)
-      } catch {}
+      try { await cancelBacktest(botId.value, backtestJobId.value) } catch {}
     }
     clearBacktestTimers()
     backtesting.value = false
@@ -2146,13 +2115,11 @@ onBeforeRouteLeave(async (to, from, next) => {
 
   if (!isEdit.value) {
     await discardDraftIfNeeded()
-    next()
-    return
+    return true
   }
   if (!hasChanges()) {
     await discardDraftIfNeeded()
-    next()
-    return
+    return true
   }
 
   let action = 'confirm'
@@ -2175,28 +2142,22 @@ onBeforeRouteLeave(async (to, from, next) => {
   }
 
   if (action === 'cancel') {
-    try {
-      await revertToSnapshot()
-    } catch (e) {
+    try { await revertToSnapshot() } catch (e) {
       console.warn('[leave] revert failed', e)
     }
     await discardDraftIfNeeded()
-    next()
-    return
+    return true
   }
 
   if (action === 'close') {
-    next(false)
-    return
+    return false
   }
 
   const success = await saveAndRestart()
-  if (!success) {
-    next(false)
-    return
-  }
+  if (!success) return false
+
   await discardDraftIfNeeded()
-  next()
+  return true
 })
 
 /* ══════════════════════════════════════════════════════════════════

@@ -166,6 +166,8 @@ import {
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBotStore } from '@/stores/botStore.js'
 import StrategySelectDialog from '@/components/common/StrategySelectDialog.vue'
+import axios from 'axios'
+const API = 'http://localhost:9000'
 
 const router = useRouter()
 
@@ -192,12 +194,11 @@ const goCreate = () => {
 // ★ 新增：处理策略选择
 const handleStrategySelect = async (type) => {
   try {
-    const bot = await createDraft()
-    // 根据选择的类型，带上 query 参数跳转
+    const bot = await createDraft(type)      // ★ 传类型
     router.push({
       name: 'BotDetail',
       params: { id: bot.id },
-      query: { strategyType: type } // dca 或 grid
+      query: { strategyType: type }
     })
   } catch (e) {
     console.error('[goCreate] failed:', e)
@@ -205,11 +206,25 @@ const handleStrategySelect = async (type) => {
   }
 }
 
-const goDetail = (bot) => {
+
+const goDetail = async (bot) => {
+  const id = typeof bot === 'object' ? bot.id : bot
+  let strategyType = typeof bot === 'object' ? bot.strategyType : null
+
+  // ★ 列表没带 strategyType 时，兜底查一次详情
+  if (!strategyType) {
+    try {
+      const { data } = await axios.get(`${API}/bots/${id}`)
+      strategyType = data.strategyType
+    } catch (e) {
+      console.warn('[goDetail] 拉取详情失败，默认 dca', e)
+    }
+  }
+
   router.push({
     name: 'BotDetail',
-    params: { id: bot.id },
-    query: { strategyType: bot.strategyType || 'dca' }
+    params: { id },
+    query: { strategyType: strategyType || 'dca' }
   })
 }
 
@@ -264,7 +279,7 @@ const handleCommand = async (cmd, bot) => {
 
 // ★ 复制：先建草稿，带上源 id
 const goCopy = async (bot) => {
-  const draft = await createDraft()
+  const draft = await createDraft(bot.strategyType || 'dca')   // ★ 传类型
   router.push({
     name: 'BotDetail',
     params: { id: draft.id },

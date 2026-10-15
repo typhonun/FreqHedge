@@ -7,7 +7,7 @@
         <el-col :span="12">
           <el-form-item label="网格下限价">
             <el-input-number
-              v-model="config.lower_price"
+              v-model="config.grid.lower_price"
               :min="0" :step="100"
               controls-position="right"
               style="width: 100%"
@@ -17,7 +17,7 @@
         <el-col :span="12">
           <el-form-item label="网格上限价">
             <el-input-number
-              v-model="config.upper_price"
+              v-model="config.grid.upper_price"
               :min="0" :step="100"
               controls-position="right"
               style="width: 100%"
@@ -35,7 +35,7 @@
         <el-col :span="8">
           <el-form-item label="网格数量">
             <el-input-number
-              v-model="config.grid_count"
+              v-model="config.grid.grid_count"
               :min="2" :max="200" :step="1"
               controls-position="right"
               style="width: 100%"
@@ -44,7 +44,7 @@
         </el-col>
         <el-col :span="8">
           <el-form-item label="间距算法">
-            <el-select v-model="config.spacing_algo" style="width: 100%">
+            <el-select v-model="config.grid.spacing_algo" style="width: 100%">
               <el-option label="等差" value="arithmetic" />
               <el-option label="等比" value="geometric" />
             </el-select>
@@ -53,7 +53,7 @@
         <el-col :span="8">
           <el-form-item label="每格金额(USDT)">
             <el-input-number
-              v-model="config.amount_per_grid"
+              v-model="config.grid.amount_per_grid"
               :min="1" :step="10"
               controls-position="right"
               style="width: 100%"
@@ -82,7 +82,7 @@
         <el-col :span="12">
           <el-form-item label="每格止盈(%)">
             <el-input-number
-              v-model="config.tp_per_grid_pct"
+              v-model="config.grid.tp_per_grid_pct"
               :min="0.1" :max="5" :step="0.1" :precision="2"
               controls-position="right"
               style="width: 100%"
@@ -91,7 +91,7 @@
         </el-col>
         <el-col :span="12">
           <el-form-item label="跌破下沿止损">
-            <el-switch v-model="config.stop_below_lower" />
+            <el-switch v-model="config.grid.stop_below_lower" />
           </el-form-item>
         </el-col>
       </el-row>
@@ -104,7 +104,7 @@
       <el-row :gutter="12">
         <el-col :span="12">
           <el-form-item label="启动模式">
-            <el-select v-model="config.start_mode" style="width: 100%">
+            <el-select v-model="config.grid.start_mode" style="width: 100%">
               <el-option label="等价格进入区间" value="wait" />
               <el-option label="立即启动" value="immediate" />
             </el-select>
@@ -123,7 +123,7 @@ const props = defineProps({
 })
 
 const gridPreview = computed(() => {
-  const c = props.config || {}
+  const c = props.config?.grid || {}
   const lower = Number(c.lower_price || 0)
   const upper = Number(c.upper_price || 0)
   const count = Number(c.grid_count || 0)

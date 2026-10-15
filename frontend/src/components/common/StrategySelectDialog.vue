@@ -9,23 +9,20 @@
     @close="handleClose"
   >
     <div class="strategy-options">
-      <div class="strategy-card" @click="handleSelect('dca')">
+      <div
+        v-for="def in strategyList"
+        :key="def.key"
+        class="strategy-card"
+        @click="handleSelect(def.key)"
+      >
         <div class="strategy-icon">
-          <el-icon :size="40" color="#409EFF"><TrendCharts /></el-icon>
+          <el-icon :size="40" :color="def.color">
+            <component :is="iconMap[def.icon]" />
+          </el-icon>
         </div>
         <div class="strategy-info">
-          <h3>DCA 机器人</h3>
-          <p>经典马丁格尔加仓策略，支持 RSI/KDJ 过滤、动态止盈、网格等丰富配置</p>
-        </div>
-      </div>
-
-      <div class="strategy-card" @click="handleSelect('grid')">
-        <div class="strategy-icon">
-          <el-icon :size="40" color="#67C23A"><Grid /></el-icon>
-        </div>
-        <div class="strategy-info">
-          <h3>网格机器人</h3>
-          <p>在设定价格区间内自动低买高卖，适合震荡行情（目前为空白占位页面）</p>
+          <h3>{{ def.label }}</h3>
+          <p>{{ def.desc }}</p>
         </div>
       </div>
     </div>
@@ -33,8 +30,9 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import { TrendCharts, Grid } from '@element-plus/icons-vue'
+import { listStrategyDefs } from '@/config/strategyRegistry.js'
 
 const props = defineProps({
   modelValue: Boolean
@@ -43,13 +41,19 @@ const emit = defineEmits(['update:modelValue', 'select'])
 
 const visible = ref(false)
 
-watch(() => props.modelValue, (val) => {
-  visible.value = val
-})
+watch(() => props.modelValue, (val) => { visible.value = val })
+watch(visible, (val) => { emit('update:modelValue', val) })
 
-watch(visible, (val) => {
-  emit('update:modelValue', val)
-})
+// ★ 从注册表拿策略列表
+const strategyList = computed(() => listStrategyDefs())
+
+// ★ 图标名 → 组件（注册表里存字符串，避免循环依赖）
+const iconMap = {
+  TrendCharts,
+  Grid,
+  // 未来加：
+  // Setting,
+}
 
 const handleSelect = (type) => {
   emit('select', type)
@@ -62,6 +66,7 @@ const handleClose = () => {
 </script>
 
 <style scoped>
+/* 保持原样式不动 */
 .strategy-options {
   display: flex;
   flex-direction: column;

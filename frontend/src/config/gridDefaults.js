@@ -1,4 +1,5 @@
 // ⚠️ 修改时请同步 backend/app/core/defaults.py 的 GRID_DEFAULTS
+// frontend/src/config/gridDefaults.js
 export const GRID_DEFAULTS = Object.freeze({
   lower_price: 0,
   upper_price: 0,
@@ -11,6 +12,10 @@ export const GRID_DEFAULTS = Object.freeze({
   start_mode: 'wait',
 })
 
+// ★ 外面包一层 grid
 export function getDefaultGridConfig() {
-  return JSON.parse(JSON.stringify(GRID_DEFAULTS))
+  return {
+    timeframe: '5m',
+    grid: JSON.parse(JSON.stringify(GRID_DEFAULTS)),
+  }
 }

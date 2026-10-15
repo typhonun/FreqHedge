@@ -27,6 +27,7 @@ class BotBaseInfo(BaseModel):
     exchangeAccount: Optional[dict] = None
     tradingMode: str = BOT_DEFAULTS["tradingMode"]
     marginMode: str = BOT_DEFAULTS["marginMode"]
+    strategyType: str = "dca"
 
     @model_validator(mode="after")
     def _check_direction(self):
@@ -41,6 +42,8 @@ class BotBaseInfo(BaseModel):
             raise ValueError("marginMode 必须是 cross 或 isolated")
         if self.tradingMode == "spot" and self.enableShort:
             raise ValueError("现货模式不支持做空")
+        if self.strategyType == "grid" and len(self.pair) != 1:
+            raise ValueError("网格机器人只支持单个交易对")
         return self
 
 
@@ -69,6 +72,7 @@ class BotPayload(BaseModel):
     risk: Optional[BotRiskConfig] = None
     longConfig: Optional[dict] = None
     shortConfig: Optional[dict] = None
+    gridConfig: Optional[dict] = None
 
 
 # =========================================================
@@ -108,10 +112,9 @@ async def list_bots():
 
 
 @router.post("/draft")
-async def create_draft_bot():
+async def create_draft_bot(strategyType: str = "dca"):
     """新建草稿 bot，返回完整 bot 记录（含 id）"""
-    bot = BotManager.create_draft()
-    # 尝试生成一份默认 config，失败不影响草稿创建
+    bot = BotManager.create_draft(strategy_type=strategyType)
     try:
         ConfigService.generate_configs(bot["id"], {
             "base": {
@@ -126,10 +129,12 @@ async def create_draft_bot():
                 "enableShort": bot.get("enableShort", BOT_DEFAULTS["enableShort"]),
                 "tradingMode": bot.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
                 "marginMode": bot.get("marginMode", BOT_DEFAULTS["marginMode"]),
+                "strategyType": bot.get("strategyType", strategyType),
             },
             "risk": {},
             "longConfig": bot.get("longConfig"),
             "shortConfig": bot.get("shortConfig"),
+            "gridConfig": bot.get("gridConfig"),
         })
     except Exception as e:
         print(f"[draft] generate_configs failed (non-fatal): {e}")

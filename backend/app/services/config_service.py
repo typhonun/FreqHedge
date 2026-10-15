@@ -1,3 +1,4 @@
+# backend/app/services/config_service.py
 import json
 from pathlib import Path
 from typing import Optional
@@ -6,6 +7,8 @@ from config.settings import (
     FREQTRADE_DIR,
 )
 from app.core.defaults import BOT_DEFAULTS
+from app.core.strategy_registry import get_strategy, strategy_class
+
 FREQTRADE_ROOT = Path(FREQTRADE_DIR)
 USER_DATA = FREQTRADE_ROOT / "user_data"
 BOTS_DIR = USER_DATA / "bots"
@@ -13,17 +16,10 @@ BASE_TEMPLATE = USER_DATA / "config_template.json"
 BASE_LONG = BASE_TEMPLATE
 BASE_SHORT = BASE_TEMPLATE
 
-# ★ 策略类型 × 方向 → freqtrade 策略类名
-STRATEGY_CLASS_MAP = {
-    ("dca",  "long"):  "DcaTpLong",
-    ("dca",  "short"): "DcaTpShort",
-    ("grid", "long"):  "GridBotLong",
-    ("grid", "short"): "GridBotShort",
-}
 
 class ConfigService:
 
-    # ================== 新增：多实例配置生成 ==================
+    # ================== 多实例配置生成 ==================
     @staticmethod
     def generate_configs(bot_id: int, payload: dict):
         bot_dir = BOTS_DIR / str(bot_id)
@@ -35,16 +31,19 @@ class ConfigService:
         enable_short = bool(base.get("enableShort", False))
         strategy_type = base.get("strategyType") or "dca"
 
+        # ★ 从注册表拿元信息
+        meta = get_strategy(strategy_type)
+
         long_path = bot_dir / f"config_bot{bot_id}_long.json"
         short_path = bot_dir / f"config_bot{bot_id}_short.json"
 
         # ---------- 1. 写需要的 ----------
         if enable_long:
-            if strategy_type == "grid":
-                sp = payload.get("gridConfig") or {}
-            else:
-                sp = payload.get("longConfig") or {}
-
+            sp = (
+                payload.get(meta["config_key"])
+                or (payload.get(meta["extra_config_key"]) if meta.get("extra_config_key") else None)
+                or {}
+            )
             cfg = ConfigService._build_config(
                 bot_id=bot_id,
                 side="long",
@@ -59,11 +58,11 @@ class ConfigService:
             )
 
         if enable_short:
-            if strategy_type == "grid":
-                sp = payload.get("gridConfig") or {}
-            else:
-                sp = payload.get("shortConfig") or {}
-
+            sp = (
+                (payload.get(meta["extra_config_key"]) if meta.get("extra_config_key") else None)
+                or payload.get(meta["config_key"])
+                or {}
+            )
             cfg = ConfigService._build_config(
                 bot_id=bot_id,
                 side="short",
@@ -95,9 +94,6 @@ class ConfigService:
 
     @staticmethod
     def resolve_config_path(bot_id: int, side: str) -> Optional[Path]:
-        """
-        返回某 bot 某方向的 config 路径；如果该方向不存在，返回 None。
-        """
         p = BOTS_DIR / str(bot_id) / f"config_bot{bot_id}_{side}.json"
         return p if p.exists() else None
 
@@ -116,8 +112,8 @@ class ConfigService:
         cfg["bot_id"] = bot_id
         cfg["side"] = side
 
-        # ★ 按 (strategy_type, side) 选策略类名
-        strategy_cls = STRATEGY_CLASS_MAP.get((strategy_type, side))
+        # ★ 从注册表选策略类名
+        strategy_cls = strategy_class(strategy_type, side)
         if strategy_cls is None:
             raise ValueError(f"未知策略类型: {strategy_type}/{side}")
         cfg["strategy"] = strategy_cls
@@ -140,9 +136,10 @@ class ConfigService:
         cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"
 
-        # ★ 网格固定用 5m 主周期（避免与 DCA 的 30m 混在一起）
-        if strategy_type == "grid":
-            cfg["timeframe"] = "5m"
+        # ★ 主周期：注册表里指定了就用，否则沿用模板默认
+        meta = get_strategy(strategy_type)
+        if meta.get("timeframe"):
+            cfg["timeframe"] = meta["timeframe"]
 
         cfg.setdefault("exchange", {})
         cfg["exchange"]["pair_whitelist"] = list(base["pair"])
@@ -166,27 +163,25 @@ class ConfigService:
             cfg["exchange"].setdefault("ccxt_async_config", {"enableRateLimit": True, "rateLimit": 200})
             print("[config] exchange.name 为空，回退到 binance")
 
-        # ★★★ custom_params 分叉 ★★★
-        if strategy_type == "grid":
-            # GridBotBase.get_runtime_config 会读 custom_params["config"]
+        # ★★★ custom_params 注入（按注册表的 inject_mode）★★★
+        if meta["inject_mode"] == "single":
             cfg["custom_params"] = {
                 "bot_id": bot_id,
-                "strategyType": "grid",
-                "config": strategy_params,        # 里面就是 {"grid": {...}}
+                "strategyType": strategy_type,
+                "config": strategy_params,
             }
-        else:
-            # DcaTpBotBase.get_runtime_config 读 custom_params[side]
+        else:  # "side"
             cfg["custom_params"] = {
                 "bot_id": bot_id,
-                "strategyType": "dca",
+                "strategyType": strategy_type,
                 side: strategy_params,
             }
 
         return cfg
 
+    # ────────────── 路径 helper（保持原样）──────────────
     @staticmethod
     def config_path(bot_id: int, side: str) -> Path:
-        """返回某个 bot 某个方向的 config 绝对路径"""
         return BOTS_DIR / str(bot_id) / f"config_bot{bot_id}_{side}.json"
 
     @staticmethod
@@ -199,8 +194,7 @@ class ConfigService:
 
     @staticmethod
     def _get_port(bot_id, side):
-        """★ 从 DB 读 port 字段 """
-        from app.services.bot_manager import BotManager  # 延迟导入，避免循环
+        from app.services.bot_manager import BotManager
         bot = BotManager.get(bot_id)
         if not bot or not bot.get("port"):
             raise ValueError(f"bot {bot_id} 没有分配端口，请检查 DB 完整性")
@@ -224,7 +218,6 @@ class ConfigService:
                 print(f"[config] 删除失败（{attempt}/{retries}）: {e}")
                 time.sleep(retry_delay * attempt)
 
-        # 兜底
         print(f"[config] 重试失败，降级忽略错误删除: {bot_dir}")
         shutil.rmtree(bot_dir, ignore_errors=True)
         if bot_dir.exists():
@@ -232,25 +225,10 @@ class ConfigService:
 
     @staticmethod
     def read_json(path):
-
-        with open(
-                path,
-                "r",
-                encoding="utf-8"
-        ) as f:
+        with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     @staticmethod
     def write_json(path, data):
-
-        with open(
-                path,
-                "w",
-                encoding="utf-8"
-        ) as f:
-            json.dump(
-                data,
-                f,
-                indent=4,
-                ensure_ascii=False
-            )
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)

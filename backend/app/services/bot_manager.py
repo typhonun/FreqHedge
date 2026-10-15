@@ -7,6 +7,7 @@ from config.settings import DCATP_DB
 from app.services.freqtrade_client import FreqtradeClient
 from app.services.config_service import ConfigService
 from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS, GRID_DEFAULTS
+from app.core.strategy_registry import get_strategy
 
 DB_PATH = Path(DCATP_DB)
 
@@ -15,6 +16,7 @@ def _conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
 
 _c = BOT_DEFAULTS["capital"]
 _s = BOT_DEFAULTS["stakeAmount"]
@@ -41,6 +43,7 @@ def _ensure_table():
             longConfig TEXT,
             shortConfig TEXT,
             gridConfig TEXT,
+            extraConfig TEXT,                  -- ★ 新增：承载新类型（trailing 等）的配置
             strategyType TEXT DEFAULT 'dca',
             tradingMode TEXT DEFAULT 'futures',
             marginMode  TEXT DEFAULT 'cross',
@@ -88,6 +91,7 @@ def _migrate():
             ("marginMode", "ALTER TABLE bots ADD COLUMN marginMode  TEXT DEFAULT 'cross'"),
 
             ("gridConfig", "ALTER TABLE bots ADD COLUMN gridConfig TEXT"),
+            ("extraConfig", "ALTER TABLE bots ADD COLUMN extraConfig TEXT"),          # ★ 新增
             ("strategyType", "ALTER TABLE bots ADD COLUMN strategyType TEXT DEFAULT 'dca'"),
 
             ("tp_enabled", "ALTER TABLE bots ADD COLUMN tp_enabled INTEGER DEFAULT 0"),
@@ -177,17 +181,66 @@ def _backfill_null_ports():
 _backfill_null_ports()
 
 
+# ══════════════════════════════════════════════════════════════
+# ★ JSON 解析 + fallback helper
+# ══════════════════════════════════════════════════════════════
 def _parse_json_field(v):
     if v is None:
         return None
     if isinstance(v, (dict, list)):
         return v
     if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return None
         try:
-            return json.loads(v)
+            return json.loads(s)
         except Exception:
             return None
     return None
+
+
+def _pick_first_not_none(*vals):
+    """返回第一个不是 None 的值（注意：{} 是有效值，不算空）"""
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
+# ══════════════════════════════════════════════════════════════
+# ★ 根据策略类型把 payload 拆成「老列」+「extraConfig」
+# ══════════════════════════════════════════════════════════════
+def _split_payload_config(payload: dict, strategy_type: str):
+    """
+    返回值：
+      long_json, short_json, grid_json, extra_json
+    规则：
+      - dca        → longConfig, shortConfig 老列；extra 为空
+      - grid       → gridConfig 老列；extra 为空
+      - 其他类型   → 全部塞进 extraConfig（key = meta.config_key）
+                     例如 trailing → extra = {"trailingConfig": {...}}
+    """
+    long_json  = json.dumps({})
+    short_json = json.dumps({})
+    grid_json  = json.dumps({})
+    extra_dict = {}
+
+    if strategy_type == "grid":
+        grid_json = json.dumps(payload.get("gridConfig") or {})
+    elif strategy_type == "dca":
+        long_json  = json.dumps(payload.get("longConfig") or {})
+        short_json = json.dumps(payload.get("shortConfig") or {})
+    else:
+        # ★ 未来新类型：全部进 extraConfig
+        meta = get_strategy(strategy_type)
+        cfg_key = meta.get("config_key")
+        if cfg_key:
+            extra_dict[cfg_key] = payload.get(cfg_key) or {}
+
+    extra_json = json.dumps(extra_dict)
+
+    return long_json, short_json, grid_json, extra_json
 
 
 class BotManager:
@@ -203,6 +256,7 @@ class BotManager:
         bot["exchangeAccountJson"] = _parse_json_field(bot.get("exchangeAccountJson"))
         bot["tradingMode"] = bot.get("tradingMode") or BOT_DEFAULTS["tradingMode"]
         bot["marginMode"] = bot.get("marginMode") or BOT_DEFAULTS["marginMode"]
+
         # ★ 风控字段
         bot["tp_enabled"] = bool(bot.get("tp_enabled"))
         bot["sl_enabled"] = bool(bot.get("sl_enabled"))
@@ -212,9 +266,36 @@ class BotManager:
         bot["auto_stop_on_trail"] = bool(bot.get("auto_stop_on_trail", 1))
 
         bot["pair"] = _parse_json_field(bot.get("pair")) or []
-        bot["longConfig"] = _parse_json_field(bot.get("longConfig"))
-        bot["shortConfig"] = _parse_json_field(bot.get("shortConfig"))
-        bot["gridConfig"] = _parse_json_field(bot.get("gridConfig"))
+
+        # ══════════════════════════════════════════════════════
+        # ★ 老列 + extraConfig 双读，老列优先（用 _pick 而非 or，避免 {} 被跳过）
+        # ══════════════════════════════════════════════════════
+        extra = _parse_json_field(bot.get("extraConfig")) or {}
+
+        bot["longConfig"] = _pick_first_not_none(
+            _parse_json_field(bot.get("longConfig")),
+            extra.get("longConfig"),
+        )
+        bot["shortConfig"] = _pick_first_not_none(
+            _parse_json_field(bot.get("shortConfig")),
+            extra.get("shortConfig"),
+        )
+        bot["gridConfig"] = _pick_first_not_none(
+            _parse_json_field(bot.get("gridConfig")),
+            extra.get("gridConfig"),
+        )
+
+        # ★ 未来加类型时：在这里按 config_key 解 extra
+        # bot["trailingConfig"] = _pick_first_not_none(
+        #     _parse_json_field(bot.get("trailingConfig")),
+        #     extra.get("trailingConfig"),
+        # )
+
+        # ★ 把 extra 里所有 key 也平铺出来（前端可以直接按 configKey 取）
+        for k, v in extra.items():
+            if k not in bot:
+                bot[k] = v
+
         bot["strategyType"] = bot.get("strategyType") or "dca"
         return bot
 
@@ -240,17 +321,10 @@ class BotManager:
         # ★ 先算端口（事务外，独立完成）
         port = _alloc_port()
 
-        # ★ 按策略类型决定 long/short/grid 分别写什么
+        # ★ 按策略类型拆分 config
         strategy_type = (base.get("strategyType") or "dca")
-
-        if strategy_type == "grid":
-            long_config_json = json.dumps({})
-            short_config_json = json.dumps({})
-            grid_config_json = json.dumps(payload.get("gridConfig") or {})
-        else:
-            long_config_json = json.dumps(payload.get("longConfig") or {})
-            short_config_json = json.dumps(payload.get("shortConfig") or {})
-            grid_config_json = json.dumps({})
+        long_config_json, short_config_json, grid_config_json, extra_config_json = \
+            _split_payload_config(payload, strategy_type)
 
         with _conn() as c:
             cur = c.execute(
@@ -259,7 +333,7 @@ class BotManager:
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
                                   status, port,
-                                  longConfig, shortConfig, gridConfig, strategyType,
+                                  longConfig, shortConfig, gridConfig, extraConfig, strategyType,
                                   createdAt,
                                   exchangeAccountId, exchangeAccountJson,
                                   tradingMode, marginMode,
@@ -273,7 +347,7 @@ class BotManager:
                         ?, ?, ?, ?,
                         ?, ?,
                         'stopped', ?,
-                        ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?,
                         datetime('now'),
                         ?, ?,
                         ?, ?,
@@ -294,6 +368,7 @@ class BotManager:
                     long_config_json,
                     short_config_json,
                     grid_config_json,
+                    extra_config_json,          # ★ 新增
                     strategy_type,
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
@@ -335,15 +410,8 @@ class BotManager:
         risk = payload.get("risk", {}) or {}
 
         strategy_type = (base.get("strategyType") or "dca")
-
-        if strategy_type == "grid":
-            long_config_json = json.dumps({})
-            short_config_json = json.dumps({})
-            grid_config_json = json.dumps(payload.get("gridConfig") or {})
-        else:
-            long_config_json = json.dumps(payload.get("longConfig") or {})
-            short_config_json = json.dumps(payload.get("shortConfig") or {})
-            grid_config_json = json.dumps({})
+        long_config_json, short_config_json, grid_config_json, extra_config_json = \
+            _split_payload_config(payload, strategy_type)
 
         with _conn() as c:
             c.execute(
@@ -351,7 +419,7 @@ class BotManager:
                 UPDATE bots SET
                     name=?, pair=?, capital=?,
                     stakeAmount=?, leverage=?, dryRun=?, maxOpenTrades=?,
-                    longConfig=?, shortConfig=?, gridConfig=?, strategyType=?,
+                    longConfig=?, shortConfig=?, gridConfig=?, extraConfig=?, strategyType=?,
                     exchangeAccountId=?, exchangeAccountJson=?,
                     tradingMode=?, marginMode=?,
 
@@ -376,6 +444,7 @@ class BotManager:
                     long_config_json,
                     short_config_json,
                     grid_config_json,
+                    extra_config_json,          # ★ 新增
                     strategy_type,
                     base.get("exchangeAccountId"),
                     json.dumps(base.get("exchangeAccount") or {}),
@@ -409,7 +478,6 @@ class BotManager:
             c.commit()
         print(f"[BotManager] updated bot_id={bot_id} type={strategy_type} risk={risk}")
         return BotManager.get(bot_id)
-
 
     @staticmethod
     def delete(bot_id: int):
@@ -609,7 +677,7 @@ class BotManager:
         return ProcessService.status_bot(bot)
 
     @staticmethod
-    def create_draft():
+    def create_draft(strategy_type: str = "dca"):
         """创建一个草稿 bot：status='draft'，参数用默认值，允许 pair 为空"""
         default_payload = {
             "base": {
@@ -633,12 +701,16 @@ class BotManager:
                 INSERT INTO bots (name, pair, capital,
                                   stakeAmount, leverage, maxOpenTrades, dryRun,
                                   enableLong, enableShort,
-                                  status, port, longConfig, shortConfig, gridConfig, strategyType, createdAt,
+                                  status, port,
+                                  longConfig, shortConfig, gridConfig, extraConfig, strategyType,
+                                  createdAt,
                                   tradingMode, marginMode)
-                VALUES (?, ?, ?,
-                        ?, ?, ?, ?,
+                VALUES (?, ?,
+                        ?, ?, ?, ?, ?,
                         ?, ?,
-                        'draft', ?, ?, ?, ?, ?, datetime('now'),
+                        'draft', ?,
+                        ?, ?, ?, ?, ?,
+                        datetime('now'),
                         ?, ?)
                 """,
                 (
@@ -647,10 +719,11 @@ class BotManager:
                     base["maxOpenTrades"], int(base["dryRun"]),
                     int(base["enableLong"]), int(base["enableShort"]),
                     port,
-                    json.dumps({}),                       # longConfig
-                    json.dumps({}),                       # shortConfig
-                    json.dumps({"grid": GRID_DEFAULTS}),  # gridConfig
-                    "dca",                                 # strategyType（占位，用户选了类型后由 update 覆盖）
+                    json.dumps({}),  # longConfig
+                    json.dumps({}),  # shortConfig
+                    json.dumps({}),  # gridConfig
+                    json.dumps({}),  # extraConfig
+                    strategy_type,  # ★ 不再写死 "dca"
                     base["tradingMode"],
                     base["marginMode"],
                 ),
@@ -658,7 +731,7 @@ class BotManager:
             bot_id = cur.lastrowid
             c.commit()
 
-        print(f"[BotManager] created DRAFT bot_id={bot_id} port={port}")
+        print(f"[BotManager] created DRAFT bot_id={bot_id} port={port} type={strategy_type}")
         return BotManager.get(bot_id)
 
     @staticmethod

@@ -41,8 +41,10 @@ export function useBotStore() {
     await axios.post(`${API}/bots/${id}/${action}`)
     await fetchBots()
   }
-  const createDraft = async () => {
-    const { data } = await axios.post(`${API}/bots/draft`)
+  const createDraft = async (strategyType = 'dca') => {
+    const { data } = await axios.post(`${API}/bots/draft`, null, {
+      params: { strategyType }
+    })
     return data
   }
 
