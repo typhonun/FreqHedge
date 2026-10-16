@@ -26,6 +26,7 @@ STRATEGIES = {
         # "dca" 类型：custom_params[side] = config
         # "single" 类型：custom_params["config"] = config
         "inject_mode": "side",
+        "single_pair": False,
     },
     "grid": {
         "label": "网格机器人",
@@ -40,6 +41,7 @@ STRATEGIES = {
         },
         "inject_mode": "single",
         "timeframe": "5m",
+        "single_pair": True,
     },
     # ★ 未来加第三种：
     # "trailing": {

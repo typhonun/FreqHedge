@@ -1,4 +1,5 @@
-# ⚠️ 修改时请同步 frontend/src/config/botDefaults.js 与 frontend/src/config/gridDefaults.js
+# ⚠️ 修改时请同步 frontend/src/config/gridDefaults.js
+
 BOT_DEFAULTS = {
     "capital": 1000,
     "stakeAmount": 50,
@@ -9,7 +10,7 @@ BOT_DEFAULTS = {
     "enableShort": False,
     "tradingMode": "futures",
     "marginMode": "cross",
-    "strategyType": "dca",         # ★ 新增：策略类型
+    "strategyType": "dca",
 }
 
 RISK_DEFAULTS = {
@@ -32,18 +33,20 @@ RISK_DEFAULTS = {
     "auto_stop_on_trail": True,
 }
 
-# ★ 新增：网格机器人默认值（与前端 gridDefaults.js 保持一致）
+# ★ 网格机器人默认值（与前端 gridDefaults.js 保持一致）
 GRID_DEFAULTS = {
     "lower_price": 0,
     "upper_price": 0,
     "grid_count": 20,
     "spacing_algo": "arithmetic",
-    "amount_per_grid": 50,
     "tp_per_grid_pct": 0.5,
     "stop_below_lower": True,
     "stop_above_upper": False,
     "start_mode": "wait",
-    "max_open_grids": 1,
+    # ★ 默认 = grid_count（不额外限制，对齐币安；调小可作风控）
+    "max_open_grids": 20,
+    # ★ 保留旧字段：老数据兼容
+    "amount_per_grid": 0,
 }
 
 

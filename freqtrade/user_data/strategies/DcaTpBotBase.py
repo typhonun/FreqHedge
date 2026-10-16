@@ -399,16 +399,25 @@ class DcaTpBotBase(IStrategy):
     # 配置读取
     # ============================================================
     def get_runtime_config(self):
+        """DCA 类型读取：优先 custom_params[side]，其次 custom_params.longConfig / shortConfig"""
         custom = (self.config or {}).get("custom_params", {}) or {}
-        # 1) 优先 custom_params.grid（推荐：后端注入）
-        if custom.get("grid"):
-            return custom["grid"]
-        # 2) 兼容 custom_params.gridConfig
-        if custom.get("gridConfig"):
-            return custom["gridConfig"]
-        # 3) 兜底 ConfigManager 的 grid 键
-        from core.config_manager import ConfigManager
-        return ConfigManager.get("grid") or {}
+        side_key = self._side_str  # "long" / "short"
+
+        # 1) 优先 custom_params[side]（config_service 走 inject_mode="side" 时写入）
+        if side_key in custom and custom[side_key]:
+            return custom[side_key]
+
+        # 2) 兼容：custom_params.longConfig / custom_params.shortConfig
+        cfg_key = f"{side_key}Config"  # "longConfig" / "shortConfig"
+        if cfg_key in custom and custom[cfg_key]:
+            return custom[cfg_key]
+
+        # 3) 兜底 ConfigManager 的 side 键
+        try:
+            from core.config_manager import ConfigManager
+            return ConfigManager.get(side_key) or {}
+        except Exception:
+            return {}
 
     def _cfg(self, cfg: dict, *keys, default=None):
         cur = cfg

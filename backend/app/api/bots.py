@@ -9,6 +9,7 @@ from app.services.bot_manager import BotManager
 from app.services.position_service import PositionService   # ★ 新增
 from app.services.config_service import ConfigService
 from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
+from app.core.strategy_registry import get_strategy
 
 router = APIRouter()
 
@@ -42,8 +43,9 @@ class BotBaseInfo(BaseModel):
             raise ValueError("marginMode 必须是 cross 或 isolated")
         if self.tradingMode == "spot" and self.enableShort:
             raise ValueError("现货模式不支持做空")
-        if self.strategyType == "grid" and len(self.pair) != 1:
-            raise ValueError("网格机器人只支持单个交易对")
+        meta = get_strategy(self.strategyType)
+        if meta.get("single_pair") and len(self.pair) != 1:
+            raise ValueError(f"{meta['label']} 只支持单个交易对")
         return self
 
 

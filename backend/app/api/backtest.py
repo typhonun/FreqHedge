@@ -12,14 +12,14 @@ import pandas as pd
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-
+from app.services.config_service import ConfigService
 from app.services import backtest_job
 from app.services.backtest_job import create_job, run_job_async, get_job
 from app.services.bot_manager import BotManager
 from app.services.config_service import ConfigService
+from app.core.strategy_registry import strategy_class
 from config.settings import FREQTRADE_DIR
 
 router = APIRouter()
@@ -836,9 +836,13 @@ async def run_backtest(bot_id: int, req: BacktestRequest):
     config_path = _require_config_path(bot, bot_id, req.side)
     print(f"[backtest] config_path = {config_path}, exists = {config_path.exists()}")
 
-    from app.services.config_service import ConfigService
     cfg_dict = ConfigService.read_json(config_path)
-    strategy = cfg_dict.get("strategy") or ("DcaTpLong" if req.side == "long" else "DcaTpShort")
+    strategy = cfg_dict.get("strategy")
+    if not strategy:
+        strategy_type = bot.get("strategyType") or "dca"
+        strategy = strategy_class(strategy_type, req.side)
+    if not strategy:
+        raise HTTPException(400, f"无法确定策略类名: bot={bot_id}, side={req.side}")
 
     timerange = req.timerange or _default_timerange()
 
@@ -1194,7 +1198,11 @@ async def start_backtest(bot_id: int, req: BacktestRequest):
     ConfigService.generate_configs(bot_id, _build_config_for_backtest(bot))
     config_path = _require_config_path(bot, bot_id, req.side)
 
-    strategy = "DcaTpLong" if req.side == "long" else "DcaTpShort"
+    strategy_type = bot.get("strategyType") or "dca"
+    strategy = strategy_class(strategy_type, req.side)
+    if not strategy:
+        raise HTTPException(400, f"未知策略类型: {strategy_type}/{req.side}")
+
     timerange = req.timerange or _default_timerange()
 
     cmd = [

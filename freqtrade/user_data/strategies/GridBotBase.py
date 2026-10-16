@@ -1,13 +1,15 @@
 # freqtrade/user_data/strategies/GridBotBase.py
 """
-网格机器人基类（最小可用版）
+网格机器人基类（固定价差版）
 
 设计要点：
-  - 一个网格 = 一个 trade（freqtrade 单 pair 只能有一个 trade）
-  - 每格状态用 custom_data 记录：level_idx / qty / entry_price / closed
-  - 用 confirm_trade_entry 拦截"到价才开仓"，用 custom_exit 逐格止盈
+  - 一个网格 = 一个 Trade（freqtrade 单 pair 只能有一个 trade）
+  - 多格同时持有：trade.custom_data["grid_positions"] = {"3": {...}, "7": {...}}
+  - 首仓由 confirm_trade_entry 放行
+  - 后续加仓/减仓由 adjust_trade_position 处理
+  - 减仓按格独立止盈；一次可平多格
+  - ★ 卖点 = 该格的上沿（固定价格），不依赖 entry
   - 复用 DcaTpBotBase 的基础设施（图表标记、HTF、Pump、时间止损等）
-  - 不用 adjust_trade_position 加仓（避免与 DCA 冲突）
 
 不做的事情：
   - 不做"每格一个 trade"（freqtrade 不支持）
@@ -15,6 +17,8 @@
 """
 
 import sys
+import json
+import bisect
 import traceback
 import time as _time
 from pathlib import Path
@@ -37,83 +41,128 @@ RED = "\033[31m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 BLUE = "\033[34m"
+CYAN = "\033[36m"
 RESET = "\033[0m"
+
+GRID_TAG = f"{CYAN}[Grid]{RESET}"
 
 
 class GridBotBase(DcaTpBotBase):
-    """
-    网格机器人基类。
+    """网格机器人基类（固定价差版）"""
 
-    子类必须：
-      - 设置 can_short = False（做多网格）或 True（做空网格）
-
-    配置键（runtime config）：
-      grid:
-        upper_price        : float   # 网格上限价
-        lower_price        : float   # 网格下限价
-        grid_count         : int     # 网格数量 N（会生成 N+1 条格线）
-        spacing_algo       : str     # 'arithmetic'（默认）或 'geometric'
-        amount_per_grid    : float   # 每格下单保证金（USDT）
-        tp_per_grid_pct    : float   # 每格止盈百分比（例如 0.5 表示 0.5%）
-        start_mode         : str     # 'wait'（默认，等价格进入区间）/ 'immediate'
-        stop_below_lower   : bool    # 跌破下沿是否止损
-        stop_above_upper   : bool    # 涨破上沿是否停止（暂只做标记）
-        max_open_grids     : int     # 同时最多持有的格数（默认 1，网格通常 1）
-    """
-
-    timeframe = '5m'          # 网格用较小周期
-    can_short = False         # 子类覆盖
+    timeframe = '5m'
+    can_short = False
 
     use_exit_signal = True
     trailing_stop = False
-    position_adjustment_enable = False   # ★ 网格不通过 DCA 加仓
+    position_adjustment_enable = True
     use_custom_stoploss = False
 
     # ============================================================
-    # ★ 覆盖基类的 get_runtime_config：网格读 gridConfig 而不是 long/short
+    # 初始化
+    # ============================================================
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.position_adjustment_enable = True
+
+        try:
+            self._clear_bot_grid_used_levels()
+            self._clear_bot_grid_pending_level(None)
+        except Exception:
+            logger.warning(f"{GRID_TAG} 启动清空 used_levels 失败", exc_info=True)
+            
+
+    def bot_start(self, **kwargs) -> None:
+        """★ 网格自己的启动日志，不再走 DcaTpBotBase.bot_start"""
+        ft_cfg = self.config or {}
+
+        dry_run_wallet = ft_cfg.get("dry_run_wallet", 0)
+        stake_amount = ft_cfg.get("stake_amount", 0)
+        max_open_trades = ft_cfg.get("max_open_trades", 0)
+        tradable_balance_ratio = ft_cfg.get("tradable_balance_ratio", 0)
+        leverage = ft_cfg.get("leverage", 1)
+
+        exchange_cfg = ft_cfg.get("exchange", {}) or {}
+        pair_whitelist = exchange_cfg.get("pair_whitelist", []) or []
+        pair_blacklist = exchange_cfg.get("pair_blacklist", []) or []
+
+        # ── 网格参数 ──
+        g = self._grid_cfg()
+        lower = self._cfg_float(g, "lower_price", 0.0)
+        upper = self._cfg_float(g, "upper_price", 0.0)
+        count = self._cfg_int(g, "grid_count", 0)
+        amount_per_grid = self._cfg_float(g, "amount_per_grid", 0.0)
+        spacing = str(g.get("spacing_algo", "arithmetic"))
+        start_mode = str(g.get("start_mode", "wait"))
+        stop_below = bool(g.get("stop_below_lower", True))
+        tp_pct = self._cfg_float(g, "tp_per_grid_pct", 0.0)
+
+        step = 0.0
+        step_pct = 0.0
+        if lower > 0 and upper > lower and count > 0:
+            step = (upper - lower) / count
+            step_pct = step / lower * 100
+
+        total_invest = amount_per_grid * count
+
+        dir_cn = "空头" if self._is_short else "多头"
+
+        logger.info(
+            "\n"
+            f"==================== {dir_cn}网格配置概览 ====================\n"
+            f"初始资金          : {dry_run_wallet} USDT\n"
+            f"开仓金额          : {stake_amount} USDT\n"
+            f"最大持仓          : {max_open_trades}\n"
+            f"资金利用率        : {tradable_balance_ratio}\n"
+            f"持仓杠杆          : {leverage}x\n"
+            f"K线时间周期       : {self.timeframe}\n"
+            f"白名单            : {', '.join(pair_whitelist) if pair_whitelist else '(空)'}\n"
+            f"黑名单            : {', '.join(pair_blacklist) if pair_blacklist else '(空)'}\n"
+            f"------------------------------------------------------\n"
+            f"价格区间          : [{lower}, {upper}]\n"
+            f"网格数量          : {count} 格\n"
+            f"格距              : {step:.4f} ({step_pct:.2f}%)\n"
+            f"间距算法          : {spacing}\n"
+            f"每格金额          : {amount_per_grid} USDT\n"
+            f"总投入            : {total_invest} USDT\n"
+            f"每格止盈          : {tp_pct}%\n"
+            f"启动模式          : {start_mode}\n"
+            f"跌破下沿止损      : {'开' if stop_below else '关'}\n"
+            f"======================================================"
+        )
+
+
+    # ============================================================
+    # 配置读取
     # ============================================================
     def get_runtime_config(self):
         custom = (self.config or {}).get("custom_params", {}) or {}
-
-        # 1) 推荐路径：后端把网格配置平铺到 custom_params.config
         if custom.get("config"):
             return custom["config"]
-
-        # 2) 兼容：custom_params.gridConfig / custom_params.grid
         if custom.get("gridConfig"):
             return custom["gridConfig"]
         if custom.get("grid"):
             return custom["grid"]
-
-        # 3) 兜底：ConfigManager 里的 grid 键
         try:
             from core.config_manager import ConfigManager
             return ConfigManager.get("grid") or {}
         except Exception:
             return {}
 
-    # ============================================================
-    # 配置读取
-    # ============================================================
     def _grid_cfg(self):
         cfg = self.get_runtime_config() or {}
         return self._cfg(cfg, "grid", default={}) or {}
 
+    def _amount_mode(self) -> str:
+        cfg = self.get_runtime_config() or {}
+        mode = str(cfg.get("amount_mode", "amount")).lower()
+        return mode if mode in ("amount", "percent") else "amount"
+
     # ============================================================
-    # 网格线计算
+    # 网格线
     # ============================================================
     def _build_grid_levels(self):
-        """
-        返回格线价格列表（升序），长度 = grid_count + 1。
-
-        arithmetic:
-            price[i] = lower + i * (upper - lower) / N
-        geometric:
-            ratio = (upper / lower) ** (1 / N)
-            price[i] = lower * (ratio ** i)
-        """
         g = self._grid_cfg()
-
         upper = self._cfg_float(g, "upper_price", 0.0)
         lower = self._cfg_float(g, "lower_price", 0.0)
         count = self._cfg_int(g, "grid_count", 0)
@@ -130,14 +179,11 @@ class GridBotBase(DcaTpBotBase):
         return [lower + step * i for i in range(count + 1)]
 
     def _find_grid_index(self, price):
-        """给定价格，找到它落在的格区间索引 i，使得 levels[i] <= price < levels[i+1]"""
         levels = self._build_grid_levels()
         if not levels:
             return None
         if price < levels[0] or price > levels[-1]:
             return None
-        # 二分
-        import bisect
         idx = bisect.bisect_right(levels, price) - 1
         if idx < 0:
             idx = 0
@@ -145,8 +191,40 @@ class GridBotBase(DcaTpBotBase):
             idx = len(levels) - 2
         return idx
 
+    def _grid_range_str(self, idx: int) -> str:
+        """返回某格的区间字符串：'[1780.00, 1840.00]'"""
+        try:
+            levels = self._build_grid_levels()
+            if not levels or idx < 0 or idx >= len(levels) - 1:
+                return "?"
+            return f"[{levels[idx]:.2f}, {levels[idx + 1]:.2f}]"
+        except Exception:
+            return "?"
+
+    def _grid_tp_price(self, idx: int) -> float:
+        """
+        ★ 卖点 = 该格的上沿（多头）/ 下沿（空头）
+        流派 A：固定价差，不依赖 entry
+        """
+        try:
+            levels = self._build_grid_levels()
+            if not levels:
+                return 0.0
+            if self._is_short:
+                # 空头：卖点 = 该格的下沿
+                if idx < 0 or idx >= len(levels):
+                    return 0.0
+                return float(levels[idx])
+            else:
+                # 多头：卖点 = 该格的上沿
+                if idx < 0 or idx >= len(levels) - 1:
+                    return 0.0
+                return float(levels[idx + 1])
+        except Exception:
+            return 0.0
+
     # ============================================================
-    # 交易方向辅助
+    # 方向辅助
     # ============================================================
     @property
     def _is_short(self) -> bool:
@@ -161,15 +239,12 @@ class GridBotBase(DcaTpBotBase):
         return "buy" if self._is_short else "sell"
 
     # ============================================================
-    # 禁用 DCA 基类的信号（网格不用 RSI/MACD/BB 开仓）
+    # 入场信号
     # ============================================================
     def populate_entry_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        """
-        网格开仓完全由 confirm_trade_entry 判断（价格触线）。
-        这里把 enter_* 全部置 0，防止基类的信号逻辑误开仓。
-        """
         col_long = "enter_long"
         col_short = "enter_short"
+
         if col_long not in dataframe.columns:
             dataframe[col_long] = 0
         if col_short not in dataframe.columns:
@@ -178,10 +253,25 @@ class GridBotBase(DcaTpBotBase):
         dataframe[col_long] = 0
         dataframe[col_short] = 0
 
+        g = self._grid_cfg()
+        upper = self._cfg_float(g, "upper_price", 0.0)
+        lower = self._cfg_float(g, "lower_price", 0.0)
+
+        if upper <= 0 or lower <= 0 or upper <= lower:
+            return dataframe
+
+        in_range = (dataframe['close'] >= lower) & (dataframe['close'] <= upper)
+
+        if self._is_short:
+            dataframe.loc[in_range, col_short] = 1
+            dataframe.loc[in_range, "enter_tag"] = "grid_signal"
+        else:
+            dataframe.loc[in_range, col_long] = 1
+            dataframe.loc[in_range, "enter_tag"] = "grid_signal"
+
         return dataframe
 
     def populate_exit_trend(self, dataframe: DataFrame, metadata: dict) -> DataFrame:
-        """网格平仓由 custom_exit 判断，不用 exit_* 信号。"""
         if self._is_short:
             dataframe['exit_short'] = 0
         else:
@@ -189,136 +279,110 @@ class GridBotBase(DcaTpBotBase):
         return dataframe
 
     # ============================================================
-    # 开仓拦截：价格触线才开仓
+    # 首仓拦截
     # ============================================================
     def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
                             current_time, entry_tag, side, **kwargs):
-        """
-        只有满足以下条件才允许开仓：
-          1. 价格落在 [lower, upper] 区间内
-          2. 当前没有已持有的格（单格模式）或持有格数 < max_open_grids
-          3. 该格之前未被开过（记录在 bot 级别 custom_data，用 dict 存）
-        """
         try:
             g = self._grid_cfg()
-
             upper = self._cfg_float(g, "upper_price", 0.0)
             lower = self._cfg_float(g, "lower_price", 0.0)
             if upper <= 0 or lower <= 0:
-                logger.warning(f"[{pair}] 网格上下沿未配置，拒绝开仓")
+                logger.warning(f"{GRID_TAG} 上下沿未配置，拒绝首仓")
                 return False
 
-            # 已开过的格索引（bot 级别，不用 trade，因为 trade 还不存在）
-            used_levels = self._get_bot_grid_used_levels()
-            max_grids = self._cfg_int(g, "max_open_grids", 1)
+            try:
+                open_trades = Trade.get_trades_proxy(pair=pair, is_open=True)
+                open_count = len(list(open_trades))
+            except Exception:
+                open_count = 0
 
-            if len(used_levels) >= max_grids:
-                logger.info(
-                    f"[{pair}] {YELLOW}网格已达最大持有数 {max_grids}，拒绝开仓{RESET}"
-                )
+            if open_count > 0:
                 return False
 
-            # 价格必须落在区间内
             if rate < lower or rate > upper:
-                logger.info(
-                    f"[{pair}] 当前价 {rate:.4f} 不在网格区间 [{lower:.4f}, {upper:.4f}]，拒绝开仓"
-                )
                 return False
 
             idx = self._find_grid_index(rate)
             if idx is None:
                 return False
 
-            if idx in used_levels:
-                logger.info(f"[{pair}] 格 {idx} 已持有/已用过，拒绝重复开仓")
-                return False
-
-            # 记录将要开仓的格
             self._set_bot_grid_pending_level(pair, idx)
 
-            # 记录图表标记
             candle_ts = self._index_candle_key(current_time)
             self._record_chart_marker(
                 event_type="grid_entry_signal", pair=pair, trade_id=0,
                 side=self._side_str, price=rate, amount=amount,
                 current_time=current_time,
-                message=f"网格开仓 格{idx}",
+                message=f"网格首仓 格{idx}",
                 candle_time=candle_ts,
-            )
-
-            logger.info(
-                f"[{pair}] {GREEN}网格开仓信号 {RESET}"
-                f"格={idx}, 价格={rate:.4f}, "
-                f"区间=[{lower:.4f}, {upper:.4f}], 格线={self._build_grid_levels()}"
             )
             return True
 
         except Exception:
-            logger.exception(f"[{pair}] confirm_trade_entry 异常")
+            logger.exception(f"{GRID_TAG} confirm_trade_entry 异常")
             return False
 
     # ============================================================
-    # order_filled：把 pending 格信息固化到 trade
+    # order_filled：首仓成交
     # ============================================================
     def order_filled(self, pair, trade, order, current_time, **kwargs):
-        """开仓成交后，把格信息写入 trade custom_data。"""
         try:
             super().order_filled(pair, trade, order, current_time, **kwargs)
         except Exception:
-            logger.exception(f"[{pair}] super().order_filled 异常")
+            logger.exception(f"{GRID_TAG} super().order_filled 异常")
 
         try:
             if order.ft_order_side != self._entry_order_side:
                 return
 
-            # 是否已初始化过格信息
-            if self._get_bool(trade, "grid_initialized", False):
+            if self._get_bool(trade, "grid_n_initialized", False):
                 return
 
             idx = self._get_bot_grid_pending_level(trade.pair)
-            if idx is None:
-                idx = self._find_grid_index(float(order.average or trade.open_rate))
-
             entry_price = float(order.average or trade.open_rate)
+            if idx is None:
+                idx = self._find_grid_index(entry_price)
+
             qty = abs(float(order.amount or trade.amount or 0.0))
 
-            self._set(trade, "grid_level_idx", idx)
-            self._set(trade, "grid_entry_price", entry_price)
-            self._set(trade, "grid_entry_qty", qty)
-            self._set(trade, "grid_initialized", True)
-            self._set(trade, "grid_closed", False)
+            positions = self._get_grid_positions(trade)
+            positions[str(int(idx))] = {"entry": entry_price, "qty": qty}
+            self._set_grid_positions(trade, positions)
 
-            # 记入已用格集合
-            self._add_bot_grid_used_level(trade.pair, idx)
+            self._set(trade, "grid_n_initialized", True)
+            self._set(trade, "grid_anchor_price", float(entry_price))
+            self._set_taken_levels(trade, set())
+
             self._clear_bot_grid_pending_level(trade.pair)
 
+            # ── 日志：首仓（显示保证金，和加仓一致）
+            try:
+                lev = float(self.leverage(trade.pair) or 1.0)
+            except Exception:
+                lev = 1.0
+            notional = entry_price * qty
+            margin = notional / lev
+
+            range_str = self._grid_range_str(idx)
+            tp_price = self._grid_tp_price(idx)
+            tp_pct = (tp_price - entry_price) / entry_price * 100 if entry_price > 0 else 0
+
             logger.info(
-                f"[{pair}] 网格格信息已写入 trade: "
-                f"level_idx={idx}, entry_price={entry_price:.4f}, qty={qty}"
+                f"{GRID_TAG} {GREEN}▶ 首仓{RESET} | {pair} | 格{idx} | "
+                f"区间={range_str} | 成交价={entry_price:.2f} | "
+                f"卖点={tp_price:.2f}({tp_pct:+.2f}%) | "
+                f"保证金={margin:.2f} | 数量={qty:.6f}"
             )
+            self._log_state_detail(trade, entry_price)
 
         except Exception:
-            logger.exception(f"[{pair}] order_filled 网格记录失败")
-
-
-    def _remove_bot_grid_used_level(self, pair, idx: int):
-        try:
-            from core.config_manager import ConfigManager
-            cur = self._get_bot_grid_used_levels()
-            cur.discard(int(idx))
-            ConfigManager.set_bot_kv(
-                f"grid_used_levels_{self._side_str}",
-                list(cur),
-            )
-        except Exception:
-            logger.warning(f"[{pair}] 移除已用格失败 idx={idx}", exc_info=True)
-
+            logger.exception(f"{GRID_TAG} order_filled 网格记录失败")
 
     # ============================================================
-    # custom_exit：逐格止盈 / 跌破下沿止损
+    # custom_exit
     # ============================================================
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
-        # 先让基类处理时间止损 / ROI 止损
         try:
             base_exit = super().custom_exit(
                 pair, trade, current_time, current_rate, current_profit, **kwargs
@@ -326,134 +390,444 @@ class GridBotBase(DcaTpBotBase):
             if base_exit:
                 return base_exit
         except Exception:
-            logger.exception(f"[{pair}] super().custom_exit 异常")
+            logger.exception(f"{GRID_TAG} super().custom_exit 异常")
 
         try:
             g = self._grid_cfg()
-
             lower = self._cfg_float(g, "lower_price", 0.0)
             upper = self._cfg_float(g, "upper_price", 0.0)
-            tp_pct = self._cfg_float(g, "tp_per_grid_pct", 0.5)
             stop_below = bool(g.get("stop_below_lower", True))
-
-            entry_price = self._get_float(trade, "grid_entry_price", 0.0)
-            level_idx = self._get_int(trade, "grid_level_idx", -1)
-            initialized = self._get_bool(trade, "grid_initialized", False)
-
-            if not initialized or entry_price <= 0:
-                return None
+            stop_above = bool(g.get("stop_above_upper", False))
 
             rate = float(current_rate or 0.0)
             if rate <= 0:
                 return None
 
-            # ── 做多网格：达到 entry * (1 + tp_pct/100) 平仓
-            # ── 做空网格：达到 entry * (1 - tp_pct/100) 平仓
-            if self._is_short:
-                tp_price = entry_price * (1 - tp_pct / 100.0)
-                tp_hit = rate <= tp_price
-                sl_hit = stop_below and upper > 0 and rate >= upper  # 空头"上沿"是亏损方向
+            if not self._is_short:
+                if stop_below and lower > 0 and rate <= lower:
+                    logger.info(
+                        f"{GRID_TAG} {RED}✖ 整体止损{RESET} | {pair} | "
+                        f"价={rate:.2f} <= 下沿={lower:.2f}"
+                    )
+                    return "grid_stop_lower"
             else:
-                tp_price = entry_price * (1 + tp_pct / 100.0)
-                tp_hit = rate >= tp_price
-                sl_hit = stop_below and lower > 0 and rate <= lower
-
-            if tp_hit:
-                self._record_chart_marker(
-                    event_type="grid_tp", pair=pair, trade_id=trade.id,
-                    side=self._side_str, price=rate,
-                    amount=abs(float(trade.amount or 0)),
-                    current_time=current_time,
-                    message=f"网格止盈 格{level_idx}",
-                    candle_time=self._index_candle_key(current_time),
-                )
-                logger.info(
-                    f"[{pair}] {GREEN}网格止盈 {RESET}"
-                    f"格={level_idx}, entry={entry_price:.4f}, "
-                    f"tp={tp_price:.4f}, now={rate:.4f}"
-                )
-                self._remove_bot_grid_used_level(pair, level_idx)
-                return f"grid_tp_lv{level_idx}"
-
-            if sl_hit:
-                self._record_chart_marker(
-                    event_type="grid_stop", pair=pair, trade_id=trade.id,
-                    side=self._side_str, price=rate,
-                    amount=abs(float(trade.amount or 0)),
-                    current_time=current_time,
-                    message=f"网格止损 格{level_idx}",
-                    candle_time=self._index_candle_key(current_time),
-                )
-                logger.info(
-                    f"[{pair}] {RED}网格止损 {RESET}"
-                    f"格={level_idx}, entry={entry_price:.4f}, "
-                    f"下沿={lower:.4f}, now={rate:.4f}"
-                )
-                # ★ 止损后同样释放该格，允许回到区间时重新进入
-                self._remove_bot_grid_used_level(pair, level_idx)
-                return f"grid_stop_lv{level_idx}"
+                if stop_above and upper > 0 and rate >= upper:
+                    logger.info(
+                        f"{GRID_TAG} {RED}✖ 整体止损{RESET} | {pair} | "
+                        f"价={rate:.2f} >= 上沿={upper:.2f}"
+                    )
+                    return "grid_stop_upper"
 
             return None
 
         except Exception:
-            logger.exception(f"[{pair}] custom_exit 网格判断异常")
+            logger.exception(f"{GRID_TAG} custom_exit 网格判断异常")
             return None
 
     # ============================================================
-    # adjust_trade_position：网格模式不通过 DCA 加仓
+    # 核心：加仓 / 减仓
     # ============================================================
     def adjust_trade_position(self, trade, current_time, current_rate, current_profit, **kwargs):
-        """
-        网格用"一格一仓"模式，不用 adjust_trade_position 加仓。
-        如果你想加"止盈后再次进下一格"，由 confirm_trade_entry 在 trade 平仓后
-        再次触发即可（freqtrade 会在下一个信号周期重新评估）。
-        """
-        return None
+        try:
+            g = self._grid_cfg()
+            levels = self._build_grid_levels()
+            if not levels:
+                return None
+
+            lower = levels[0]
+            upper = levels[-1]
+
+            price = float(current_rate or 0.0)
+            if price <= 0:
+                return None
+
+            if not self._get_bool(trade, "grid_n_initialized", False):
+                return None
+
+            self._cleanup_taken(trade, price)
+
+            cur_idx = self._find_grid_index(price)
+            if cur_idx is None:
+                return None
+
+            positions = self._get_grid_positions(trade)
+            taken = self._get_taken_levels(trade)
+
+            max_grids = self._cfg_int(g, "max_open_grids", 5)
+
+            # 杠杆（用于计算保证金）
+            try:
+                lev = float(self.leverage(trade.pair) or 1.0)
+            except Exception:
+                lev = 1.0
+
+            # 1) 止盈
+            to_close = []
+            for k, v in positions.items():
+                try:
+                    idx = int(k)
+                    entry = float(v.get("entry", 0))
+                    if entry <= 0:
+                        continue
+
+                    tp_price = self._grid_tp_price(idx)
+                    if tp_price <= 0:
+                        continue
+
+                    if self._is_short:
+                        if price <= tp_price:
+                            to_close.append((idx, entry, v))
+                    else:
+                        if price >= tp_price:
+                            to_close.append((idx, entry, v))
+                except Exception:
+                    pass
+
+            if to_close:
+                total_margin = 0.0
+                total_pnl = 0.0
+                closed = []
+                for idx, entry, v in to_close:
+                    qty = float(v.get("qty", 0))
+                    notional = entry * qty
+                    margin = notional / lev  # ★ 保证金 = 名义 / 杠杆
+                    if self._is_short:
+                        pnl = (entry - price) * qty
+                    else:
+                        pnl = (price - entry) * qty
+                    total_margin += margin
+                    total_pnl += pnl
+                    self._remove_grid_position(trade, idx)
+                    taken.add(idx)
+                    closed.append((idx, entry, qty, margin, pnl))
+
+                self._set_taken_levels(trade, taken)
+
+                # cap：减仓不超过当前 stake
+                try:
+                    current_stake = float(trade.stake_amount or 0)
+                    total_margin = min(total_margin, current_stake)
+                except Exception:
+                    pass
+
+                self._log_reduce(trade, price, closed, total_margin, total_pnl)
+                self._log_state_detail(trade, price)
+                return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
+
+            # 2) 加仓
+            if str(cur_idx) in positions:
+                return None
+            if cur_idx in taken:
+                return None
+            if len(positions) >= max_grids:
+                return None
+            if price < lower or price > upper:
+                return None
+
+            buy_usdt = self._calc_grid_amount(trade, price)
+            if buy_usdt <= 0:
+                return None
+
+            add_qty = (buy_usdt * lev) / price if price > 0 else 0
+            if add_qty <= 0:
+                return None
+
+            self._add_grid_position(trade, cur_idx, price, add_qty)
+
+            range_str = self._grid_range_str(cur_idx)
+            tp_price = self._grid_tp_price(cur_idx)
+            tp_pct = (tp_price - price) / price * 100 if price > 0 else 0
+
+            logger.info(
+                f"{GRID_TAG} {RED}▲ 加仓{RESET} | {trade.pair} | 格{cur_idx} | "
+                f"区间={range_str} | 成交价={price:.2f} | "
+                f"卖点={tp_price:.2f}({tp_pct:+.2f}%) | "
+                f"保证金={buy_usdt:.2f} | 数量={add_qty:.6f}"
+            )
+            self._log_state_detail(trade, price)
+            return float(buy_usdt), f"grid_add_lv{cur_idx}"
+
+        except Exception:
+            logger.exception(f"{GRID_TAG} adjust_trade_position 异常")
+            return None
 
     # ============================================================
-    # bot 级别 custom_data：已用格 / 待开仓格
+    # 金额
     # ============================================================
+    def _calc_grid_amount(self, trade, price: float) -> float:
+        g = self._grid_cfg()
+        amount_per_grid = self._cfg_float(g, "amount_per_grid", 0.0)
+
+        if amount_per_grid > 0:
+            mode = self._amount_mode()
+            if mode == "amount":
+                per_grid = amount_per_grid
+            else:
+                collateral = self._collateral_total()
+                per_grid = collateral * (amount_per_grid / 100.0)
+        else:
+            try:
+                per_grid = float(trade.stake_amount or 0.0)
+            except Exception:
+                per_grid = 0.0
+            if per_grid <= 0:
+                capital = self._collateral_total()
+                grid_count = self._cfg_int(g, "grid_count", 20)
+                per_grid = capital / max(1, grid_count)
+
+        available = self._available_stake()
+        per_grid = min(per_grid, available * 0.8)
+        return max(0.0, per_grid)
+
+    # ============================================================
+    # 多格持仓读写
+    # ============================================================
+    def _get_grid_positions(self, trade) -> dict:
+        raw = self._get(trade, "grid_positions", None)
+        if not raw:
+            return {}
+        if isinstance(raw, dict):
+            return raw
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+
+    def _set_grid_positions(self, trade, positions: dict):
+        self._set(trade, "grid_positions", json.dumps(positions))
+
+    def _add_grid_position(self, trade, idx: int, entry: float, qty: float):
+        positions = self._get_grid_positions(trade)
+        positions[str(int(idx))] = {"entry": float(entry), "qty": float(qty)}
+        self._set_grid_positions(trade, positions)
+
+    def _remove_grid_position(self, trade, idx: int):
+        positions = self._get_grid_positions(trade)
+        positions.pop(str(int(idx)), None)
+        self._set_grid_positions(trade, positions)
+
+    def _get_taken_levels(self, trade) -> set:
+        raw = self._get(trade, "grid_taken_levels", None)
+        if not raw:
+            return set()
+        if isinstance(raw, list):
+            return set(int(x) for x in raw)
+        try:
+            return set(int(x) for x in json.loads(raw))
+        except Exception:
+            return set()
+
+    def _set_taken_levels(self, trade, levels: set):
+        self._set(trade, "grid_taken_levels", json.dumps(sorted(levels)))
+
+    def _cleanup_taken(self, trade, price: float):
+        try:
+            levels = self._build_grid_levels()
+            if not levels:
+                return
+
+            taken = self._get_taken_levels(trade)
+            if not taken:
+                return
+
+            n = len(levels) - 1
+            new_taken = set()
+            for t in taken:
+                if t < 0 or t >= n:
+                    continue
+                in_grid = levels[t] <= price < levels[t + 1]
+                if in_grid:
+                    new_taken.add(t)
+
+            if new_taken != taken:
+                self._set_taken_levels(trade, new_taken)
+                removed = taken - new_taken
+                if removed:
+                    logger.info(
+                        f"{GRID_TAG} ↺ 允许重开 | 价={price:.2f} | "
+                        f"释放格: {sorted(removed)}"
+                    )
+        except Exception:
+            logger.warning(f"{GRID_TAG} _cleanup_taken 异常", exc_info=True)
+
+    # ============================================================
+    # ★ 日志：减仓摘要
+    # ============================================================
+    def _log_reduce(self, trade, price, closed, total_margin, total_pnl):
+        """
+        减仓日志：
+          closed = [(idx, entry, qty, margin, pnl), ...]
+        """
+        try:
+            pair = trade.pair
+
+            if len(closed) == 1:
+                idx, entry, qty, margin, pnl = closed[0]
+                pnl_pct = (price - entry) / entry * 100
+                range_str = self._grid_range_str(idx)
+                tp_price = self._grid_tp_price(idx)
+                logger.info(
+                    f"{GRID_TAG} {GREEN}▼ 减仓{RESET} | {pair} | 格{idx} | "
+                    f"区间={range_str} | {entry:.2f} → {price:.2f}(卖点={tp_price:.2f}) | "
+                    f"pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | "
+                    f"数量={qty:.6f} | 释放={margin:.2f}"
+                )
+                logger.info(
+                    f"{GRID_TAG}    └ {pair} | "
+                    f"释放合计={total_margin:.2f} USDT | pnl合计={total_pnl:+.2f} USDT"
+                )
+            else:
+                idx_list = ",".join(f"格{c[0]}" for c in closed)
+                logger.info(
+                    f"{GRID_TAG} {GREEN}▼ 减仓{RESET} | {pair} | {idx_list} | "
+                    f"释放={total_margin:.2f} | pnl={total_pnl:+.2f} | 笔数={len(closed)}"
+                )
+                for idx, entry, qty, margin, pnl in closed:
+                    pnl_pct = (price - entry) / entry * 100
+                    range_str = self._grid_range_str(idx)
+                    tp_price = self._grid_tp_price(idx)
+                    logger.info(
+                        f"{GRID_TAG}    ├ 格{idx}: "
+                        f"区间={range_str} | "
+                        f"{entry:.2f} → {price:.2f}(卖点={tp_price:.2f}) | "
+                        f"pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | "
+                        f"数量={qty:.6f} | 释放={margin:.2f}"
+                    )
+        except Exception:
+            logger.warning(f"{GRID_TAG} _log_reduce 异常", exc_info=True)
+
+    # ============================================================
+    # ★ 日志：状态明细
+    # ============================================================
+    def _log_state_detail(self, trade, price: float):
+        try:
+            g = self._grid_cfg()
+            levels = self._build_grid_levels()
+            if not levels:
+                return
+
+            try:
+                lev = float(self.leverage(trade.pair) or 1.0)
+            except Exception:
+                lev = 1.0
+
+            cur_idx = self._find_grid_index(price)
+            positions = self._get_grid_positions(trade)
+            taken = self._get_taken_levels(trade)
+
+            if positions:
+                parts = []
+                for k in sorted(positions.keys(), key=lambda x: int(x)):
+                    v = positions[k]
+                    try:
+                        idx = int(k)
+                        entry = float(v.get("entry", 0))
+                        qty = float(v.get("qty", 0))
+                        margin = entry * qty / lev  # ★ 保证金
+                        tp_price = self._grid_tp_price(idx)
+                        tp_pct = (tp_price - entry) / entry * 100 if entry > 0 else 0
+                        parts.append(
+                            f"格{idx}={entry:.2f}(卖点={tp_price:.2f}, {tp_pct:+.2f}%, 保证金={margin:.0f})"
+                        )
+                    except Exception:
+                        pass
+                logger.info(
+                    f"{GRID_TAG}    └ 持仓: {' '.join(parts)} | "
+                    f"共{len(positions)}格 | 已止盈{len(taken)}格"
+                )
+            else:
+                logger.info(
+                    f"{GRID_TAG}    └ 持仓: 无 | 共0格 | 已止盈{len(taken)}格"
+                )
+
+            # 下次加仓 / 下次止盈
+            next_add_idx = None
+            next_reduce_idx = None
+
+            if self._is_short:
+                for i in range(cur_idx + 1, len(levels)):
+                    if str(i) not in positions:
+                        next_add_idx = i
+                        break
+                for i in range(cur_idx, -1, -1):
+                    if str(i) in positions:
+                        next_reduce_idx = i
+                        break
+            else:
+                for i in range(cur_idx, -1, -1):
+                    if str(i) not in positions:
+                        next_add_idx = i
+                        break
+                for i in range(cur_idx + 1, len(levels)):
+                    if str(i) in positions:
+                        next_reduce_idx = i
+                        break
+
+            next_add_str = "无"
+            if next_add_idx is not None:
+                p = levels[next_add_idx]
+                diff = (p - price) / price * 100
+                next_add_str = f"格{next_add_idx}@{p:.2f}({diff:+.2f}%)"
+
+            next_reduce_str = "无"
+            if next_reduce_idx is not None:
+                v = positions.get(str(next_reduce_idx))
+                if v:
+                    try:
+                        tp_price = self._grid_tp_price(next_reduce_idx)
+                        diff = (tp_price - price) / price * 100
+                        next_reduce_str = (
+                            f"格{next_reduce_idx}@{tp_price:.2f}({diff:+.2f}%)"
+                        )
+                    except Exception:
+                        pass
+
+            logger.info(
+                f"{GRID_TAG}    └ 下次加仓={next_add_str} | 下次止盈={next_reduce_str}"
+            )
+
+        except Exception:
+            logger.warning(f"{GRID_TAG} _log_state_detail 异常", exc_info=True)
+
+
+    # ============================================================
+    # bot 级 custom_data（保留接口）
+    # ============================================================
+    @property
+    def _bot_id(self):
+        return self._get_bot_id()
+
+    def _grid_kv_key(self, suffix: str) -> str:
+        return f"grid_{suffix}_{self._bot_id}_{self._side_str}"
+
     def _get_bot_grid_used_levels(self) -> set:
         try:
             from core.config_manager import ConfigManager
-            raw = ConfigManager.get_bot_kv(f"grid_used_levels_{self._side_str}")
+            raw = ConfigManager.get_bot_kv(self._grid_kv_key("used_levels"))
             if not raw:
                 return set()
-            return set(int(x) for x in raw)  # raw 已经是 list
+            return set(int(x) for x in raw)
         except Exception:
-            logger.warning("[Grid] 读取已用格失败", exc_info=True)
             return set()
-
-    def _add_bot_grid_used_level(self, pair, idx: int):
-        try:
-            from core.config_manager import ConfigManager
-            cur = self._get_bot_grid_used_levels()
-            cur.add(int(idx))
-            ConfigManager.set_bot_kv(
-                f"grid_used_levels_{self._side_str}",
-                list(cur),
-            )
-        except Exception:
-            logger.warning(f"[{pair}] 记录已用格失败 idx={idx}", exc_info=True)
 
     def _clear_bot_grid_used_levels(self):
         try:
             from core.config_manager import ConfigManager
-            ConfigManager.set_bot_kv(f"grid_used_levels_{self._side_str}", [])
+            ConfigManager.set_bot_kv(self._grid_kv_key("used_levels"), [])
         except Exception:
             pass
 
     def _set_bot_grid_pending_level(self, pair, idx: int):
         try:
             from core.config_manager import ConfigManager
-            ConfigManager.set_bot_kv(f"grid_pending_level_{self._side_str}", int(idx))
+            ConfigManager.set_bot_kv(self._grid_kv_key("pending_level"), int(idx))
         except Exception:
             pass
 
     def _get_bot_grid_pending_level(self, pair):
         try:
             from core.config_manager import ConfigManager
-            raw = ConfigManager.get_bot_kv(f"grid_pending_level_{self._side_str}")
+            raw = ConfigManager.get_bot_kv(self._grid_kv_key("pending_level"))
             if raw is None or raw == "":
                 return None
             return int(raw)
@@ -463,13 +837,13 @@ class GridBotBase(DcaTpBotBase):
     def _clear_bot_grid_pending_level(self, pair):
         try:
             from core.config_manager import ConfigManager
-            ConfigManager.set_bot_kv(f"grid_pending_level_{self._side_str}", None)
+            ConfigManager.set_bot_kv(self._grid_kv_key("pending_level"), None)
         except Exception:
             pass
 
 
 # ============================================================
-# 子类：只设置方向
+# 子类
 # ============================================================
 class GridBotLong(GridBotBase):
     can_short = False

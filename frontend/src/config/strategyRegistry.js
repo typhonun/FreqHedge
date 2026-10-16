@@ -13,7 +13,7 @@ export const STRATEGY_DEFS = {
     panel: StrategyPanel,
     configKey: 'longConfig',          // 提交给后端的字段名
     defaultConfig: (side) => getDefaultStrategyConfig(side),
-    // ★ 加载时从 bot 数据里怎么解包
+    singlePair: false,
     unwrap: (data, side) => {
       // DCA 长/短各一份，优先按 side 取
       if (side === 'short') return data.shortConfig || data.longConfig
@@ -30,6 +30,7 @@ export const STRATEGY_DEFS = {
     panel: GridPanel,
     configKey: 'gridConfig',
     defaultConfig: () => getDefaultGridConfig(),
+    singlePair: true, 
     unwrap: (data) => data.gridConfig,
   },
   // ★ 未来加第三种：

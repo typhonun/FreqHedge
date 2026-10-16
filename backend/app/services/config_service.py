@@ -112,7 +112,6 @@ class ConfigService:
         cfg["bot_id"] = bot_id
         cfg["side"] = side
 
-        # ★ 从注册表选策略类名
         strategy_cls = strategy_class(strategy_type, side)
         if strategy_cls is None:
             raise ValueError(f"未知策略类型: {strategy_type}/{side}")
@@ -120,7 +119,27 @@ class ConfigService:
 
         cfg["dry_run"] = bool(base.get("dryRun", BOT_DEFAULTS["dryRun"]))
         cfg["dry_run_wallet"] = base["capital"]
-        cfg["stake_amount"] = base.get("stakeAmount", BOT_DEFAULTS["stakeAmount"])
+
+        # ★★★ stake_amount 计算（策略相关）★★★
+        capital = float(base.get("capital", BOT_DEFAULTS["capital"]) or BOT_DEFAULTS["capital"])
+        if strategy_type == "grid":
+            grid_cfg = (strategy_params or {}).get("grid") or {}
+            grid_count = int(grid_cfg.get("grid_count", 20) or 20)
+            amount_per_grid = float(grid_cfg.get("amount_per_grid", 0) or 0)
+
+            if amount_per_grid > 0:
+                # 老数据兼容：如果手填了 amount_per_grid，尊重它
+                stake_amount = amount_per_grid
+            else:
+                # ★ 新逻辑：每格金额 = 投入资金 / 网格数量
+                stake_amount = capital / max(1, grid_count)
+
+            cfg["stake_amount"] = round(stake_amount, 8)
+            print(f"[config] grid stake_amount = {cfg['stake_amount']} "
+                  f"(capital={capital}, grid_count={grid_count})")
+        else:
+            cfg["stake_amount"] = base.get("stakeAmount", BOT_DEFAULTS["stakeAmount"])
+
         trading_mode = base.get("tradingMode", BOT_DEFAULTS["tradingMode"])
         margin_mode = base.get("marginMode", BOT_DEFAULTS["marginMode"])
 
@@ -136,7 +155,6 @@ class ConfigService:
         cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"
 
-        # ★ 主周期：注册表里指定了就用，否则沿用模板默认
         meta = get_strategy(strategy_type)
         if meta.get("timeframe"):
             cfg["timeframe"] = meta["timeframe"]
@@ -144,7 +162,6 @@ class ConfigService:
         cfg.setdefault("exchange", {})
         cfg["exchange"]["pair_whitelist"] = list(base["pair"])
 
-        # ★ 交易所账户注入
         acct = base.get("exchangeAccount") or {}
         if acct.get("exchange"):
             cfg["exchange"]["name"] = acct["exchange"]
@@ -163,19 +180,20 @@ class ConfigService:
             cfg["exchange"].setdefault("ccxt_async_config", {"enableRateLimit": True, "rateLimit": 200})
             print("[config] exchange.name 为空，回退到 binance")
 
-        # ★★★ custom_params 注入（按注册表的 inject_mode）★★★
         if meta["inject_mode"] == "single":
             cfg["custom_params"] = {
                 "bot_id": bot_id,
                 "strategyType": strategy_type,
                 "config": strategy_params,
             }
-        else:  # "side"
+        else:
             cfg["custom_params"] = {
                 "bot_id": bot_id,
                 "strategyType": strategy_type,
                 side: strategy_params,
             }
+
+        print(f"[config] custom_params = {json.dumps(cfg['custom_params'], ensure_ascii=False)[:500]}")
 
         return cfg
 

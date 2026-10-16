@@ -93,13 +93,19 @@
                       v-model="botBaseInfo.pair"
                       multiple
                       filterable
-                      :multiple-limit="isGridStrategy ? 1 : 0"
+                      :multiple-limit="isSinglePair ? 1 : 0"
                       collapse-tags
                       collapse-tags-tooltip
-                      :placeholder="isGridStrategy ? '选择交易对（网格仅支持单个）' : '选择交易对（可多选）'"
+                      :placeholder="isSinglePair ? '选择交易对（仅支持单个）' : '选择交易对（可多选）'"
                       style="width: 100%"
                       :loading="pairLoading"
                     >
+                      <el-option
+                        v-for="p in pairOptions"
+                        :key="p.name"
+                        :label="p.name"
+                        :value="p.name"
+                      />
                     </el-select>
                   </div>
                 </div>
@@ -170,14 +176,24 @@
                           style="width: 100%"
                         />
                       </div>
+                      <!-- ★ 网格模式：单笔保证金显示为只读「每格金额」 -->
                       <div class="inline-field">
-                        <span class="inline-field__label">单笔保证金 (USDT)</span>
-                        <el-input-number
-                          v-model="botBaseInfo.stakeAmount"
-                          :min="1" :step="10"
-                          controls-position="right"
-                          style="width: 100%"
-                        />
+                        <template v-if="strategyType === 'grid'">
+                          <span class="inline-field__label">每格金额 (USDT)</span>
+                          <el-input :model-value="gridPerGridText" readonly style="width: 100%" />
+                          <span class="inline-field__hint">
+                            投入资金 / 网格数量（自动计算）
+                          </span>
+                        </template>
+                        <template v-else>
+                          <span class="inline-field__label">单笔保证金 (USDT)</span>
+                          <el-input-number
+                            v-model="botBaseInfo.stakeAmount"
+                            :min="1" :step="10"
+                            controls-position="right"
+                            style="width: 100%"
+                          />
+                        </template>
                       </div>
                     </div>
                   </div>
@@ -855,7 +871,7 @@ const botId = computed(() => route.params.id)
 // ★ 新增：判断当前是什么策略类型
 const strategyType = computed(() => route.query.strategyType || 'dca')
 const strategyDef = computed(() => getStrategyDef(strategyType.value))
-const isGridStrategy = computed(() => strategyType.value === 'grid')
+const isSinglePair = computed(() => !!strategyDef.value.singlePair)
 
 const copyFromId = computed(() => route.query.copyFrom)
 const isCopy = computed(() => !!copyFromId.value)
@@ -870,6 +886,16 @@ const pageTitle = computed(() => {
   if (isEdit.value) return '编辑机器人'
   if (isCopy.value) return '复制机器人'
   return '新建机器人'
+})
+
+const gridPerGridText = computed(() => {
+  if (strategyType.value !== 'grid') return ''
+  const grid = strategyConfig.grid || {}
+  const gridCount = Math.max(1, Number(grid.grid_count || 20))
+  const capital = Number(botBaseInfo.value.capital || 0)
+  const v = capital / gridCount
+  if (!Number.isFinite(v) || v <= 0) return '—'
+  return `${v.toFixed(2)} USDT`
 })
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1259,14 +1285,21 @@ const formatElapsed = (sec) => {
 const exitReasonLabel = (reason) => {
   if (!reason) return '-'
   const s = String(reason)
+
   if (s === 'stop_loss') return 'ROI 止损'
   if (s === 'time_stop') return '时间止损'
+
+  // ★ 新增：网格相关
+  if (s === 'grid_stop_lower') return '网格跌破下沿'
+  if (s === 'grid_stop_upper') return '网格涨破上沿'
+  if (s.startsWith('grid_reduce_lv')) return `网格减仓 格${s.slice(14)}`
+  if (s.startsWith('grid_add_lv')) return `网格加仓 格${s.slice(11)}`
+  if (s.startsWith('grid_tp_lv')) return `网格止盈 格${s.slice(10)}`
+
   if (s.startsWith('tp_afterDCA')) return 'DCA 后止盈'
   if (s.startsWith('tp_')) return 'ROI 止盈'
   if (s.startsWith('dca_u=')) return `DCA 第 ${s.slice(6)} 层`
   if (s.startsWith('dca')) return 'DCA 加仓'
-  if (s.startsWith('grid_add')) return '网格加仓'
-  if (s.startsWith('grid_sell')) return '网格减仓'
   if (s.startsWith('trend_add')) return '趋势加仓'
   if (s.startsWith('kdj_reduce')) return 'KDJ 减仓'
   if (s.startsWith('rebuy_')) return '浮盈回补'
@@ -1281,11 +1314,21 @@ const buildPayload = () => {
   const acct = isDryRun.value ? null : getExchangeAccount(botBaseInfo.value.exchangeAccountId)
   const dryRun = isDryRun.value
 
+  // ★ 计算 stakeAmount
+  let stakeAmount = botBaseInfo.value.stakeAmount
+  if (strategyType.value === 'grid') {
+    const grid = strategyConfig.grid || {}
+    const gridCount = Math.max(1, Number(grid.grid_count || 20))
+    const capital = Number(botBaseInfo.value.capital || 0)
+    // ★ 每格金额 = 投入资金 / 网格数量
+    stakeAmount = capital / gridCount
+  }
+
   const common = {
     name: botBaseInfo.value.name,
     pair: botBaseInfo.value.pair,
     capital: botBaseInfo.value.capital,
-    stakeAmount: botBaseInfo.value.stakeAmount,
+    stakeAmount: stakeAmount,        // ★ 用算好的
     leverage: botBaseInfo.value.leverage,
     maxOpenTrades: botBaseInfo.value.maxOpenTrades,
     dryRun,
@@ -1303,7 +1346,6 @@ const buildPayload = () => {
     strategyType: strategyType.value,
   }
 
-  // ★ 表驱动：configKey 从注册表拿，strategyConfig 就是要提交的配置
   return {
     base: common,
     risk: botRisk.value,
@@ -1344,8 +1386,8 @@ const validate = () => {
     ElMessage.warning('请至少选择一个交易对')
     return false
   }
-  if (strategyType.value === 'grid' && botBaseInfo.value.pair.length !== 1) {
-    ElMessage.warning('网格机器人只能选择 1 个交易对')
+  if (isSinglePair.value && botBaseInfo.value.pair.length !== 1) {
+    ElMessage.warning(`${strategyDef.value.label} 只能选择 1 个交易对`)
     return false
   }
   if (!botBaseInfo.value.capital || botBaseInfo.value.capital <= 0) {
@@ -2177,23 +2219,6 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-/* ══════════════════════════════════════════════════════════════════
- * 网格机器人空白占位页
- * ══════════════════════════════════════════════════════════════════ */
-.empty-grid-placeholder {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 60px 20px;
-  min-height: 400px;
-}
-.empty-grid-placeholder p {
-  margin-top: 12px;
-  text-align: center;
-  line-height: 1.8;
-}
-
 /* ══════════════════════════════════════════════════════════════════
  * 页面骨架
  * ══════════════════════════════════════════════════════════════════ */
