@@ -255,3 +255,59 @@ def get_events(
     if strategy:
         q = q.filter(TradeEvent.strategy == strategy)
     return q.order_by(TradeEvent.time).all()
+
+
+# ============================================================
+# ★ 网格智能区间建议
+# ============================================================
+@router.get("/grid/suggest")
+def suggest_grid_range(
+    pair: str,
+    days: int = 30,
+    timeframe: str = "1d"
+):
+    """
+    根据近 N 天的最高/最低价，给出网格上下限建议。
+    - 安全垫：向外扩展 3%
+    - 兜底：如果当前价不在区间内，强制把当前价包进去（再扩 5%）
+    - 默认网格数量：20
+    """
+    try:
+        # 1. 拉取 K 线
+        limit = max(int(days), 10)
+        ohlcv = exchange.fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
+        if not ohlcv or len(ohlcv) < 2:
+            return {"error": "no data"}
+
+        highs  = [c[2] for c in ohlcv]
+        lows   = [c[3] for c in ohlcv]
+        closes = [c[4] for c in ohlcv]
+
+        high = max(highs)
+        low  = min(lows)
+        current = closes[-1]
+
+        # 2. 安全垫 ±3%
+        lower_price = low  * 0.97
+        upper_price = high * 1.03
+
+        # 3. 兜底：确保当前价在区间内
+        if current >= upper_price:
+            upper_price = current * 1.05
+        if current <= lower_price:
+            lower_price = current * 0.95
+
+        # 4. 价格保留 4 位小数（兼容小币种）
+        return {
+            "lower_price": round(lower_price, 4),
+            "upper_price": round(upper_price, 4),
+            "raw_high": round(high, 4),
+            "raw_low": round(low, 4),
+            "current_price": round(current, 4),
+            "suggest_grid_count": 20,
+            "days": days,
+        }
+
+    except Exception as e:
+        print(f"[grid/suggest] error: {e}")
+        return {"error": str(e)}

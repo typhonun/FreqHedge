@@ -342,6 +342,9 @@ function buildMarkerConfig(e) {
         case "kdj_reduce":
             return { position: "aboveBar", color: "#9c27b0", shape: "arrowDown", text: `KDJ减仓 ${e.price}`,
                 title: `价格:${e.price}\n数量:${e.amount}` }
+        case "grid_entry_signal": // 兼容网格首仓信号
+            return { position: "belowBar", color: "#4caf50", shape: "arrowUp", text: `网格首仓 ${e.price}`, size: 2,
+                title: `价格:${e.price}\n数量:${e.amount}` }
         case "grid_add":
             return { position: "belowBar", color: "#4caf50", shape: "arrowUp", text: `网格加仓 ${e.price}`,
                 title: `价格:${e.price}\n数量:${e.amount}` }

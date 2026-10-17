@@ -482,6 +482,9 @@
           <component
             :is="strategyDef.panel"
             :config="strategyConfig"
+            :capital="botBaseInfo.capital"
+            :pair="botBaseInfo.pair?.[0]"
+            :direction="botBaseInfo.direction"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"
           />

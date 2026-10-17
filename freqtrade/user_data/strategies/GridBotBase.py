@@ -70,7 +70,7 @@ class GridBotBase(DcaTpBotBase):
             self._clear_bot_grid_pending_level(None)
         except Exception:
             logger.warning(f"{GRID_TAG} 启动清空 used_levels 失败", exc_info=True)
-            
+
 
     def bot_start(self, **kwargs) -> None:
         """★ 网格自己的启动日志，不再走 DcaTpBotBase.bot_start"""
@@ -256,18 +256,73 @@ class GridBotBase(DcaTpBotBase):
         g = self._grid_cfg()
         upper = self._cfg_float(g, "upper_price", 0.0)
         lower = self._cfg_float(g, "lower_price", 0.0)
+        start_mode = str(g.get("start_mode", "grid")).lower()
+        trigger_price = self._cfg_float(g, "trigger_price", 0.0)
 
         if upper <= 0 or lower <= 0 or upper <= lower:
             return dataframe
 
-        in_range = (dataframe['close'] >= lower) & (dataframe['close'] <= upper)
+        levels = self._build_grid_levels()
+        if not levels:
+            return dataframe
+
+        # ★ 模式 1：触发价启动
+        if start_mode == "trigger" and trigger_price > 0:
+            prev_close = dataframe['close'].shift(1)
+            if self._is_short:
+                cross_up = (prev_close < trigger_price) & (dataframe['close'] >= trigger_price)
+                dataframe.loc[cross_up, col_short] = 1
+                dataframe.loc[cross_up, "enter_tag"] = "grid_trigger"
+            else:
+                cross_down = (prev_close > trigger_price) & (dataframe['close'] <= trigger_price)
+                dataframe.loc[cross_down, col_long] = 1
+                dataframe.loc[cross_down, "enter_tag"] = "grid_trigger"
+            return dataframe
+
+        # ★ 模式 2：立即启动
+        if start_mode == "immediate":
+            first_idx = dataframe.index[0] if len(dataframe) else None
+            if first_idx is not None:
+                if self._is_short:
+                    dataframe.loc[first_idx, col_short] = 1
+                    dataframe.loc[first_idx, "enter_tag"] = "grid_immediate"
+                else:
+                    dataframe.loc[first_idx, col_long] = 1
+                    dataframe.loc[first_idx, "enter_tag"] = "grid_immediate"
+            in_range = (dataframe['close'] >= lower) & (dataframe['close'] <= upper)
+            if self._is_short:
+                dataframe.loc[in_range, col_short] = 1
+                dataframe.loc[in_range, "enter_tag"] = "grid_immediate"
+            else:
+                dataframe.loc[in_range, col_long] = 1
+                dataframe.loc[in_range, "enter_tag"] = "grid_immediate"
+            return dataframe
+
+        # ★ 模式 3：默认网格触发（极致优化：向量化替代循环）
+        # 使用 np.searchsorted 找出每根 K 线价格落在哪个网格区间
+        import numpy as np
+        close_arr = dataframe['close'].values
+        # 计算每根K线所在的网格索引（0 到 len(levels)-1）
+        idx_now = np.searchsorted(levels, close_arr, side='right') - 1
+        # 边界限制：超出网格的保持边界索引
+        idx_now = np.clip(idx_now, 0, len(levels) - 2)
+
+        # 获取上一根 K 线的索引
+        idx_prev = np.roll(idx_now, 1)
+        idx_prev[0] = idx_now[0]  # 第一根 K 线没有上一根，设为与自己相同
 
         if self._is_short:
-            dataframe.loc[in_range, col_short] = 1
-            dataframe.loc[in_range, "enter_tag"] = "grid_signal"
+            # 空头：价格向上突破了网格，说明涨到了更高的格子
+            # 即：当前索引 > 之前索引
+            trigger_mask = (idx_now > idx_prev)
+            dataframe.loc[trigger_mask, col_short] = 1
+            dataframe.loc[trigger_mask, "enter_tag"] = "grid_line"
         else:
-            dataframe.loc[in_range, col_long] = 1
-            dataframe.loc[in_range, "enter_tag"] = "grid_signal"
+            # 多头：价格向下跌破了网格，说明跌到了更低的格子
+            # 即：当前索引 < 之前索引
+            trigger_mask = (idx_now < idx_prev)
+            dataframe.loc[trigger_mask, col_long] = 1
+            dataframe.loc[trigger_mask, "enter_tag"] = "grid_line"
 
         return dataframe
 
@@ -287,6 +342,9 @@ class GridBotBase(DcaTpBotBase):
             g = self._grid_cfg()
             upper = self._cfg_float(g, "upper_price", 0.0)
             lower = self._cfg_float(g, "lower_price", 0.0)
+            start_mode = str(g.get("start_mode", "grid")).lower()
+            trigger_price = self._cfg_float(g, "trigger_price", 0.0)
+
             if upper <= 0 or lower <= 0:
                 logger.warning(f"{GRID_TAG} 上下沿未配置，拒绝首仓")
                 return False
@@ -300,13 +358,40 @@ class GridBotBase(DcaTpBotBase):
             if open_count > 0:
                 return False
 
-            if rate < lower or rate > upper:
-                return False
+            # ★ 模式 1：触发价启动
+            if start_mode == "trigger" and trigger_price > 0:
+                if not self._is_short and rate > trigger_price * 1.01:
+                    return False
+                if self._is_short and rate < trigger_price * 0.99:
+                    return False
+            # ★ 模式 2：立即启动
+            elif start_mode == "immediate":
+                # 立即启动允许当前价在区间外，只要在合理范围内（±5%）
+                if not self._is_short and rate > upper * 1.05:
+                    return False
+                if not self._is_short and rate < lower * 0.95:
+                    return False
+                if self._is_short and rate < lower * 0.95:
+                    return False
+                if self._is_short and rate > upper * 1.05:
+                    return False
+            # ★ 模式 3：默认网格触发
+            else:
+                if rate < lower or rate > upper:
+                    return False
+                idx = self._find_grid_index(rate)
+                if idx is None:
+                    return False
 
             idx = self._find_grid_index(rate)
             if idx is None:
-                return False
-
+                levels = self._build_grid_levels()
+                if not levels:
+                    return False
+                if rate <= levels[0]:
+                    idx = 0
+                else:
+                    idx = len(levels) - 2
             self._set_bot_grid_pending_level(pair, idx)
 
             candle_ts = self._index_candle_key(current_time)
@@ -350,13 +435,13 @@ class GridBotBase(DcaTpBotBase):
             positions[str(int(idx))] = {"entry": entry_price, "qty": qty}
             self._set_grid_positions(trade, positions)
 
+            # ★ 不再往 taken 里加，positions 已经能防止重复加仓
             self._set(trade, "grid_n_initialized", True)
             self._set(trade, "grid_anchor_price", float(entry_price))
-            self._set_taken_levels(trade, set())
 
             self._clear_bot_grid_pending_level(trade.pair)
 
-            # ── 日志：首仓（显示保证金，和加仓一致）
+            # ── 日志：首仓
             try:
                 lev = float(self.leverage(trade.pair) or 1.0)
             except Exception:
@@ -375,6 +460,18 @@ class GridBotBase(DcaTpBotBase):
                 f"保证金={margin:.2f} | 数量={qty:.6f}"
             )
             self._log_state_detail(trade, entry_price)
+
+            self._record_chart_marker(
+                event_type="grid_add",
+                pair=pair,
+                trade_id=trade.id,
+                side=self._side_str,
+                price=entry_price,
+                amount=margin,
+                current_time=current_time,
+                message=f"网格首仓 格{idx}",
+                candle_time=self._index_candle_key(current_time)
+            )
 
         except Exception:
             logger.exception(f"{GRID_TAG} order_filled 网格记录失败")
@@ -512,6 +609,18 @@ class GridBotBase(DcaTpBotBase):
 
                 self._log_reduce(trade, price, closed, total_margin, total_pnl)
                 self._log_state_detail(trade, price)
+                # ★ 记录减仓图表标记
+                self._record_chart_marker(
+                    event_type="grid_sell",
+                    pair=trade.pair,
+                    trade_id=trade.id,
+                    side=self._side_str,
+                    price=price,
+                    amount=total_margin,
+                    current_time=current_time,
+                    message=f"网格减仓 {len(closed)}格",
+                    candle_time=self._index_candle_key(current_time)
+                )
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
             # 2) 加仓
@@ -545,6 +654,18 @@ class GridBotBase(DcaTpBotBase):
                 f"保证金={buy_usdt:.2f} | 数量={add_qty:.6f}"
             )
             self._log_state_detail(trade, price)
+            # ★ 记录加仓图表标记
+            self._record_chart_marker(
+                event_type="grid_add",
+                pair=trade.pair,
+                trade_id=trade.id,
+                side=self._side_str,
+                price=price,
+                amount=buy_usdt,
+                current_time=current_time,
+                message=f"网格加仓 格{cur_idx}",
+                candle_time=self._index_candle_key(current_time)
+            )
             return float(buy_usdt), f"grid_add_lv{cur_idx}"
 
         except Exception:
