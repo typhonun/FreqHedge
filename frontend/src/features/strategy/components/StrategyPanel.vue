@@ -325,59 +325,6 @@
       </el-form>
     </ToggleSection>
 
-    <!-- 止损 -->
-    <ToggleSection
-      v-model="config.sl.enable"
-      title="止损"
-      desc="固定百分比 / 时间止损"
-    >
-      <template #extra>
-        <el-tooltip placement="top" effect="dark">
-          <template #content>
-            固定止损：当前收益率 ≤ 设定值时平仓；<br />
-            时间止损：距上次成交超过设定时长后累计收益低于阈值时平仓
-          </template>
-          <el-icon class="section-label__info"><InfoFilled /></el-icon>
-        </el-tooltip>
-      </template>
-
-      <el-form class="compact-form" label-width="140px" size="small">
-        <el-form-item label="止损百分比 (%)">
-          <el-input-number v-model="config.sl.stoploss" class="field-input"
-            controls-position="right" :min="-999" :max="0" :step="1" :precision="0" />
-          <span class="field-hint-inline">例：-50 表示亏损 50% 平仓</span>
-        </el-form-item>
-
-        <el-divider content-position="left">时间止损</el-divider>
-
-        <el-form-item label="启用时间止损">
-          <el-switch v-model="config.sl.time_stop.enable" />
-        </el-form-item>
-        <el-form-item label="距上次成交时长(小时)">
-          <el-input-number v-model="config.sl.time_stop.hours" class="field-input"
-            controls-position="right" :min="0.1" :max="720" :step="0.5" :precision="1"
-            :disabled="!config.sl.time_stop.enable" />
-          <span class="field-hint-inline">从最近一次成交算起</span>
-        </el-form-item>
-        <el-form-item label="收益阈值模式">
-          <el-select v-model="config.sl.time_stop.mode" class="field-input"
-            :disabled="!config.sl.time_stop.enable">
-            <el-option label="百分比 %" value="percent" />
-            <el-option label="固定金额 USDT" value="amount" />
-          </el-select>
-        </el-form-item>
-        <el-form-item :label="config.sl.time_stop.mode === 'amount'
-          ? '收益阈值(USDT)' : '收益阈值(%)'">
-          <el-input-number v-model="config.sl.time_stop.profit_threshold"
-            class="field-input" controls-position="right"
-            :min="-9999" :max="0"
-            :step="config.sl.time_stop.mode === 'amount' ? 1 : 0.5"
-            :precision="config.sl.time_stop.mode === 'amount' ? 2 : 1"
-            :disabled="!config.sl.time_stop.enable" />
-        </el-form-item>
-      </el-form>
-    </ToggleSection>
-
     <!-- DCA -->
     <ToggleSection
       v-model="config.dca.enable"
@@ -635,6 +582,7 @@
 
     <!-- 网格 -->
     <ToggleSection
+      v-if="false"
       v-model="config.grid.enable"
       title="网格"
       desc="以锚点价为中心，上下沿触发加减仓"
@@ -816,6 +764,59 @@
             </el-form-item>
           </el-col>
         </el-row>
+      </el-form>
+    </ToggleSection>
+
+    <!-- 止损 -->
+    <ToggleSection
+      v-model="config.sl.enable"
+      title="止损"
+      desc="固定百分比 / 时间止损"
+    >
+      <template #extra>
+        <el-tooltip placement="top" effect="dark">
+          <template #content>
+            固定止损：当前收益率 ≤ 设定值时平仓；<br />
+            时间止损：距上次成交超过设定时长后累计收益低于阈值时平仓
+          </template>
+          <el-icon class="section-label__info"><InfoFilled /></el-icon>
+        </el-tooltip>
+      </template>
+
+      <el-form class="compact-form" label-width="140px" size="small">
+        <el-form-item label="止损百分比 (%)">
+          <el-input-number v-model="config.sl.stoploss" class="field-input"
+            controls-position="right" :min="-999" :max="0" :step="1" :precision="0" />
+          <span class="field-hint-inline">例：-50 表示亏损 50% 平仓</span>
+        </el-form-item>
+
+        <el-divider content-position="left">时间止损</el-divider>
+
+        <el-form-item label="启用时间止损">
+          <el-switch v-model="config.sl.time_stop.enable" />
+        </el-form-item>
+        <el-form-item label="距上次成交时长(小时)">
+          <el-input-number v-model="config.sl.time_stop.hours" class="field-input"
+            controls-position="right" :min="0.1" :max="720" :step="0.5" :precision="1"
+            :disabled="!config.sl.time_stop.enable" />
+          <span class="field-hint-inline">从最近一次成交算起</span>
+        </el-form-item>
+        <el-form-item label="收益阈值模式">
+          <el-select v-model="config.sl.time_stop.mode" class="field-input"
+            :disabled="!config.sl.time_stop.enable">
+            <el-option label="百分比 %" value="percent" />
+            <el-option label="固定金额 USDT" value="amount" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="config.sl.time_stop.mode === 'amount'
+          ? '收益阈值(USDT)' : '收益阈值(%)'">
+          <el-input-number v-model="config.sl.time_stop.profit_threshold"
+            class="field-input" controls-position="right"
+            :min="-9999" :max="0"
+            :step="config.sl.time_stop.mode === 'amount' ? 1 : 0.5"
+            :precision="config.sl.time_stop.mode === 'amount' ? 2 : 1"
+            :disabled="!config.sl.time_stop.enable" />
+        </el-form-item>
       </el-form>
     </ToggleSection>
   </div>

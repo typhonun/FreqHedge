@@ -33,7 +33,7 @@ class BotBaseInfo(BaseModel):
     @model_validator(mode="after")
     def _check_direction(self):
         if self.enableLong and self.enableShort:
-            raise ValueError("不再支持双向，请只启用多头或空头")
+            raise ValueError("不允许同时开启多头和空头")
         if not self.enableLong and not self.enableShort:
             raise ValueError("必须启用一个方向（多头或空头）")
         # ★ 新增校验

@@ -606,6 +606,8 @@ class DcaTpBotBase(IStrategy):
     # ============================================================
     def _record_chart_marker(self, *, event_type, pair, trade_id, side,
                              price, amount, current_time, message, candle_time=None):
+        if self.config.get('runmode') == 'backtest':
+            return
         if current_time is None or price is None:
             return
         try:

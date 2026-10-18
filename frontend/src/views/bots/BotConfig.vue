@@ -14,7 +14,7 @@
             <div class="card-head">
               <span class="card-head__title">基础配置</span>
               <el-text type="info" size="small">
-                机器人信息 · 交易参数 · 账户级风控
+                机器人信息 · 交易参数 · 机器人风控
               </el-text>
             </div>
           </template>
@@ -123,7 +123,7 @@
                     <div class="inline-group inline-group--triple">
                       <div class="inline-field">
                         <span class="inline-field__label">模式</span>
-                        <el-radio-group v-model="botBaseInfo.tradingMode">
+                        <el-radio-group v-model="botBaseInfo.tradingMode" :disabled="isLocked">
                           <el-radio-button value="futures">合约</el-radio-button>
                           <el-radio-button value="spot">现货</el-radio-button>
                         </el-radio-group>
@@ -134,7 +134,7 @@
                         class="inline-field"
                       >
                         <span class="inline-field__label">持仓</span>
-                        <el-radio-group v-model="botBaseInfo.marginMode">
+                        <el-radio-group v-model="botBaseInfo.marginMode" :disabled="isLocked">
                           <el-radio-button value="cross">全仓</el-radio-button>
                           <el-radio-button value="isolated">逐仓</el-radio-button>
                         </el-radio-group>
@@ -142,11 +142,11 @@
 
                       <div class="inline-field">
                         <span class="inline-field__label">方向</span>
-                        <el-radio-group v-model="botBaseInfo.direction">
+                        <el-radio-group v-model="botBaseInfo.direction" :disabled="isLocked">
                           <el-radio-button value="long">做多</el-radio-button>
                           <el-radio-button
                             value="short"
-                            :disabled="botBaseInfo.tradingMode === 'spot'"
+                            :disabled="botBaseInfo.tradingMode === 'spot' || isLocked"
                           >
                             做空
                           </el-radio-button>
@@ -157,18 +157,22 @@
                         >
                           现货不支持做空
                         </span>
+                        <!-- ★ 新增：被锁定时的提示 -->
+                        <span v-if="isLocked" class="inline-field__hint text-warning">
+                          持仓中，不可修改模式/方向
+                        </span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <!-- 钱包总额 / 单笔保证金 -->
+                <!-- 机器人可用资金 / 单笔保证金 -->
                 <div class="field-row">
                   <div class="field-label">资金</div>
                   <div class="field-value">
                     <div class="inline-group inline-group--inputs">
                       <div class="inline-field">
-                        <span class="inline-field__label">钱包总额 (USDT)</span>
+                        <span class="inline-field__label">机器人可用资金 (USDT)</span>
                         <el-input-number
                           v-model="botBaseInfo.capital"
                           :min="1" :step="10"
@@ -181,9 +185,6 @@
                         <template v-if="strategyType === 'grid'">
                           <span class="inline-field__label">每格金额 (USDT)</span>
                           <el-input :model-value="gridPerGridText" readonly style="width: 100%" />
-                          <span class="inline-field__hint">
-                            投入资金 / 网格数量（自动计算）
-                          </span>
                         </template>
                         <template v-else>
                           <span class="inline-field__label">单笔保证金 (USDT)</span>
@@ -210,7 +211,7 @@
                           v-model="botBaseInfo.leverage"
                           :min="1"
                           :max="botBaseInfo.tradingMode === 'spot' ? 1 : 125"
-                          :disabled="botBaseInfo.tradingMode === 'spot'"
+                          :disabled="botBaseInfo.tradingMode === 'spot' || isLocked"
                           :step="1"
                           controls-position="right"
                           style="width: 100%"
@@ -221,12 +222,17 @@
                         >
                           现货固定 1x
                         </span>
+                        <!-- ★ 新增：被锁定时的提示 -->
+                        <span v-if="isLocked" class="inline-field__hint text-warning">
+                          持仓中，不可修改杠杆
+                        </span>
                       </div>
                       <div class="inline-field">
                         <span class="inline-field__label">最大持仓数</span>
                         <el-input-number
                           v-model="botBaseInfo.maxOpenTrades"
                           :min="1" :max="100" :step="1"
+                          :disabled="strategyType === 'grid'"
                           controls-position="right"
                           style="width: 100%"
                         />
@@ -235,8 +241,8 @@
                   </div>
                 </div>
 
-                <!-- 金额模式 -->
-                <div class="field-row">
+                <!-- 金额模式 (网格不显示) -->
+                <div class="field-row" v-if="strategyType !== 'grid'">
                   <div class="field-label">
                     <span>
                       金额模式
@@ -261,9 +267,9 @@
               </div>
             </div>
 
-            <!-- ── 第 3 节：账户级风控 ── -->
+            <!-- ── 第 3 节：机器人风控 ── -->
             <div class="config-section">
-              <div class="section-label">账户级风控</div>
+              <div class="section-label">机器人风控</div>
               <div class="field-list">
 
                 <!-- 止盈 -->
@@ -901,6 +907,166 @@ const gridPerGridText = computed(() => {
   return `${v.toFixed(2)} USDT`
 })
 
+// 1. 增加状态
+const botStatus = ref('stopped') // 记录机器人运行状态
+const hasOpenPositions = ref(false) // 记录是否有持仓
+
+// 2. 增加判断计算属性
+const isLocked = computed(() => {
+  // 如果是编辑模式，且机器人运行中，且有持仓，则锁定
+  return isEdit.value && botStatus.value === 'running' && hasOpenPositions.value
+})
+
+// 3. 修改 loadBotDetail 方法，获取持仓状态
+const loadBotDetail = async () => {
+  const sourceId = isCopy.value ? copyFromId.value : botId.value
+  if (!sourceId) return
+
+  try {
+    const { data } = await axios.get(`${API}/bots/${sourceId}`)
+
+    // ★ 1. 记录当前机器人运行状态
+    botStatus.value = data.status || 'stopped'
+
+    /* ════════════════════════════════════════════════════════
+     * ★ 以 DB 为准，校正 URL 的 strategyType
+     * ════════════════════════════════════════════════════════ */
+    if (!isCopy.value) {
+      const realType = data.strategyType || 'dca'
+      if (realType !== strategyType.value) {
+        console.warn(
+          `[loadBotDetail] strategyType 不一致：URL=${strategyType.value}, DB=${realType}，强制刷新`
+        )
+        router.replace({
+          name: route.name,
+          params: route.params,
+          query: { ...route.query, strategyType: realType },
+        }).finally(() => {
+          window.location.reload()
+        })
+        return
+      }
+    }
+
+    if (isCopy.value) {
+      try {
+        const { data: cur } = await axios.get(`${API}/bots/${botId.value}`)
+        isDraft.value = cur.status === 'draft'
+      } catch {
+        isDraft.value = true
+      }
+    } else {
+      isDraft.value = data.status === 'draft'
+    }
+
+    // ★ 2. 查询是否有持仓（仅在编辑且运行中时查询）
+    if (isEdit.value && botStatus.value === 'running') {
+      try {
+        const posRes = await axios.get(`${API}/chart/bot-positions/${sourceId}`)
+        const positions = posRes.data || []
+        // 只要返回的数组长度大于 0，说明有持仓
+        hasOpenPositions.value = positions.length > 0
+      } catch (e) {
+        console.warn('获取持仓状态失败', e)
+        hasOpenPositions.value = false
+      }
+    }
+
+    const dir = (() => {
+      const l = !!data.enableLong
+      const s = !!data.enableShort
+      if (s) return 'short'
+      return 'long'
+    })()
+
+    /* ★ 关键改动：Dry Run 时强制清空 exchangeAccountId，
+       避免旧数据「dryRun=true 但有 accountId」的歧义 */
+    const isDryRunFromData = data.dryRun !== undefined
+      ? !!data.dryRun
+      : !data.exchangeAccountId
+
+    const accountId = isDryRunFromData
+      ? DRY_RUN_VALUE
+      : (data.exchangeAccountId ?? DRY_RUN_VALUE)
+
+    botBaseInfo.value = {
+      name: isCopy.value ? '' : data.name,
+      pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
+      capital: data.capital ?? BOT_DEFAULTS.capital,
+      stakeAmount: data.stakeAmount ?? BOT_DEFAULTS.stakeAmount,
+      leverage: data.leverage ?? BOT_DEFAULTS.leverage,
+      // ★ 如果是网格策略，强制 maxOpenTrades 为 1
+      maxOpenTrades: strategyType.value === 'grid' ? 1 : (data.maxOpenTrades ?? BOT_DEFAULTS.maxOpenTrades),
+      direction: dir,
+      exchangeAccountId: accountId,
+      tradingMode: data.tradingMode ?? BOT_DEFAULTS.tradingMode,
+      marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
+    }
+
+    botRisk.value = Object.fromEntries(
+      Object.keys(RISK_DEFAULTS).map((key) => [
+        key,
+        data[key] ?? RISK_DEFAULTS[key],
+      ])
+    )
+
+    /* ════════════════════════════════════════════════════════
+     * ★ 网格机器人与 DCA 机器人的加载路径分叉
+     * ════════════════════════════════════════════════════════ */
+    const raw = strategyDef.value.unwrap(data, dir)
+    if (raw) {
+      deepMerge(strategyConfig, raw)
+    }
+
+    // ★ DCA 特有：维护 sideFields（entryRsiValue / dcaLevels）
+    if (strategyType.value === 'dca') {
+      const longCfg = parseCfg(data.longConfig)
+      const shortCfg = parseCfg(data.shortConfig)
+
+      let cfgToLoad = null
+      if (dir === 'short' && shortCfg && shortCfg.entry) cfgToLoad = shortCfg
+      else if (dir === 'long' && longCfg && longCfg.entry) cfgToLoad = longCfg
+      else if (longCfg && longCfg.entry) cfgToLoad = longCfg
+
+      const dcaLevelCount = (strategyConfig.dca?.levels || []).length
+
+      if (cfgToLoad && cfgToLoad.entry) {
+        sideFields[dir].entryRsiValue =
+          cfgToLoad.entry?.rsi?.value ?? defaultEntryRsi(dir)
+
+        const cfgLevels = cfgToLoad.dca?.levels || []
+        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, (_, i) => ({
+          rsi_limit: cfgLevels[i]?.rsi_limit ?? defaultRsiLimit(dir),
+          j_limit: cfgLevels[i]?.j_limit ?? defaultJLimit(dir),
+        }))
+      } else {
+        sideFields[dir].entryRsiValue = defaultEntryRsi(dir)
+        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
+          rsi_limit: defaultRsiLimit(dir),
+          j_limit: defaultJLimit(dir),
+        }))
+      }
+
+      const otherDir = dir === 'long' ? 'short' : 'long'
+      sideFields[otherDir].entryRsiValue = defaultEntryRsi(otherDir)
+      sideFields[otherDir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
+        rsi_limit: defaultRsiLimit(otherDir),
+        j_limit: defaultJLimit(otherDir),
+      }))
+
+      strategyConfig.side = dir
+    }
+
+    if (!isCopy.value) {
+      updateSnapshot()
+    }
+  } catch (e) {
+    console.error(e)
+    ElMessage.error('加载机器人配置失败')
+    router.push({ name: 'BotList' })
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * 4. 回测区间：纯函数 + 常量
  * ══════════════════════════════════════════════════════════════════ */
@@ -1394,7 +1560,7 @@ const validate = () => {
     return false
   }
   if (!botBaseInfo.value.capital || botBaseInfo.value.capital <= 0) {
-    ElMessage.warning('钱包总额必须大于 0')
+    ElMessage.warning('机器人可用资金必须大于 0')
     return false
   }
   if (!botBaseInfo.value.stakeAmount || botBaseInfo.value.stakeAmount <= 0) {
@@ -1496,139 +1662,6 @@ const loadPairs = async () => {
     ElMessage.error('加载交易对失败')
   } finally {
     pairLoading.value = false
-  }
-}
-
-const loadBotDetail = async () => {
-  const sourceId = isCopy.value ? copyFromId.value : botId.value
-  if (!sourceId) return
-
-  try {
-    const { data } = await axios.get(`${API}/bots/${sourceId}`)
-
-    /* ════════════════════════════════════════════════════════
-     * ★ 以 DB 为准，校正 URL 的 strategyType
-     * ════════════════════════════════════════════════════════ */
-    if (!isCopy.value) {
-      const realType = data.strategyType || 'dca'
-      if (realType !== strategyType.value) {
-        console.warn(
-          `[loadBotDetail] strategyType 不一致：URL=${strategyType.value}, DB=${realType}，强制刷新`
-        )
-        router.replace({
-          name: route.name,
-          params: route.params,
-          query: { ...route.query, strategyType: realType },
-        }).finally(() => {
-          window.location.reload()
-        })
-        return
-      }
-    }
-
-    if (isCopy.value) {
-      try {
-        const { data: cur } = await axios.get(`${API}/bots/${botId.value}`)
-        isDraft.value = cur.status === 'draft'
-      } catch {
-        isDraft.value = true
-      }
-    } else {
-      isDraft.value = data.status === 'draft'
-    }
-
-    const dir = (() => {
-      const l = !!data.enableLong
-      const s = !!data.enableShort
-      if (s) return 'short'
-      return 'long'
-    })()
-
-    /* ★ 关键改动：Dry Run 时强制清空 exchangeAccountId，
-       避免旧数据「dryRun=true 但有 accountId」的歧义 */
-    const isDryRunFromData = data.dryRun !== undefined
-      ? !!data.dryRun
-      : !data.exchangeAccountId
-
-    const accountId = isDryRunFromData
-      ? DRY_RUN_VALUE
-      : (data.exchangeAccountId ?? DRY_RUN_VALUE)
-
-    botBaseInfo.value = {
-      name: isCopy.value ? '' : data.name,
-      pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
-      capital: data.capital ?? BOT_DEFAULTS.capital,
-      stakeAmount: data.stakeAmount ?? BOT_DEFAULTS.stakeAmount,
-      leverage: data.leverage ?? BOT_DEFAULTS.leverage,
-      maxOpenTrades: data.maxOpenTrades ?? BOT_DEFAULTS.maxOpenTrades,
-      direction: dir,
-      exchangeAccountId: accountId,
-      tradingMode: data.tradingMode ?? BOT_DEFAULTS.tradingMode,
-      marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
-    }
-
-    botRisk.value = Object.fromEntries(
-      Object.keys(RISK_DEFAULTS).map((key) => [
-        key,
-        data[key] ?? RISK_DEFAULTS[key],
-      ])
-    )
-
-    /* ════════════════════════════════════════════════════════
-     * ★ 网格机器人与 DCA 机器人的加载路径分叉
-     * ════════════════════════════════════════════════════════ */
-    // ★ 表驱动：从注册表拿 unwrap 函数
-    const raw = strategyDef.value.unwrap(data, dir)
-    if (raw) {
-      deepMerge(strategyConfig, raw)
-    }
-
-    // ★ DCA 特有：维护 sideFields（entryRsiValue / dcaLevels）
-    if (strategyType.value === 'dca') {
-      const longCfg = parseCfg(data.longConfig)
-      const shortCfg = parseCfg(data.shortConfig)
-
-      let cfgToLoad = null
-      if (dir === 'short' && shortCfg && shortCfg.entry) cfgToLoad = shortCfg
-      else if (dir === 'long' && longCfg && longCfg.entry) cfgToLoad = longCfg
-      else if (longCfg && longCfg.entry) cfgToLoad = longCfg
-
-      const dcaLevelCount = (strategyConfig.dca?.levels || []).length
-
-      if (cfgToLoad && cfgToLoad.entry) {
-        sideFields[dir].entryRsiValue =
-          cfgToLoad.entry?.rsi?.value ?? defaultEntryRsi(dir)
-
-        const cfgLevels = cfgToLoad.dca?.levels || []
-        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, (_, i) => ({
-          rsi_limit: cfgLevels[i]?.rsi_limit ?? defaultRsiLimit(dir),
-          j_limit: cfgLevels[i]?.j_limit ?? defaultJLimit(dir),
-        }))
-      } else {
-        sideFields[dir].entryRsiValue = defaultEntryRsi(dir)
-        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
-          rsi_limit: defaultRsiLimit(dir),
-          j_limit: defaultJLimit(dir),
-        }))
-      }
-
-      const otherDir = dir === 'long' ? 'short' : 'long'
-      sideFields[otherDir].entryRsiValue = defaultEntryRsi(otherDir)
-      sideFields[otherDir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
-        rsi_limit: defaultRsiLimit(otherDir),
-        j_limit: defaultJLimit(otherDir),
-      }))
-
-      strategyConfig.side = dir
-    }
-
-    if (!isCopy.value) {
-      updateSnapshot()
-    }
-  } catch (e) {
-    console.error(e)
-    ElMessage.error('加载机器人配置失败')
-    router.push({ name: 'BotList' })
   }
 }
 
@@ -2326,7 +2359,7 @@ onUnmounted(() => {
   align-items: center;
 }
 
-/* 提示图标：金额模式 / 账户级风控 复用 */
+/* 提示图标：金额模式 / 机器人风控 复用 */
 .section-label__info {
   margin-left: 4px;
   color: var(--el-color-info);
@@ -2836,5 +2869,10 @@ onUnmounted(() => {
   .inline-group--triple {
     gap: 16px;
   }
+}
+
+.text-warning {
+  color: var(--el-color-warning);
+  font-weight: 500;
 }
 </style>

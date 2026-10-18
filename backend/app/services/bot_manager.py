@@ -419,6 +419,7 @@ class BotManager:
                 UPDATE bots SET
                     name=?, pair=?, capital=?,
                     stakeAmount=?, leverage=?, dryRun=?, maxOpenTrades=?,
+                    enableLong=?, enableShort=?,
                     longConfig=?, shortConfig=?, gridConfig=?, extraConfig=?, strategyType=?,
                     exchangeAccountId=?, exchangeAccountJson=?,
                     tradingMode=?, marginMode=?,
@@ -441,6 +442,8 @@ class BotManager:
                     base.get("leverage", BOT_DEFAULTS["leverage"]),
                     int(base.get("dryRun", BOT_DEFAULTS["dryRun"])),
                     base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]),
+                    int(base.get("enableLong", False)),
+                    int(base.get("enableShort", False)),
                     long_config_json,
                     short_config_json,
                     grid_config_json,

@@ -91,6 +91,8 @@ class ConfigService:
             except Exception as e:
                 print(f"[config] 删除失败 {short_path}: {e}")
 
+        print(f"[config] 最终生成结果: enable_long={enable_long}, enable_short={enable_short}")
+        print(f"[config] long文件: {long_path.exists()}, short文件: {short_path.exists()}")
 
     @staticmethod
     def resolve_config_path(bot_id: int, side: str) -> Optional[Path]:
