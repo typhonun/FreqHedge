@@ -194,6 +194,13 @@ def run_job_async(job: BacktestJob, cmd: list, cwd: str, parse_result_fn):
                 job.percent = 100
                 job.error = "freqtrade 返回非零退出码：\n" + "".join(stdout_buf[-40:])
                 job.finished_at = time.time()
+
+                # ★ 核心修改：即使报错也调用一次合并，防止旧的 .bak 残留导致数据丢失
+                try:
+                    if job.kind == "download":
+                        parse_result_fn("".join(stdout_buf))
+                except Exception as e:
+                    print(f"[job] 下载失败后的合并兜底失败: {e}")
                 return
 
             job.stage = "解析结果"

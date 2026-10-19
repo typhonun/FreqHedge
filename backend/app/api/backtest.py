@@ -90,6 +90,58 @@ def _get_local_range(pair: str, timeframe: str,
         return None
 
 
+def _merge_feather_files(pair: str, timeframe: str, data_dir: Path):
+    stem = _pair_to_filename(pair)
+    fname = f"{stem}-{timeframe}-{data_dir.name}.feather"
+    fpath = data_dir / fname
+    bak_path = data_dir / f"{fname}.bak"
+
+    # 如果两个都不存在，直接返回
+    if not fpath.exists() and not bak_path.exists():
+        return
+
+    try:
+        import pandas as pd
+        dfs = []
+
+        # 1. 读取备份的旧数据
+        if bak_path.exists():
+            try:
+                dfs.append(pd.read_feather(bak_path))
+            except Exception as e:
+                print(f"[merge] 读取备份文件失败 {bak_path}: {e}")
+
+        # 2. 读取刚下载的新数据
+        if fpath.exists():
+            try:
+                dfs.append(pd.read_feather(fpath))
+            except Exception as e:
+                print(f"[merge] 读取新数据失败 {fpath}: {e}")
+
+        if not dfs:
+            return
+
+        # 3. 合并、排序、去重
+        df = pd.concat(dfs, ignore_index=True)
+        df = df.sort_values('date')
+        df = df.drop_duplicates(subset=['date'], keep='last')
+
+        # 4. 重新写入文件
+        df.reset_index(drop=True).to_feather(fpath)
+        print(f"[merge] 已合并数据: {fname}, 总行数: {len(df)}")
+
+        # 5. 清理备份文件
+        if bak_path.exists():
+            bak_path.unlink()
+
+    except Exception as e:
+        print(f"[merge] 合并数据失败 {fpath}: {e}")
+        # 如果合并彻底挂了，把备份文件还原回去，防止数据丢失
+        if bak_path.exists() and not fpath.exists():
+            bak_path.rename(fpath)
+            print(f"[merge] 恢复备份文件: {fname}")
+
+
 # ══════════════════════════════════════════════════════════════
 # 本地数据检查 + 缓存
 # ══════════════════════════════════════════════════════════════
@@ -114,32 +166,59 @@ def _check_local_data(pairs: list,
 
     target = _timerange_to_ts(timerange)
     if target is None:
-        return {"all_covered": False, "details": []}
+        return {"all_covered": False, "details": [], "missing_ranges": [timerange]}
 
     req_start, req_end = target
     data_dir = _get_data_dir(exchange_name, trading_mode)
 
     details = []
     all_covered = True
+    missing_ranges = set()
 
     for pair in pairs:
         for tf in timeframes:
             local = _get_local_range(pair, tf, data_dir)
             covered = False
+
             if local is not None:
+                # 容差保留 1 小时，应对 5m/30m 首尾边界
                 tol = max(_tf_to_seconds(tf), 3600)
-                covered = (
-                    local[0] <= req_start + tol
-                    and local[1] >= req_end - tol
-                )
+
+                # 1. 检查开头缺口：如果要求的开始时间早于本地开始时间
+                if req_start < local[0] - tol:
+                    gap_start = datetime.fromtimestamp(req_start).strftime('%Y%m%d')
+                    gap_end = datetime.fromtimestamp(local[0] - tol).strftime('%Y%m%d')
+                    missing_ranges.add(f"{gap_start}-{gap_end}")
+                else:
+                    gap_start = None
+
+                # 2. 检查结尾缺口：如果要求的结束时间晚于本地结束时间
+                if req_end > local[1] + tol:
+                    gap_start_end = datetime.fromtimestamp(local[1] + tol).strftime('%Y%m%d')
+                    gap_end_end = datetime.fromtimestamp(req_end).strftime('%Y%m%d')
+                    missing_ranges.add(f"{gap_start_end}-{gap_end_end}")
+                else:
+                    gap_end = None
+
+                # 3. 判断是否全覆盖（只有两头都没缺口才算全覆盖）
+                if (req_start >= local[0] - tol) and (req_end <= local[1] + tol):
+                    covered = True
+            else:
+                missing_ranges.add(timerange)
+
             if not covered:
                 all_covered = False
+
             details.append({
                 "pair": pair, "tf": tf,
                 "local": local, "covered": covered,
             })
 
-    result = {"all_covered": all_covered, "details": details}
+    result = {
+        "all_covered": all_covered,
+        "details": details,
+        "missing_ranges": list(missing_ranges)
+    }
     _check_cache[key] = (now, result)
     return result
 
@@ -961,14 +1040,37 @@ async def download_data(bot_id: int, req: DownloadDataRequest):
     }
 
 
-def _make_download_parse_fn():
+def _make_download_parse_fn(bot: dict, req_timeframe: str, req_timerange: str):
     def _parse(stdout: str) -> dict:
-        _check_cache.clear()
+        _check_cache.clear()  # 清空缓存
+
+        pairs = bot.get("pair") or []
+        exchange_name = "binance"
+        trading_mode = "futures"
+
+        data_dir = _get_data_dir(exchange_name, trading_mode)
+        if not pairs:
+            return {"success": True, "skipped": False, "message": "下载完成"}
+
+        local_ranges = []
+        for p in pairs:
+            local = _get_local_range(p, req_timeframe, data_dir)
+            if local:
+                import datetime
+                s = datetime.datetime.fromtimestamp(local[0]).strftime('%Y-%m-%d %H:%M')
+                e = datetime.datetime.fromtimestamp(local[1]).strftime('%Y-%m-%d %H:%M')
+                local_ranges.append(f"{p} ({s} 至 {e})")
+
+        msg = "数据下载完成"
+        if local_ranges:
+            msg += "。实际可用数据区间：" + ", ".join(local_ranges) + "。"
+
         return {
             "success": True,
             "skipped": False,
-            "message": "数据下载完成",
+            "message": msg,
         }
+
     return _parse
 
 
@@ -988,8 +1090,9 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
         cfg = json.load(f)
     exchange_name = (cfg.get("exchange") or {}).get("name", "binance")
     trading_mode = cfg.get("trading_mode", "futures")
+    data_dir = _get_data_dir(exchange_name, trading_mode)
 
-    timerange = req.timerange or _default_timerange()
+    req_timerange = req.timerange or _default_timerange()
     pairs = bot.get("pair") or []
     tf_list = [req.timeframe]
     for tf in _get_htf_timeframes(bot, side=req.side):
@@ -997,11 +1100,10 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
             tf_list.append(tf)
 
     local_check = _check_local_data(
-        pairs, tf_list, timerange,
+        pairs, tf_list, req_timerange,
         exchange_name=exchange_name,
         trading_mode=trading_mode,
     )
-    print(f"[download:start] 本地数据检查: all_covered={local_check['all_covered']}")
 
     if local_check["all_covered"]:
         job = create_job(bot_id, kind="download")
@@ -1010,16 +1112,26 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
         job.percent = 100
         job.finished_at = time.time()
         job.elapsed = 0
-        job.result = {
-            "skipped": True,
-            "message": "数据已下载",
-            "timerange": timerange,
-        }
-        return {
-            "job_id": job.job_id,
-            "status": job.status,
-            "skipped": True,
-        }
+        job.result = {"skipped": True, "message": "数据已完全覆盖，无需下载", "timerange": req_timerange}
+        return {"job_id": job.job_id, "status": job.status, "skipped": True}
+
+    # ★ 核心修改：把旧文件重命名成 .bak 隐藏起来（而不是复制）
+    # 这样 Freqtrade 就以为没有数据，才会老老实实下整个 req_timerange。
+    for p in pairs:
+        for tf in tf_list:
+            stem = _pair_to_filename(p)
+            fname = f"{stem}-{tf}-{data_dir.name}.feather"
+            fpath = data_dir / fname
+            if fpath.exists():
+                bak_path = data_dir / f"{fname}.bak"
+                if bak_path.exists():
+                    bak_path.unlink()
+                # 用 replace 重命名，Freqtrade 看不到原文件
+                fpath.replace(bak_path)
+                print(f"[download:start] 隐藏旧文件: {fname} -> .bak")
+
+    # 强制用请求的完整时间段去下载
+    cmd_timerange = req_timerange
 
     tf_set = tf_list
     cmd = [
@@ -1028,27 +1140,48 @@ async def download_data_start(bot_id: int, req: DownloadDataRequest):
         "--config", str(config_path),
         "-t", *tf_set,
         "--trading-mode", trading_mode,
+        "--timerange", cmd_timerange,
     ]
-    if timerange:
-        start, end = _parse_timerange(timerange)
-        if start and end:
-            cmd += ["--timerange", f"{start}-{end}"]
 
     print(f"[download:start] bot={bot_id} cmd={' '.join(cmd)}")
-
     job = create_job(bot_id, kind="download")
+
+    # ★ 核心修改：在 _wrap_parse 外包一层容错，确保无论 Freqtrade 成功还是失败，都执行合并
+    def _wrap_parse(stdout: str):
+        try:
+            result = _make_download_parse_fn(bot, req.timeframe, req_timerange)(stdout)
+        except Exception as e:
+            print(f"[download] 标准解析失败，尝试作为兜底错误处理: {e}")
+            result = {"success": False, "message": "解析失败"}
+
+        # 无论成功失败，都尝试合并数据（因为如果报错，可能只下了部分数据，合并能保证已有数据不丢）
+        for p in pairs:
+            for tf in tf_list:
+                _merge_feather_files(p, tf, data_dir)
+
+        # 重新计算完整的真实区间返回给前端
+        local_ranges = []
+        for p in pairs:
+            local = _get_local_range(p, req.timeframe, data_dir)
+            if local:
+                s = datetime.fromtimestamp(local[0]).strftime('%Y-%m-%d %H:%M')
+                e = datetime.fromtimestamp(local[1]).strftime('%Y-%m-%d %H:%M')
+                local_ranges.append(f"{p} ({s} 至 {e})")
+
+        msg = "数据下载完成"
+        if local_ranges:
+            msg += "。实际可用数据区间：" + ", ".join(local_ranges) + "。"
+        result["message"] = msg
+        return result
+
     run_job_async(
         job=job,
         cmd=cmd,
         cwd=str(FREQTRADE_DIR),
-        parse_result_fn=_make_download_parse_fn(),
+        parse_result_fn=_wrap_parse,
     )
 
-    return {
-        "job_id": job.job_id,
-        "status": job.status,
-        "skipped": False,
-    }
+    return {"job_id": job.job_id, "status": job.status, "skipped": False}
 
 
 @router.get("/{bot_id}/download-data/progress/{job_id}")

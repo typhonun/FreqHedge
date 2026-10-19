@@ -1351,13 +1351,17 @@ const startDownloadPolling = (id, jobId) => {
           if (r.skipped) {
             ElMessage.success(r.message || '数据已下载')
           } else {
-            ElMessage.success(`数据下载完成，耗时 ${formatElapsed(downloadElapsed.value)}`)
+            // ★ 修改点：展示后端返回的具体时间范围
+            if (r.message && r.message.includes('实际可用数据区间')) {
+                ElMessage.warning({
+                    message: r.message,
+                    duration: 8000,
+                    showClose: true
+                })
+            } else {
+                ElMessage.success(`数据下载完成，耗时 ${formatElapsed(downloadElapsed.value)}`)
+            }
           }
-        } else if (data.status === 'cancelled') {
-          ElMessage.info('下载已取消')
-        } else {
-          const err = data.error || '下载失败'
-          ElMessage.error(err)
         }
       }
     } catch (e) {
@@ -1705,9 +1709,26 @@ const configDirtyDuringBacktest = ref(false)
 
 const syncConfig = async () => {
   if (!botId.value) return
+  if (!loaded.value) return   // ★ 新增：没加载完不准同步
+
+  // ★ 新增：如果是网格，确保 core 参数有效再提交
+  if (strategyType.value === 'grid') {
+    const grid = strategyConfig.grid || {}
+    if (!grid.lower_price || !grid.upper_price || !grid.grid_count) {
+      return // 数据还没填全，不触发自动同步
+    }
+  }
+
   try {
     syncing.value = true
-    await axios.put(`${API}/bots/${botId.value}`, buildPayload())
+    const payload = buildPayload()
+
+    // 如果 stakeAmount 是非法的（比如 NaN/0），也不发
+    if (payload.base.stakeAmount <= 0) {
+      return
+    }
+
+    await axios.put(`${API}/bots/${botId.value}`, payload)
   } catch (e) {
     console.error('[syncConfig] failed', e)
   } finally {
