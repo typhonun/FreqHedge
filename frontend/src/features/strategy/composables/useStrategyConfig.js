@@ -130,7 +130,7 @@ const buildTradeInfo = (side, config) => {
         tpSignal: config.tp?.enable
             ? (() => {
                 if (!config.tp.rebuy_enable) {
-                    return "不补仓，触发 TP 后全平"
+                    return "不补仓，触发 TP 后全平" // <-- 满足默认 false 显示全平
                 }
                 if (config.amount_mode === "amount") {
                     return `减仓 ${config.tp.reduce_amount} USDT，加仓至 ${config.tp.target_wallet_amount} USDT`
@@ -146,7 +146,8 @@ const buildTradeInfo = (side, config) => {
                 return null
             }
 
-            if (config.loss_tp.close_all) {
+            // ★ 字段替换
+            if (!config.loss_tp.is_partial) {
                 return `全平，反弹止盈 ${config.loss_tp.dca_tp_profit}%`
             }
 
@@ -430,7 +431,7 @@ const createDefaultStrategyConfig = (side = "long") => ({
     loss_tp:{
         enable:false,
         dca_tp_profit:3,
-        close_all: false,
+        is_partial: false,
         target_wallet_percent:5,
         target_wallet_amount: 50.0
     },
@@ -602,9 +603,17 @@ const normalizeAmountMode = (config) => {
         }
     }
 
-    // loss_tp.close_all
-    if (config.loss_tp && config.loss_tp.close_all == null) {
-        config.loss_tp.close_all = false
+    // loss_tp.is_partial 兜底
+    if (config.loss_tp) {
+        if (config.loss_tp.is_partial == null) {
+            // 旧配置字段兼容迁移
+            if (config.loss_tp.close_all != null) {
+                config.loss_tp.is_partial = !config.loss_tp.close_all
+                delete config.loss_tp.close_all
+            } else {
+                config.loss_tp.is_partial = false // 默认全平
+            }
+        }
     }
 
     // 新增：trend_add.kdj_reduce.reduce_amount
@@ -647,7 +656,8 @@ const normalizeAmountMode = (config) => {
 
     // timeframe 兜底
     if (!config.timeframe) {
-        config.timeframe = "30m"
+        // 如果是网格策略，默认 5m；否则默认 30m
+        config.timeframe = config.grid ? "5m" : "30m"
     }
     return config
 }

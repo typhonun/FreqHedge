@@ -261,7 +261,9 @@
           <div>
             <div class="signal-name">Pump 保护</div>
             <div class="signal-subtitle">
-              3 根累计涨幅 ≥10% 且量比 ≥3 且 RSI ≥75 时，暂停开仓
+              {{ config.side === 'short'
+                ? '3 根累计跌幅 ≥10% 且量比 ≥3 且 RSI ≤25 时，暂停开仓（防暴跌追空）'
+                : '3 根累计涨幅 ≥10% 且量比 ≥3 且 RSI ≥75 时，暂停开仓（防暴涨追多）' }}
               （独立开关，不参与上方 AND/OR）
             </div>
           </div>
@@ -271,14 +273,14 @@
       </section>
     </ToggleSection>
 
-    <!-- TP 减仓 -->
+    <!-- TP 止盈 -->
     <ToggleSection
       v-model="panelOpen.tpReduce"
       mode="arrow"
-      title="TP 减仓"
+      title="TP 止盈"
       :desc="config.tp.rebuy_enable
         ? '减仓后自动补回目标仓位'
-        : '达到 ROI 后按设定比例减仓（不补回）'"
+        : '达到 ROI 后直接全平'"
     >
       <template #extra>
         <el-tooltip placement="top" effect="dark">
@@ -287,7 +289,7 @@
               达到 ROI 后按比例减仓，随后自动补回至「目标仓位」
             </template>
             <template v-else>
-              达到 ROI 后按比例减仓；关闭「自动补仓」时将一次性全平
+              达到 ROI 后直接全平（不保留仓位）
             </template>
           </template>
           <el-icon class="section-label__info"><InfoFilled /></el-icon>
@@ -295,33 +297,34 @@
       </template>
 
       <el-form class="compact-form" label-width="140px" size="small">
-        <el-form-item label="自动补仓">
+
+        <!-- ★ 1. 自动补仓开关 -->
+        <el-form-item :label="config.tp.rebuy_enable ? '自动补仓' : '全部平仓'">
           <el-switch v-model="config.tp.rebuy_enable" @change="onRebuyChange" />
         </el-form-item>
 
-        <el-form-item :label="!config.tp.rebuy_enable
-          ? '触发止盈全部平仓'
-          : (config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%')">
-          <el-input-number v-if="!config.tp.rebuy_enable"
-            :model-value="100" class="field-input" controls-position="right"
-            :min="100" :max="100" :step="1" :precision="0" disabled />
-          <el-input-number v-else-if="config.amount_mode === 'amount'"
-            v-model="config.tp.reduce_amount" class="field-input"
-            controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
-          <el-input-number v-else
-            v-model="config.tp.reduce_percent" class="field-input"
-            controls-position="right" :min="0" :max="100" :step="1" :precision="0" />
-        </el-form-item>
+        <!-- ★ 2. 只有开启「自动补仓」时，才显示减仓参数和目标仓位 -->
+        <template v-if="config.tp.rebuy_enable">
 
-        <el-form-item :label="config.amount_mode === 'amount'
-          ? '调整仓位至(USDT)' : '调整仓位至总资金%'">
-          <el-input-number v-if="config.amount_mode === 'amount'"
-            v-model="config.tp.target_wallet_amount" class="field-input"
-            controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
-          <el-input-number v-else
-            v-model="config.tp.target_wallet_percent" class="field-input"
-            controls-position="right" :min="0" :max="100" :step="0.1" :precision="2" />
-        </el-form-item>
+          <el-form-item :label="config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%'">
+            <el-input-number v-if="config.amount_mode === 'amount'"
+              v-model="config.tp.reduce_amount" class="field-input"
+              controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
+            <el-input-number v-else
+              v-model="config.tp.reduce_percent" class="field-input"
+              controls-position="right" :min="0" :max="100" :step="1" :precision="0" />
+          </el-form-item>
+
+          <el-form-item :label="config.amount_mode === 'amount' ? '调整仓位至(USDT)' : '调整仓位至总资金%'">
+            <el-input-number v-if="config.amount_mode === 'amount'"
+              v-model="config.tp.target_wallet_amount" class="field-input"
+              controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
+            <el-input-number v-else
+              v-model="config.tp.target_wallet_percent" class="field-input"
+              controls-position="right" :min="0" :max="100" :step="0.1" :precision="2" />
+          </el-form-item>
+
+        </template>
       </el-form>
     </ToggleSection>
 
@@ -461,40 +464,40 @@
         <el-tooltip placement="top" effect="dark">
           <template #content>
             仅在 DCA 后（dca_count &gt; 0）生效；<br />
-            开启「全平仓位」时将忽略目标仓位设置，直接平掉全部仓位
+            关闭「部分减仓」时直接全平；<br />
+            开启「部分减仓」时按下方目标仓位减仓
           </template>
           <el-icon class="section-label__info"><InfoFilled /></el-icon>
         </el-tooltip>
       </template>
 
+      <!-- 浮亏止盈 -->
       <el-form class="compact-form" label-width="140px" size="small">
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="止盈收益率%">
-              <el-input-number v-model="config.loss_tp.dca_tp_profit" class="field-input"
-                controls-position="right" :min="0" :max="100" :step="0.1" :precision="2" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="全平仓位">
-              <el-switch v-model="config.loss_tp.close_all" />
-            </el-form-item>
-          </el-col>
-        </el-row>
 
-        <el-row :gutter="12" v-if="!config.loss_tp.close_all">
-          <el-col :span="12">
-            <el-form-item :label="config.amount_mode === 'amount'
-              ? '减仓至(USDT)' : '调整仓位至总资金%'">
-              <el-input-number v-if="config.amount_mode === 'amount'"
-                v-model="config.loss_tp.target_wallet_amount" class="field-input"
-                controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
-              <el-input-number v-else
-                v-model="config.loss_tp.target_wallet_percent" class="field-input"
-                controls-position="right" :min="0" :max="100" :step="1" :precision="2" />
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <!-- ★ 修改点：将开关放上面，占满整行 -->
+        <el-form-item :label="config.loss_tp.is_partial ? '部分减仓' : '全部平仓'">
+          <el-switch v-model="config.loss_tp.is_partial" />
+        </el-form-item>
+
+        <!-- ★ 修改点：止盈收益率放到下面 -->
+        <el-form-item label="止盈收益率%">
+          <el-input-number v-model="config.loss_tp.dca_tp_profit" class="field-input"
+            controls-position="right" :min="0" :max="100" :step="0.1" :precision="2" />
+        </el-form-item>
+
+        <!-- 只有部分减仓时才显示目标仓位输入 -->
+        <el-form-item
+          v-if="config.loss_tp.is_partial"
+          :label="config.amount_mode === 'amount' ? '减仓至(USDT)' : '调整仓位至总资金%'"
+        >
+          <el-input-number v-if="config.amount_mode === 'amount'"
+            v-model="config.loss_tp.target_wallet_amount" class="field-input"
+            controls-position="right" :min="1" :max="100000" :step="10" :precision="2" />
+          <el-input-number v-else
+            v-model="config.loss_tp.target_wallet_percent" class="field-input"
+            controls-position="right" :min="0" :max="100" :step="1" :precision="2" />
+        </el-form-item>
+
       </el-form>
     </ToggleSection>
 
@@ -670,7 +673,7 @@
         <el-tooltip placement="top" effect="dark">
           <template #content>
             该交易对保证金占用 / 账户总 USDT 余额 ≥ 设定比例后，<br />
-            停止 DCA 与网格加仓；止盈、止损、趋势加仓不受影响
+            停止 DCA 与网格加仓
           </template>
           <el-icon class="section-label__info"><InfoFilled /></el-icon>
         </el-tooltip>
@@ -694,8 +697,8 @@
         <el-tooltip placement="top" effect="dark">
           <template #content>
             {{ config.side === 'long'
-              ? 'HTF 空头排列（快<中<慢）时暂停买入；减仓、止损不受影响'
-              : 'HTF 多头排列（快>中>慢）时暂停买入；减仓、止损不受影响' }}
+              ? 'HTF 空头排列（快<中<慢）时暂停买入'
+              : 'HTF 多头排列（快>中>慢）时暂停买入' }}
             <br />EMA 参数复用「指标配置」中的快/中/慢
             <br />需开启「启用」并至少勾选一项保护范围，HTF 数据才会加载
           </template>
@@ -943,6 +946,7 @@ const onRebuyChange = (val) => {
     if (!props.config?.tp) return
 
     if (val) {
+        // 开启自动补仓：初始化合理的减仓参数
         if (props.config.amount_mode === "amount") {
             if (!props.config.tp.reduce_amount || props.config.tp.reduce_amount <= 0) {
                 props.config.tp.reduce_amount = 10.0
@@ -953,7 +957,9 @@ const onRebuyChange = (val) => {
             }
         }
     } else {
+        // 关闭自动补仓：全平模式，强行把减仓比例设为 100%
         props.config.tp.reduce_percent = 100
+        // 如果金额模式下，不需要减仓金额，因为直接全平
     }
 }
 

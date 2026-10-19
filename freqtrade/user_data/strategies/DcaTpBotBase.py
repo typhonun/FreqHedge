@@ -317,7 +317,7 @@ class DcaTpBotBase(IStrategy):
         logger.info(
             f"enable               : {_fmt(loss_tp.get('enable'))}\n"
             f"dca_tp_profit        : {_fmt(loss_tp.get('dca_tp_profit'), 2)}%\n"
-            f"close_all            : {_fmt(loss_tp.get('close_all'))}\n"
+            f"is_partial(部分减仓) : {_fmt(loss_tp.get('is_partial'))} \n"
             f"target_wallet_amount : {_fmt(loss_tp.get('target_wallet_amount'), 2)}\n"
             f"target_wallet_percent: {_fmt(loss_tp.get('target_wallet_percent'), 2)}"
         )
@@ -1335,15 +1335,28 @@ class DcaTpBotBase(IStrategy):
         if pd.isna(ret_3) or pd.isna(vol_ratio) or pd.isna(rsi):
             return False
 
-        triggered = (ret_3 >= 0.10) and (vol_ratio >= 3.0) and (rsi >= 75.0)
+        if self._is_short:
+            # 空头：防暴跌后追空 → 3 根累计跌幅 ≥10% + 放量 + RSI 超卖
+            triggered = (ret_3 <= -0.10) and (vol_ratio >= 3.0) and (rsi <= 25.0)
+            desc = (
+                f"3根累计跌幅={ret_3 * 100:.2f}%, "
+                f"量比={vol_ratio:.2f}, RSI={rsi:.2f}"
+            )
+        else:
+            # 多头：防暴涨后追多 → 3 根累计涨幅 ≥10% + 放量 + RSI 超买
+            triggered = (ret_3 >= 0.10) and (vol_ratio >= 3.0) and (rsi >= 75.0)
+            desc = (
+                f"3根累计涨幅={ret_3 * 100:.2f}%, "
+                f"量比={vol_ratio:.2f}, RSI={rsi:.2f}"
+            )
+
         if not triggered:
             self._pump_block_logged.discard(pair)
             return False
         if pair not in self._pump_block_logged:
             self._pump_block_logged.add(pair)
             logger.info(
-                f"[{pair}] {YELLOW} [Pump 保护] 3根累计涨幅={ret_3 * 100:.2f}%, "
-                f"量比={vol_ratio:.2f}, RSI={rsi:.2f}，暂停开仓 {RESET}"
+                f"[{pair}] {YELLOW} [Pump 保护] {desc}，暂停开仓 {RESET}"
             )
         return True
 
@@ -1870,10 +1883,13 @@ class DcaTpBotBase(IStrategy):
 
             margin_val = margin
             collateral_total = self._collateral_total()
-            close_all = bool(dca_tp_cfg.get("close_all", False))
 
-            # ★ 全平分支：提前返回，不参与下面的按目标仓位计算
-            if close_all:
+            # ★ 读取新字段，默认 False（全平）
+            is_partial = bool(dca_tp_cfg.get("is_partial", False))
+
+            # ★ 语义：is_partial = False → 全平；True → 部分减仓
+            if not is_partial:
+                # 全平分支
                 self._set(trade, 'dca_count', 0)
                 self._set(trade, 'dca_done', False)
                 self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
@@ -1884,7 +1900,7 @@ class DcaTpBotBase(IStrategy):
                 )
                 return float(-margin_val), "tp_afterDCA_close_all"
 
-            # 非全平：按目标仓位减仓
+            # 部分减仓：按目标仓位减仓
             if amount_mode == "amount":
                 try:
                     target_usdt = float(dca_tp_cfg.get("target_wallet_amount", 50.0) or 50.0)
@@ -1926,9 +1942,7 @@ class DcaTpBotBase(IStrategy):
             self._set(trade, 'dca_done', False)
             self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
 
-            if close_all:
-                target_text = "全平"
-            elif amount_mode == "amount":
+            if amount_mode == "amount":
                 target_text = f"{target_usdt:.2f} USDT"
             else:
                 target_text = f"{target_wallet_percent:.0f}%"

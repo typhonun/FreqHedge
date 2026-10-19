@@ -223,11 +223,11 @@ const updateLastCandle = async () => {
             params: { pair: pair.value, timeframe: timeframe.value }
         })
         candleSeries.update({
-            time: Math.floor(res.data.time / 1000),
-            open: res.data.open,
-            high: res.data.high,
-            low: res.data.low,
-            close: res.data.close
+            time: Number(Math.floor(res.data.time / 1000)),
+            open: Number(res.data.open),
+            high: Number(res.data.high),
+            low: Number(res.data.low),
+            close: Number(res.data.close)
         })
     } catch (e) {
         console.error("update candle error", e)
@@ -247,12 +247,13 @@ const loadChart = async () => {
         params: { pair: pair.value, timeframe: timeframe.value }
     })
 
+    // 强制类型转换，防止图表卡死
     const data = res.data.map(c => ({
-        time: Math.floor(c.time / 1000),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close
+        time: Number(Math.floor(c.time / 1000)),
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close)
     }))
 
     candleSeries.setData(data)
@@ -282,6 +283,32 @@ function parseEventTime(time) {
     return Number.isFinite(t) ? t : null
 }
 
+// 辅助函数：从排好序的 K 线中，二分查找/或直接遍历找最近的 K 线时间戳
+function findNearestCandleTime(targetTime, candleData) {
+    if (!candleData.length) return null;
+    let left = 0;
+    let right = candleData.length - 1;
+
+    // 如果超出了范围，直接返回首尾
+    if (targetTime <= candleData[left].time) return candleData[left].time;
+    if (targetTime >= candleData[right].time) return candleData[right].time;
+
+    // 二分查找
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        if (candleData[mid].time === targetTime) return targetTime;
+        if (candleData[mid].time < targetTime) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    // 比较 left 和 right 哪个离 target 更近
+    const timeLeft = candleData[right].time;
+    const timeRight = candleData[left].time;
+    return (targetTime - timeLeft) < (timeRight - targetTime) ? timeLeft : timeRight;
+}
+
 function buildMarkers(rawEvents, candleData) {
     if (!candleData.length) return []
 
@@ -301,69 +328,140 @@ function buildMarkers(rawEvents, candleData) {
 
     const filteredEvents = rawEvents.filter(e => !isSignalFromManualEntry(e))
 
-    return filteredEvents.map(e => {
-        const config = buildMarkerConfig(e)
-        if (!config) return null
+    const normalMarkers = []
+    const gridBuckets = {}
 
-        let markerTime =
-            parseEventTime(e.candle_time) ??
-            parseEventTime(e.time) ??
-            parseEventTime(e.created_at) ??
-            parseEventTime(e.current_time)
+    filteredEvents.forEach(e => {
+        // 获取事件时间
+        let markerTime = parseEventTime(e.candle_time) ?? parseEventTime(e.time)
+        if (markerTime === null) return
 
-        if (markerTime === null) {
-            console.warn("事件无时间", e)
-            return null
+        // 找到最接近的 K 线时间（确保 marker 必须画在存在的 K 线上）
+        const nearestCandleTime = findNearestCandleTime(markerTime, candleData)
+        if (!nearestCandleTime) return
+
+        const isGridEvent = ['grid_add', 'grid_sell'].includes(e.event_type)
+
+        if (!isGridEvent) {
+            // DCA 及其他事件不聚合，直接记录
+            const config = buildMarkerConfig(e)
+            if (config) {
+                // ★ 核心：强制指定最新的 K 线时间，且放到最后
+                normalMarkers.push({ ...config, time: Number(nearestCandleTime) })
+            }
+            return
         }
 
-        // 找最接近的 K 线
-        const nearest = candleData.reduce((prev, curr) =>
-            Math.abs(curr.time - markerTime) < Math.abs(prev.time - markerTime)
-                ? curr : prev
-        )
+        // 网格事件聚合
+        const bucketKey = `${nearestCandleTime}_${e.event_type}`
+        if (!gridBuckets[bucketKey]) {
+            gridBuckets[bucketKey] = {
+                event_type: e.event_type,
+                time: Number(nearestCandleTime),
+                prices: [],
+                amount: 0,
+                message: e.message,
+                candle_time: e.candle_time,
+                created_at: e.created_at
+            }
+        }
+        if (e.event_type === 'grid_entry_signal' &&
+            normalMarkers.some(m => m.time === Number(nearestCandleTime) && m.event_type === 'grid_entry')) {
+            return;
+        }
+        gridBuckets[bucketKey].prices.push(Number(e.price || 0))
+        gridBuckets[bucketKey].amount += Number(e.amount || 0)
+    })
 
-        return { time: nearest.time, ...config }
-    }).filter(Boolean)
+    // 处理聚合后的网格事件
+    Object.values(gridBuckets).forEach(b => {
+        const avgPrice = (b.prices.reduce((sum, p) => sum + p, 0) / b.prices.length).toFixed(4)
+        const aggEvent = {
+            event_type: b.event_type,
+            time: b.time,
+            price: avgPrice,
+            amount: b.amount.toFixed(2),
+            message: b.prices.length > 1 ? `${b.message} (共${b.prices.length}笔, 均价${avgPrice})` : b.message,
+            count: b.prices.length,
+            candle_time: b.candle_time,
+            created_at: b.created_at
+        }
+
+        const config = buildMarkerConfig(aggEvent)
+        if (config) {
+            // ★ 核心：强制指定 K 线时间，且放到最后
+            normalMarkers.push({ ...config, time: Number(b.time) })
+        }
+    })
+
+    return normalMarkers
 }
 
 function buildMarkerConfig(e) {
+    const countSuffix = e.count && e.count > 1 ? ` x${e.count}` : ''
+    const priceStr = e.price ? e.price : ''
+
     switch (e.event_type) {
         case "signal":
-            return { position: "belowBar", color: "#673ab7", shape: "arrowUp", text: `信号开仓 ${e.price}`, size: 2 }
+            return { position: "belowBar", color: "#673ab7", shape: "arrowUp", text: `信号开仓 ${priceStr}`, size: 2 }
         case "manual_entry":
-            return { position: "belowBar", color: "#9c27b0", shape: "arrowUp", text: `手动开仓 ${e.price}`, size: 2,
-                title: `价格:${e.price ?? '-'}\n数量:${e.amount ?? '-'}` }
+            return { position: "belowBar", color: "#9c27b0", shape: "arrowUp", text: `手动开仓 ${priceStr}`, size: 2,
+                title: `价格:${priceStr || '-'}\n数量:${e.amount ?? '-'}` }
         case "dca":
-            return { position: "belowBar", color: "#2196f3", shape: "arrowUp", text: `DCA加仓 ${e.price}`, size: 1,
-                title: `价格:${e.price}\n数量:${e.amount}` }
+            return { position: "belowBar", color: "#2196f3", shape: "arrowUp", text: `DCA加仓 ${priceStr}`, size: 1,
+                title: `价格:${priceStr}\n数量:${e.amount}` }
         case "trend_add":
-            return { position: "belowBar", color: "#00bcd4", shape: "arrowUp", text: `趋势加仓 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}` }
+            return { position: "belowBar", color: "#00bcd4", shape: "arrowUp", text: `趋势加仓 ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}` }
         case "kdj_reduce":
-            return { position: "aboveBar", color: "#9c27b0", shape: "arrowDown", text: `KDJ减仓 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}` }
-        case "grid_entry_signal": // 兼容网格首仓信号
-            return { position: "belowBar", color: "#4caf50", shape: "arrowUp", text: `网格首仓 ${e.price}`, size: 2,
-                title: `价格:${e.price}\n数量:${e.amount}` }
+            return { position: "aboveBar", color: "#9c27b0", shape: "arrowDown", text: `KDJ减仓 ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}` }
+        case "grid_entry":  // ★ 新增的首仓标记
+            return {
+                position: "belowBar",
+                color: "#e91e63",  // 用粉红色或醒目颜色区分加仓的绿色
+                shape: "arrowUp",
+                text: e.message || `网格首仓 ${priceStr}`,
+                size: 3, // 稍微放大一点
+                title: `首仓成交价:${priceStr}\n数量:${e.amount}`
+            }
+        case "grid_entry_signal":
+            return {
+                position: "belowBar",
+                color: "#4caf50",
+                shape: "circle", // 信号用圆点
+                text: `网格信号 ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}`
+            }
         case "grid_add":
-            return { position: "belowBar", color: "#4caf50", shape: "arrowUp", text: `网格加仓 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}` }
+            return {
+                position: "belowBar",
+                color: "#2196f3", // 加仓用蓝色，避免和首仓混淆
+                shape: "arrowUp",
+                text: `网格加仓${countSuffix} ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}`
+            }
         case "grid_sell":
-            return { position: "aboveBar", color: "#e91e63", shape: "arrowDown", text: `网格减仓 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}` }
+            return {
+                position: "aboveBar",
+                color: "#ff9800", // 减仓用橙色
+                shape: "arrowDown",
+                text: `网格减仓${countSuffix} ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}`
+            }
         case "tp":
-            return { position: "aboveBar", color: "#ff9800", shape: "arrowDown", text: `${e.message || "TP"} ${e.price}` }
+            return { position: "aboveBar", color: "#ff9800", shape: "arrowDown", text: `${e.message || "TP"} ${priceStr}` }
         case "sl":
-            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `SL ${e.price}` }
+            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `SL ${priceStr}` }
         case "stop_loss":
-            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `止损平仓 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}`, size: 2 }
+            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `止损平仓 ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}`, size: 2 }
         case "global_tp":
-            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `全局止盈 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `全局止盈 ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
         case "global_sl":
-            return { position: "aboveBar", color: "#d50000", shape: "arrowDown", text: `全局止损 ${e.price}`,
-                title: `价格:${e.price}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
+            return { position: "aboveBar", color: "#d50000", shape: "arrowDown", text: `全局止损 ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
         default:
             return null
     }

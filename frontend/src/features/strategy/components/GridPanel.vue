@@ -34,35 +34,31 @@
         </div>
 
         <div class="form-row">
-          <el-form-item label="网格数量" class="form-item-half">
+          <el-form-item label="网格数量" class="form-item-third">
             <el-input-number v-model="config.grid.grid_count" :min="2" :max="200" :step="1" controls-position="right" class="short-input" @change="onGridCountChange" />
           </el-form-item>
-          <el-form-item label="间距算法" class="form-item-half">
+          <el-form-item label="间距算法" class="form-item-third">
             <el-select v-model="config.grid.spacing_algo" class="short-input">
               <el-option label="等差" value="arithmetic" />
               <el-option label="等比" value="geometric" />
             </el-select>
           </el-form-item>
-        </div>
-
-        <div class="form-row">
-          <el-form-item label="每格金额" class="form-item-half">
-            <div class="input-with-hint">
-              <el-input :model-value="perGridText" readonly class="short-input" />
-              <div class="inline-hint">
-                <el-icon class="section-label__info"><InfoFilled /></el-icon>
-                投入资金 / 网格数量 = {{ capital }} / {{ config.grid.grid_count }} USDT
-              </div>
-            </div>
-          </el-form-item>
-          <el-form-item label="最多同时持仓格数" class="form-item-half">
-            <div class="input-with-hint">
-              <el-input-number v-model="config.grid.max_open_grids" :min="1" :max="config.grid.grid_count" :step="1" controls-position="right" class="short-input" />
-              <div class="inline-hint">
-                <el-icon class="section-label__info"><InfoFilled /></el-icon>
-                默认 = 网格数量；调小可作风控
-              </div>
-            </div>
+          <!-- ★ 新增：K 线周期 -->
+          <el-form-item label="K 线周期" class="form-item-third">
+            <el-select
+              v-model="config.timeframe"
+              class="short-input"
+              @change="onTimeframeChange"
+            >
+              <el-option label="1m"  value="1m" />
+              <el-option label="3m"  value="3m" />
+              <el-option label="5m"  value="5m" />
+              <el-option label="15m" value="15m" />
+              <el-option label="30m" value="30m" />
+              <el-option label="1h"  value="1h" />
+              <el-option label="2h"  value="2h" />
+              <el-option label="4h"  value="4h" />
+            </el-select>
           </el-form-item>
         </div>
       </div>
@@ -190,7 +186,10 @@ const props = defineProps({
   pair:    { type: String, default: '' },
   direction: { type: String, default: 'long' },
 })
-
+const emit = defineEmits(['timeframe-change'])
+const onTimeframeChange = (val) => {
+  emit('timeframe-change', val)
+}
 const loadingSuggest = ref(0)
 const lastSuggestInfo = ref('')
 const currentPrice = ref(null)
@@ -422,6 +421,11 @@ const gridPreview = computed(() => {
   display: flex;
   gap: 16px;
   margin-bottom: 12px;
+}
+.form-item-third {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
 }
 .form-item-half {
   flex: 1;
