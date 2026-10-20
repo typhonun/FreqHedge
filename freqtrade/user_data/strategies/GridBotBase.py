@@ -432,6 +432,7 @@ class GridBotBase(DcaTpBotBase):
                     return
 
                 self._add_grid_position(trade, idx, entry_price, qty)
+                self._set(trade, "grid_pending_add", None)
                 self._set(
                     trade,
                     "last_grid_action_time",
@@ -533,7 +534,11 @@ class GridBotBase(DcaTpBotBase):
             if not self._get_bool(trade, "grid_n_initialized", False):
                 return None
 
-            # ★ 关键点：直接获取当前 1m K 线的收盘价，取代实时 current_rate
+            # 同一 Trade 存在未完成订单时，不再创建新的调仓订单。
+            # 这是防止限价单未成交期间重复提交同一网格的第一道保护。
+            if trade.has_open_orders:
+                return None
+
             df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
             if df is None or df.empty:
                 return None
@@ -542,7 +547,7 @@ class GridBotBase(DcaTpBotBase):
             if close_price <= 0:
                 return None
 
-            # ★ 冷却机制：防止同一毫秒/同一秒内无限刷单 (默认60秒)
+            # 冷却机制
             last_action = self._get_int(trade, 'last_grid_action_time', 0)
             cooldown = self._grid_cooldown()
             if last_action > 0 and current_time.timestamp() - last_action < cooldown:
@@ -553,8 +558,30 @@ class GridBotBase(DcaTpBotBase):
             positions = self._get_grid_positions(trade)
             taken = self._get_taken_levels(trade)
             max_grids = self._cfg_int(g, "max_open_grids", 20)
+
+            # Freqtrade 可能在订单成交回调前多次调用调整函数。
+            # 同一网格在此期间只能有一个待成交加仓请求。
+            pending_add = self._get(trade, "grid_pending_add", None)
+            if pending_add:
+                if isinstance(pending_add, str):
+                    try:
+                        pending_add = json.loads(pending_add)
+                    except Exception:
+                        pending_add = None
+                if isinstance(pending_add, dict):
+                    try:
+                        pending_at = float(pending_add.get("timestamp", 0))
+                    except (TypeError, ValueError):
+                        pending_at = 0
+                    pending_timeout = max(cooldown, 60)
+                    if (
+                        pending_at > 0
+                        and current_time.timestamp() - pending_at < pending_timeout
+                    ):
+                        return None
+                self._set(trade, "grid_pending_add", None)
+
             pending_reduce = self._get(trade, "grid_pending_reduce", [])
-            # ★ 修复：兼容 _get 返回字符串（未解码）的情况
             if isinstance(pending_reduce, str):
                 try:
                     pending_reduce = json.loads(pending_reduce)
@@ -567,14 +594,12 @@ class GridBotBase(DcaTpBotBase):
                 still_at_tp = False
                 for idx in pending_reduce:
                     try:
-                        idx_int = int(idx)   # 先转 int，避免异常
+                        idx_int = int(idx)
                         position = positions.get(str(idx_int))
                         if position:
                             tp_price = self._grid_tp_price(idx_int)
-                            if (
-                                (not self._is_short and close_price >= tp_price)
-                                or (self._is_short and close_price <= tp_price)
-                            ):
+                            if (not self._is_short and close_price >= tp_price) or (
+                                    self._is_short and close_price <= tp_price):
                                 still_at_tp = True
                                 break
                     except (ValueError, TypeError):
@@ -590,26 +615,24 @@ class GridBotBase(DcaTpBotBase):
 
             # ── 1) 检查止盈（减仓） ──
             to_close = []
-            for k, v in positions.items():
-                try:
-                    idx = int(k)
-                    entry = float(v.get("entry", 0))
-                    if entry <= 0:
-                        continue
-
-                    tp_price = self._grid_tp_price(idx)
-                    if tp_price <= 0:
-                        continue
-
-                    # ★ 必须基于 1m 收盘价真实穿破止盈线
-                    if self._is_short:
-                        if close_price <= tp_price:
-                            to_close.append((idx, entry, v))
-                    else:
-                        if close_price >= tp_price:
-                            to_close.append((idx, entry, v))
-                except Exception:
-                    pass
+            if positions:
+                for k, v in positions.items():
+                    try:
+                        idx = int(k)
+                        entry = float(v.get("entry", 0))
+                        if entry <= 0:
+                            continue
+                        tp_price = self._grid_tp_price(idx)
+                        if tp_price <= 0:
+                            continue
+                        if self._is_short:
+                            if close_price <= tp_price:
+                                to_close.append((idx, entry, v))
+                        else:
+                            if close_price >= tp_price:
+                                to_close.append((idx, entry, v))
+                    except Exception:
+                        pass
 
             if to_close:
                 total_margin = 0.0
@@ -634,33 +657,35 @@ class GridBotBase(DcaTpBotBase):
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
             # ── 2) 检查加仓（开仓） ──
+            # ★ 注释：不要在这里拦截空仓！
             held_indices = [int(k) for k in positions.keys()]
+
             if not held_indices:
-                return None
+                # ★ 核心修改：全平后，如果没有被锁定（taken 为空），立刻按当前价建仓
+                if taken:
+                    return None
 
-            # ★ 寻找最边缘的网格线来触发加仓
-            if not self._is_short:
-                # 多头：找最低的那根线，-1 作为目标加仓线
-                lowest_idx = min(held_indices)
-                target_idx = lowest_idx - 1
-                if target_idx < 0:
-                    return None
+                target_idx = self._get_line_idx(close_price)
                 target_line_price = levels[target_idx]
-                # 必须 1m 收盘价跌破（或等于）目标加仓线
-                if close_price > target_line_price:
-                    return None
             else:
-                # 空头：找最高的那根线，+1 作为目标加仓线
-                highest_idx = max(held_indices)
-                target_idx = highest_idx + 1
-                if target_idx >= len(levels):
-                    return None
-                target_line_price = levels[target_idx]
-                # 必须 1m 收盘价突破（或等于）目标加仓线
-                if close_price < target_line_price:
-                    return None
+                # 如果有持仓，找最边缘的网格线来触发加仓
+                if not self._is_short:
+                    lowest_idx = min(held_indices)
+                    target_idx = lowest_idx - 1
+                    if target_idx < 0:
+                        return None
+                    target_line_price = levels[target_idx]
+                    if close_price > target_line_price:
+                        return None
+                else:
+                    highest_idx = max(held_indices)
+                    target_idx = highest_idx + 1
+                    if target_idx >= len(levels):
+                        return None
+                    target_line_price = levels[target_idx]
+                    if close_price < target_line_price:
+                        return None
 
-            # 如果这个目标线已经持有，或已被锁定，或超过最大格数，则跳过
             if str(target_idx) in positions:
                 return None
             if target_idx in taken:
@@ -681,6 +706,16 @@ class GridBotBase(DcaTpBotBase):
                 f"{GRID_TAG} {RED}▲ 触发线加仓{RESET} | {trade.pair} | 线{target_idx} | "
                 f"收盘价={close_price:.4f} | 止盈线={tp_price:.4f} | 保证金={buy_usdt:.2f}"
             )
+
+            self._set(
+                trade,
+                "grid_pending_add",
+                json.dumps({
+                    "idx": int(target_idx),
+                    "timestamp": self._safe_int(current_time.timestamp()),
+                }),
+            )
+            self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
             return float(buy_usdt), f"grid_add_lv{target_idx}"
 
         except Exception:
