@@ -1062,6 +1062,12 @@ class DcaTpBotBase(IStrategy):
             s = v.strip()
             if not s or s.lower() in ("null", "none", "nan", "na", "n/a"):
                 return None
+            # ★ 新增：自动尝试解析 JSON 字符串
+            if (s.startswith("[") and s.endswith("]")) or (s.startswith("{") and s.endswith("}")):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    pass
             return s
         try:
             import numpy as np

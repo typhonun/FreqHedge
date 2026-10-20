@@ -1,16 +1,15 @@
 # freqtrade/user_data/strategies/GridBotBase.py
 """
-网格机器人基类（绝对线版）
+网格机器人基类（绝对线版 - 1m收盘价触发）
 
 设计要点：
   - 一个网格 = 一个 Trade（freqtrade 单 pair 只能有一个 trade）
   - 多单同时持有：trade.custom_data["grid_positions"] = {"3": {...}, "7": {...}}
   - 首仓由 confirm_trade_entry 放行
   - 后续加仓/减仓由 adjust_trade_position 处理
-  - ★ 挂单逻辑：
-      - 多头：价格跌破某条线买入，涨到该线上方相邻线止盈。
-      - 空头：价格突破某条线做空，跌到该线下方相邻线止盈。
-  - 复用 DcaTpBotBase 的基础设施（图表标记、HTF、Pump、时间止损等）
+  - ★ 挂单逻辑（基于 1m 收盘价）：
+      - 多头：收盘价跌破当前最低持仓网格-1线时加仓；涨破当前持仓网格+1线时止盈。
+      - 空头：收盘价突破当前最高持仓网格+1线时加仓；跌破当前持仓网格-1线时止盈。
 """
 
 import sys
@@ -57,9 +56,9 @@ class GridBotBase(DcaTpBotBase):
     @property
     def timeframe(self) -> str:
         cfg = self.get_runtime_config() or {}
-        tf = str(cfg.get("timeframe", "5m")).lower()
-        return tf if tf else "5m"
-    
+        tf = str(cfg.get("timeframe", "1m")).lower()
+        return tf if tf else "1m"
+
     # ============================================================
     # 初始化
     # ============================================================
@@ -78,10 +77,7 @@ class GridBotBase(DcaTpBotBase):
         ft_cfg = self.config or {}
 
         dry_run_wallet = ft_cfg.get("dry_run_wallet", 0)
-        stake_amount = ft_cfg.get("stake_amount", 0)
-        max_open_trades = ft_cfg.get("max_open_trades", 0)
         leverage = ft_cfg.get("leverage", 1)
-
         exchange_cfg = ft_cfg.get("exchange", {}) or {}
         pair_whitelist = exchange_cfg.get("pair_whitelist", []) or []
 
@@ -106,6 +102,7 @@ class GridBotBase(DcaTpBotBase):
             f"间距算法          : {spacing}\n"
             f"每格金额          : {amount_per_grid} USDT\n"
             f"启动模式          : {start_mode}\n"
+            f"触发周期          : {self.timeframe} 收盘价\n"
             f"======================================================"
         )
 
@@ -418,6 +415,28 @@ class GridBotBase(DcaTpBotBase):
 
             # ── B. 网格加仓成交 ──
             if reason.startswith("grid_add_lv"):
+                # 只有订单真实成交后才登记该网格，避免未成交/被拒订单
+                # 提前占用网格，导致后续永远不会再次尝试。
+                try:
+                    idx = int(reason[len("grid_add_lv"):])
+                except (TypeError, ValueError):
+                    logger.warning(
+                        f"{GRID_TAG} 无法解析加仓网格编号 | reason={reason!r}"
+                    )
+                    return
+
+                if qty <= 0 or entry_price <= 0:
+                    logger.warning(
+                        f"{GRID_TAG} 忽略无效加仓成交 | 价格={entry_price} | 数量={qty}"
+                    )
+                    return
+
+                self._add_grid_position(trade, idx, entry_price, qty)
+                self._set(
+                    trade,
+                    "last_grid_action_time",
+                    self._safe_int(current_time.timestamp()),
+                )
                 self._record_chart_marker(
                     event_type="grid_add", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
@@ -428,6 +447,28 @@ class GridBotBase(DcaTpBotBase):
 
             # ── C. 网格减仓成交 ──
             elif reason.startswith("grid_reduce_multi"):
+                pending = self._get(trade, "grid_pending_reduce", [])
+                try:
+                    pending_indices = [int(x) for x in (pending or [])]
+                except (TypeError, ValueError):
+                    pending_indices = []
+
+                positions = self._get_grid_positions(trade)
+                taken = self._get_taken_levels(trade)
+                for idx in pending_indices:
+                    positions.pop(str(idx), None)
+                    taken.add(idx)
+                self._set_grid_positions(trade, positions)
+                if not positions:
+                    taken = set()
+                    logger.info(f"{GRID_TAG} 🏁 本轮网格已全平，重置状态。")
+                self._set_taken_levels(trade, taken)
+                self._set(trade, "grid_pending_reduce", [])
+                self._set(
+                    trade,
+                    "last_grid_action_time",
+                    self._safe_int(current_time.timestamp()),
+                )
                 self._record_chart_marker(
                     event_type="grid_sell", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
@@ -453,15 +494,6 @@ class GridBotBase(DcaTpBotBase):
     # custom_exit
     # ============================================================
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
-        try:
-            base_exit = super().custom_exit(
-                pair, trade, current_time, current_rate, current_profit, **kwargs
-            )
-            if base_exit:
-                return base_exit
-        except Exception:
-            logger.exception(f"{GRID_TAG} super().custom_exit 异常")
-
         try:
             g = self._grid_cfg()
             lower = self._cfg_float(g, "lower_price", 0.0)
@@ -489,7 +521,7 @@ class GridBotBase(DcaTpBotBase):
             return None
 
     # ============================================================
-    # 核心：加仓 / 减仓（绝对线逻辑重写）
+    # 核心：加仓 / 减仓（绝对线 1m 收盘价逻辑）
     # ============================================================
     def adjust_trade_position(self, trade, current_time, current_rate, current_profit, **kwargs):
         try:
@@ -498,11 +530,16 @@ class GridBotBase(DcaTpBotBase):
             if not levels:
                 return None
 
-            price = float(current_rate or 0.0)
-            if price <= 0:
+            if not self._get_bool(trade, "grid_n_initialized", False):
                 return None
 
-            if not self._get_bool(trade, "grid_n_initialized", False):
+            # ★ 关键点：直接获取当前 1m K 线的收盘价，取代实时 current_rate
+            df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
+            if df is None or df.empty:
+                return None
+
+            close_price = float(df.iloc[-1]['close'])
+            if close_price <= 0:
                 return None
 
             # ★ 冷却机制：防止同一毫秒/同一秒内无限刷单 (默认60秒)
@@ -511,11 +548,40 @@ class GridBotBase(DcaTpBotBase):
             if last_action > 0 and current_time.timestamp() - last_action < cooldown:
                 return None
 
-            self._cleanup_taken(trade, price)
+            self._cleanup_taken(trade, close_price)
 
             positions = self._get_grid_positions(trade)
             taken = self._get_taken_levels(trade)
-            max_grids = self._cfg_int(g, "max_open_grids", 5)
+            max_grids = self._cfg_int(g, "max_open_grids", 20)
+            pending_reduce = self._get(trade, "grid_pending_reduce", [])
+            # ★ 修复：兼容 _get 返回字符串（未解码）的情况
+            if isinstance(pending_reduce, str):
+                try:
+                    pending_reduce = json.loads(pending_reduce)
+                except Exception:
+                    pending_reduce = []
+            if not isinstance(pending_reduce, list):
+                pending_reduce = []
+
+            if pending_reduce:
+                still_at_tp = False
+                for idx in pending_reduce:
+                    try:
+                        idx_int = int(idx)   # 先转 int，避免异常
+                        position = positions.get(str(idx_int))
+                        if position:
+                            tp_price = self._grid_tp_price(idx_int)
+                            if (
+                                (not self._is_short and close_price >= tp_price)
+                                or (self._is_short and close_price <= tp_price)
+                            ):
+                                still_at_tp = True
+                                break
+                    except (ValueError, TypeError):
+                        continue
+                if still_at_tp:
+                    return None
+                self._set(trade, "grid_pending_reduce", [])
 
             try:
                 lev = float(self.leverage(trade.pair) or 1.0)
@@ -535,11 +601,12 @@ class GridBotBase(DcaTpBotBase):
                     if tp_price <= 0:
                         continue
 
+                    # ★ 必须基于 1m 收盘价真实穿破止盈线
                     if self._is_short:
-                        if price <= tp_price:
+                        if close_price <= tp_price:
                             to_close.append((idx, entry, v))
                     else:
-                        if price >= tp_price:
+                        if close_price >= tp_price:
                             to_close.append((idx, entry, v))
                 except Exception:
                     pass
@@ -551,35 +618,49 @@ class GridBotBase(DcaTpBotBase):
                 for idx, entry, v in to_close:
                     qty = float(v.get("qty", 0))
                     margin = (entry * qty) / lev
-                    pnl = (entry - price) * qty if self._is_short else (price - entry) * qty
+                    pnl = (entry - close_price) * qty if self._is_short else (close_price - entry) * qty
                     total_margin += margin
                     total_pnl += pnl
-                    self._remove_grid_position(trade, idx)
-                    taken.add(idx)
                     closed.append((idx, entry, qty, margin, pnl))
 
-                self._set_taken_levels(trade, taken)
-                self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
+                self._set(
+                    trade,
+                    "grid_pending_reduce",
+                    [idx for idx, _, _, _, _ in closed],
+                )
 
-                # 如果减仓后彻底空了，重置 taken 状态，迎接下一波
-                if not self._get_grid_positions(trade):
-                    taken = set()
-                    self._set_taken_levels(trade, taken)
-                    logger.info(f"{GRID_TAG} 🏁 本轮网格已全平，重置状态。")
-
-                self._log_reduce(trade, price, closed, total_margin, total_pnl)
-                self._log_state_detail(trade, price)
+                self._log_reduce(trade, close_price, closed, total_margin, total_pnl)
+                self._log_state_detail(trade, close_price)
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
             # ── 2) 检查加仓（开仓） ──
-            cur_idx = self._get_line_idx(price)
-
-            # 多头：当前价格落在 cur_idx 区间，若跌破左侧线 cur_idx，则加仓
-            # 空头：当前价格落在 cur_idx 区间，若突破右侧线 cur_idx+1，则加仓
-            target_idx = cur_idx if not self._is_short else cur_idx + 1
-
-            if target_idx < 0 or target_idx >= len(levels):
+            held_indices = [int(k) for k in positions.keys()]
+            if not held_indices:
                 return None
+
+            # ★ 寻找最边缘的网格线来触发加仓
+            if not self._is_short:
+                # 多头：找最低的那根线，-1 作为目标加仓线
+                lowest_idx = min(held_indices)
+                target_idx = lowest_idx - 1
+                if target_idx < 0:
+                    return None
+                target_line_price = levels[target_idx]
+                # 必须 1m 收盘价跌破（或等于）目标加仓线
+                if close_price > target_line_price:
+                    return None
+            else:
+                # 空头：找最高的那根线，+1 作为目标加仓线
+                highest_idx = max(held_indices)
+                target_idx = highest_idx + 1
+                if target_idx >= len(levels):
+                    return None
+                target_line_price = levels[target_idx]
+                # 必须 1m 收盘价突破（或等于）目标加仓线
+                if close_price < target_line_price:
+                    return None
+
+            # 如果这个目标线已经持有，或已被锁定，或超过最大格数，则跳过
             if str(target_idx) in positions:
                 return None
             if target_idx in taken:
@@ -587,30 +668,19 @@ class GridBotBase(DcaTpBotBase):
             if len(positions) >= max_grids:
                 return None
 
-            # ★ 绝对线验证：确保价格真的穿破了这条线
-            line_price = levels[target_idx]
-            if not self._is_short and price > line_price:
-                return None
-            if self._is_short and price < line_price:
-                return None
-
-            buy_usdt = self._calc_grid_amount(trade, price)
+            buy_usdt = self._calc_grid_amount(trade, close_price)
             if buy_usdt <= 0:
                 return None
 
-            add_qty = (buy_usdt * lev) / price if price > 0 else 0
+            add_qty = (buy_usdt * lev) / close_price if close_price > 0 else 0
             if add_qty <= 0:
                 return None
-
-            self._add_grid_position(trade, target_idx, price, add_qty)
-            self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
 
             tp_price = self._grid_tp_price(target_idx)
             logger.info(
                 f"{GRID_TAG} {RED}▲ 触发线加仓{RESET} | {trade.pair} | 线{target_idx} | "
-                f"成交价={price:.4f} | 止盈线={tp_price:.4f} | 保证金={buy_usdt:.2f}"
+                f"收盘价={close_price:.4f} | 止盈线={tp_price:.4f} | 保证金={buy_usdt:.2f}"
             )
-            self._log_state_detail(trade, price)
             return float(buy_usdt), f"grid_add_lv{target_idx}"
 
         except Exception:
@@ -642,7 +712,14 @@ class GridBotBase(DcaTpBotBase):
                 per_grid = capital / max(1, grid_count)
 
         available = self._available_stake()
-        per_grid = min(per_grid, available * 0.8)
+        # 回测及部分 futures 钱包实现可能无法提供 free USDT（返回 0），
+        # 不能因此把合法的网格金额裁剪为 0，否则所有加仓都会被静默跳过。
+        if available > 0:
+            per_grid = min(per_grid, available * 0.8)
+        elif per_grid > 0:
+            logger.debug(
+                f"{GRID_TAG} free USDT 不可用，使用配置/首仓金额 | amount={per_grid:.4f}"
+            )
         return max(0.0, per_grid)
 
     # ============================================================
@@ -686,7 +763,7 @@ class GridBotBase(DcaTpBotBase):
     def _set_taken_levels(self, trade, levels: set):
         self._set(trade, "grid_taken_levels", json.dumps(sorted(levels)))
 
-    def _cleanup_taken(self, trade, price: float):
+    def _cleanup_taken(self, trade, close_price: float):
         try:
             levels = self._build_grid_levels()
             if not levels:
@@ -701,13 +778,12 @@ class GridBotBase(DcaTpBotBase):
             for t in taken:
                 if t < 0 or t >= n:
                     continue
-                # 如果当前价格仍然停留在该线及相邻区间，保持锁定
-                # 只有真实离开该线（向上穿过 t+1 或向下穿过 t-1），才解锁
+                # ★ 释放逻辑：只有当 1m 收盘价彻底离开了该网格及其相邻网格，才解锁
                 if not self._is_short:
-                    if price > levels[t + 1] or price < levels[max(0, t - 1)]:
+                    if close_price > levels[t + 1] or close_price < levels[max(0, t - 1)]:
                         continue
                 else:
-                    if price < levels[t] or price > levels[min(n, t + 2)]:
+                    if close_price < levels[t] or close_price > levels[min(n, t + 2)]:
                         continue
                 new_taken.add(t)
 
@@ -715,7 +791,7 @@ class GridBotBase(DcaTpBotBase):
                 self._set_taken_levels(trade, new_taken)
                 removed = taken - new_taken
                 if removed:
-                    logger.info(f"{GRID_TAG} ↺ 允许重开 | 价={price:.4f} | 释放格: {sorted(removed)}")
+                    logger.info(f"{GRID_TAG} ↺ 允许重开 | 收盘价={close_price:.4f} | 释放格: {sorted(removed)}")
         except Exception:
             logger.warning(f"{GRID_TAG} _cleanup_taken 异常", exc_info=True)
 

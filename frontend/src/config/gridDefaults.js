@@ -17,7 +17,7 @@ export const GRID_DEFAULTS = Object.freeze({
 
 export function getDefaultGridConfig() {
   return {
-    timeframe: '5m',
+    timeframe: '1m',
     grid: JSON.parse(JSON.stringify(GRID_DEFAULTS)),
   }
 }

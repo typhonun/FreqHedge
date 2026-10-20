@@ -54,9 +54,6 @@
               <el-option label="5m"  value="5m" />
               <el-option label="15m" value="15m" />
               <el-option label="30m" value="30m" />
-              <el-option label="1h"  value="1h" />
-              <el-option label="2h"  value="2h" />
-              <el-option label="4h"  value="4h" />
             </el-select>
           </el-form-item>
         </div>
