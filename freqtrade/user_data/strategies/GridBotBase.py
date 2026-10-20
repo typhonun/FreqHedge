@@ -400,6 +400,20 @@ class GridBotBase(DcaTpBotBase):
                 self._set_grid_positions(trade, positions)
                 self._set(trade, "grid_n_initialized", True)
                 self._clear_bot_grid_pending_level(trade.pair)
+                self._set(
+                    trade,
+                    "grid_entry_candle",
+                    self._index_candle_key(current_time),
+                )
+                self._set(
+                    trade,
+                    "grid_entry_guard_until",
+                    self._safe_int(current_time.timestamp()) + max(
+                        self._grid_cooldown(), 60
+                    ),
+                )
+                self._set(trade, "grid_pending_add", None)
+                self._set(trade, "grid_pending_reduce", [])
 
                 # 设置冷却时间初始值，防止首仓后立刻触发第二次
                 self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
@@ -547,6 +561,19 @@ class GridBotBase(DcaTpBotBase):
             if close_price <= 0:
                 return None
 
+            guard_until = self._get_int(trade, "grid_entry_guard_until", 0)
+            if guard_until > 0 and current_time.timestamp() < guard_until:
+                return None
+
+            current_candle = self._index_candle_key(
+                df.iloc[-1].get("date", df.index[-1])
+            )
+            entry_candle = self._get(trade, "grid_entry_candle", None)
+            if entry_candle is not None and current_candle == entry_candle:
+                # 首仓成交所在 K 线只负责建立状态，不能用该 K 线的
+                # 最新收盘价立即触发止盈或加仓。
+                return None
+
             # 冷却机制
             last_action = self._get_int(trade, 'last_grid_action_time', 0)
             cooldown = self._grid_cooldown()
@@ -558,6 +585,12 @@ class GridBotBase(DcaTpBotBase):
             positions = self._get_grid_positions(trade)
             taken = self._get_taken_levels(trade)
             max_grids = self._cfg_int(g, "max_open_grids", 20)
+
+            if not positions:
+                # 没有真实网格持仓时，绝不能生成减仓或调仓订单。
+                self._set(trade, "grid_pending_reduce", [])
+                self._set(trade, "grid_pending_add", None)
+                return None
 
             # Freqtrade 可能在订单成交回调前多次调用调整函数。
             # 同一网格在此期间只能有一个待成交加仓请求。
@@ -581,6 +614,7 @@ class GridBotBase(DcaTpBotBase):
                         return None
                 self._set(trade, "grid_pending_add", None)
 
+            # ---------- 修复 1：简化 pending_reduce 检查 ----------
             pending_reduce = self._get(trade, "grid_pending_reduce", [])
             if isinstance(pending_reduce, str):
                 try:
@@ -590,23 +624,9 @@ class GridBotBase(DcaTpBotBase):
             if not isinstance(pending_reduce, list):
                 pending_reduce = []
 
+            # ★ 只要存在未完成的减仓单，直接拦截！绝不做任何多余判断，防止死循环刷单
             if pending_reduce:
-                still_at_tp = False
-                for idx in pending_reduce:
-                    try:
-                        idx_int = int(idx)
-                        position = positions.get(str(idx_int))
-                        if position:
-                            tp_price = self._grid_tp_price(idx_int)
-                            if (not self._is_short and close_price >= tp_price) or (
-                                    self._is_short and close_price <= tp_price):
-                                still_at_tp = True
-                                break
-                    except (ValueError, TypeError):
-                        continue
-                if still_at_tp:
-                    return None
-                self._set(trade, "grid_pending_reduce", [])
+                return None
 
             try:
                 lev = float(self.leverage(trade.pair) or 1.0)
@@ -625,6 +645,8 @@ class GridBotBase(DcaTpBotBase):
                         tp_price = self._grid_tp_price(idx)
                         if tp_price <= 0:
                             continue
+
+                        # 基于收盘价判断止盈
                         if self._is_short:
                             if close_price <= tp_price:
                                 to_close.append((idx, entry, v))
@@ -646,45 +668,48 @@ class GridBotBase(DcaTpBotBase):
                     total_pnl += pnl
                     closed.append((idx, entry, qty, margin, pnl))
 
+                # ★ 修复 2：立刻在内存中删除这些持仓并加入锁定！
+                for idx, _, _, _, _ in closed:
+                    positions.pop(str(int(idx)), None)
+                    taken.add(int(idx))
+
+                # 保存更新后的持仓状态
+                self._set_grid_positions(trade, positions)
+                self._set_taken_levels(trade, taken)
+
+                # 记录 pending_reduce，给 order_filled 用
                 self._set(
                     trade,
                     "grid_pending_reduce",
                     [idx for idx, _, _, _, _ in closed],
                 )
 
+                # ★ 修复 3：发出减仓的瞬间，立刻更新冷却时间！
+                self._set(trade, 'last_grid_action_time', self._safe_int(current_time.timestamp()))
+
                 self._log_reduce(trade, close_price, closed, total_margin, total_pnl)
                 self._log_state_detail(trade, close_price)
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
             # ── 2) 检查加仓（开仓） ──
-            # ★ 注释：不要在这里拦截空仓！
             held_indices = [int(k) for k in positions.keys()]
-
-            if not held_indices:
-                # ★ 核心修改：全平后，如果没有被锁定（taken 为空），立刻按当前价建仓
-                if taken:
+            # 如果有持仓，找最边缘的网格线来触发加仓
+            if not self._is_short:
+                lowest_idx = min(held_indices)
+                target_idx = lowest_idx - 1
+                if target_idx < 0:
                     return None
-
-                target_idx = self._get_line_idx(close_price)
                 target_line_price = levels[target_idx]
+                if close_price > target_line_price:
+                    return None
             else:
-                # 如果有持仓，找最边缘的网格线来触发加仓
-                if not self._is_short:
-                    lowest_idx = min(held_indices)
-                    target_idx = lowest_idx - 1
-                    if target_idx < 0:
-                        return None
-                    target_line_price = levels[target_idx]
-                    if close_price > target_line_price:
-                        return None
-                else:
-                    highest_idx = max(held_indices)
-                    target_idx = highest_idx + 1
-                    if target_idx >= len(levels):
-                        return None
-                    target_line_price = levels[target_idx]
-                    if close_price < target_line_price:
-                        return None
+                highest_idx = max(held_indices)
+                target_idx = highest_idx + 1
+                if target_idx >= len(levels):
+                    return None
+                target_line_price = levels[target_idx]
+                if close_price < target_line_price:
+                    return None
 
             if str(target_idx) in positions:
                 return None
