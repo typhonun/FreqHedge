@@ -312,7 +312,7 @@ class DcaTpBotBase(IStrategy):
         else:
             logger.info("  levels: (空)")
 
-        _section("浮亏止盈")
+        _section("DCA止盈")
         loss_tp = cfg.get("loss_tp", {}) or {}
         logger.info(
             f"enable               : {_fmt(loss_tp.get('enable'))}\n"
@@ -1894,7 +1894,7 @@ class DcaTpBotBase(IStrategy):
                 self._set(trade, 'dca_done', False)
                 self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
                 logger.info(
-                    f"[{trade.pair}] {GREEN}[浮亏止盈全平]{RESET}, "
+                    f"[{trade.pair}] {GREEN}[DCA止盈全平]{RESET}, "
                     f"DCA次数={u}, 当前收益={account_profit * 100:.2f}%, "
                     f"{YELLOW}保证金={margin_val:.2f}{RESET}, 当前价={price:.4f}"
                 )
@@ -1948,7 +1948,7 @@ class DcaTpBotBase(IStrategy):
                 target_text = f"{target_wallet_percent:.0f}%"
 
             logger.info(
-                f"[{trade.pair}] {GREEN}[浮亏止盈减仓至 {target_text}]{RESET}, "
+                f"[{trade.pair}] {GREEN}[DCA止盈减仓至 {target_text}]{RESET}, "
                 f"DCA次数={u}, DCA止盈目标收益率={dca_tp_profit * 100:.2f}%, "
                 f"当前收益={account_profit * 100:.2f}%, "
                 f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "

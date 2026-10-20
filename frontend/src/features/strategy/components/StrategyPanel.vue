@@ -492,10 +492,10 @@
       </div>
     </ToggleSection>
 
-    <!-- 浮亏止盈 -->
+    <!-- DCA止盈 -->
     <ToggleSection
       v-model="config.loss_tp.enable"
-      title="浮亏止盈"
+      title="DCA止盈"
       desc="DCA 后达到目标自动减仓"
     >
       <template #extra>
@@ -509,7 +509,7 @@
         </el-tooltip>
       </template>
 
-      <!-- 浮亏止盈 -->
+      <!-- DCA止盈 -->
       <el-form class="compact-form" label-width="140px" size="small">
 
         <!-- ★ 修改点：将开关放上面，占满整行 -->

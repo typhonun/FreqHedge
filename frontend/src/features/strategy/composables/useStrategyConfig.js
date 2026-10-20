@@ -129,7 +129,7 @@ const buildTradeInfo = (side, config) => {
             : null,
 
 
-        // 浮亏止盈
+        // DCA止盈
         lossTpSignal: (() => {
             if (!config.loss_tp?.enable) {
                 return null
