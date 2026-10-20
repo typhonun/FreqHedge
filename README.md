@@ -37,39 +37,55 @@ Freqtrade 负责执行交易策略，NexusBot 负责把多个 Freqtrade 实例�
 
 > NexusBot 是交易管理工具，不承诺收益，也不构成投资建议。接入真实账户前，请先使用 `dry_run`，并自行验证策略、手续费、滑点和交易所配置。
 
-## 🎬 功能预览
+[//]: # (## 🎬 功能预览)
 
-### 📹 视频演示
+[//]: # ()
+[//]: # (### 📹 视频演示)
 
-[![Demo Video](https://img.shields.io/badge/▶_观看演示视频-3分钟-red?style=for-the-badge)](https://www.bilibili.com/video/xxxxx)
+[//]: # ()
+[//]: # ([![Demo Video]&#40;https://img.shields.io/badge/▶_观看演示视频-3分钟-red?style=for-the-badge&#41;]&#40;https://www.bilibili.com/video/xxxxx&#41;)
 
-> 演示流程：登录 → 选择策略 → 查看实时 K 线 → 复盘交易事件 → 调整参数 → 发起回测。
+[//]: # ()
+[//]: # (> 演示流程：登录 → 选择策略 → 查看实时 K 线 → 复盘交易事件 → 调整参数 → 发起回测。)
 
-### 📸 界面截图
+[//]: # ()
+[//]: # (### 📸 界面截图)
 
-#### 实时 K 线与交易事件
+[//]: # ()
+[//]: # (#### 实时 K 线与交易事件)
 
-![Chart](./screenshots/chart.png)
+[//]: # ()
+[//]: # (![Chart]&#40;./screenshots/chart.png&#41;)
 
-K 线上集中展示信号开仓、DCA 补仓、网格加仓/减仓、止盈、止损和全局平仓等事件。不同机器人使用各自对应的事件类型，你可以直接看到策略为什么在某个时间点调整仓位，而不必从长日志中人工还原交易过程。
+[//]: # ()
+[//]: # (K 线上集中展示信号开仓、DCA 补仓、网格加仓/减仓、止盈、止损和全局平仓等事件。不同机器人使用各自对应的事件类型，你可以直接看到策略为什么在某个时间点调整仓位，而不必从长日志中人工还原交易过程。)
 
-#### 策略配置面板
+[//]: # ()
+[//]: # (#### 策略配置面板)
 
-![Strategy Config](./screenshots/strategy-config.png)
+[//]: # ()
+[//]: # (![Strategy Config]&#40;./screenshots/strategy-config.png&#41;)
 
-根据机器人类型，通过表单配置 DCA 参数或网格区间、启动方式、止损、指标和 ROI 规则。保存后由 NexusBot 自动生成对应实例的 Freqtrade 配置，无需手动编辑复杂 JSON。
+[//]: # ()
+[//]: # (根据机器人类型，通过表单配置 DCA 参数或网格区间、启动方式、止损、指标和 ROI 规则。保存后由 NexusBot 自动生成对应实例的 Freqtrade 配置，无需手动编辑复杂 JSON。)
 
-#### 实时持仓监控
+[//]: # ()
+[//]: # (#### 实时持仓监控)
 
-![Dashboard](./screenshots/dashboard.png)
+[//]: # ()
+[//]: # (![Dashboard]&#40;./screenshots/dashboard.png&#41;)
 
-在一个仪表盘中查看多个 bot 的持仓、方向、盈亏、杠杆和保证金，并按 bot、方向或交易对筛选。
+[//]: # ()
+[//]: # (在一个仪表盘中查看多个 bot 的持仓、方向、盈亏、杠杆和保证金，并按 bot、方向或交易对筛选。)
 
-#### 回测结果
+[//]: # ()
+[//]: # (#### 回测结果)
 
-![Backtest](./screenshots/backtest.png)
+[//]: # ()
+[//]: # (![Backtest]&#40;./screenshots/backtest.png&#41;)
 
-使用当前策略配置发起回测，查看收益、回撤、胜率、盈亏比和退出原因，再决定是否启动模拟盘或真实交易实例。
+[//]: # ()
+[//]: # (使用当前策略配置发起回测，查看收益、回撤、胜率、盈亏比和退出原因，再决定是否启动模拟盘或真实交易实例。)
 
 ## 核心能力
 
@@ -185,23 +201,55 @@ DCA 机器人适合希望按价格回撤分层补仓、等待反弹退出的交�
 
 NexusBot 使用 Vue 3、FastAPI、SQLite、SQLAlchemy、APScheduler 和 Freqtrade 构建。它不替换 Freqtrade 的交易执行能力，而是提供配置、编排、观测和风控层。
 
-## 开始使用
+##  快速开始 (Quick Start)
 
-### 环境要求
+请按照以下步骤在本地运行 NexusBot。
 
-- Python 3.10+
-- Node.js 18+
-- npm 或 pnpm
-- 可用的 Freqtrade 运行环境
-- 回测所需的交易所历史 K 线数据
+###  环境准备
+请确保您的系统已安装以下软件：
+- [Python 3.10+](https://www.python.org/downloads/)（安装时请勾选 "Add Python to PATH"）
+- [Node.js 18+](https://nodejs.org/) 与 [pnpm](https://pnpm.io/installation)（前端包管理器）
+- [Git](https://git-scm.com/)
+
+###  克隆代码与创建虚拟环境
+```
+# 克隆仓库到本地
+git clone https://github.com/typhonun/NexusBot
+cd NexusBot
+
+# 创建 Python 虚拟环境
+python -m venv venv
+
+# 激活虚拟环境 (Windows)
+venv\Scripts\activate
+# 激活虚拟环境 (macOS / Linux)
+# source venv/bin/activate
+```
+### 安装 Python 依赖
+```powershell
+# 安装 Freqtrade 相关依赖
+cd freqtrade
+pip install -r requirements.txt
+# 将 Freqtrade 作为包安装到当前虚拟环境
+pip install -e .
+cd ..
+
+# 安装 NexusBot 后端依赖
+cd backend
+pip install -r requirements.txt
+```
+
+### 安装前端依赖
+
+```powershell
+cd frontend
+pnpm install
+```
 
 ### 启动后端
 
 ```powershell
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-
-# 按运行环境安装 FastAPI、Freqtrade、SQLAlchemy、Pandas、TA-Lib 等依赖
+# 如果虚拟环境未激活，请先运行 venv\Scripts\activate
 cd backend
 uvicorn app.main:app --reload --port 9000
 ```
@@ -210,13 +258,10 @@ uvicorn app.main:app --reload --port 9000
 
 ```powershell
 cd frontend
-pnpm install
 pnpm dev
 ```
 
-打开 `http://localhost:5173`，创建 bot 后配置交易对、方向、资金和策略参数。建议先使用 `dry_run`，完成回测和模拟盘验证后再接入真实账户。
-
-> API Key、Secret、JWT Secret 等敏感配置不应提交到 Git。部署时请根据实际环境调整 `config_template.json` 和运行路径。
+打开浏览器访问 http://localhost:5173，即可进入 NexusBot 控制台。创建 bot 后配置交易对、方向、资金和策略参数。
 
 ## 项目结构
 
