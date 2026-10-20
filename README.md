@@ -217,8 +217,6 @@ python -m venv venv
 
 # 激活虚拟环境 (Windows)
 venv\Scripts\activate
-# 激活虚拟环境 (macOS / Linux)
-# source venv/bin/activate
 ```
 ### 安装 Python 依赖
 ```powershell
