@@ -39,7 +39,6 @@ const menu = [
   { path: '/settings/profile',      label: '账户',        icon: User },
   { path: '/settings/preferences',  label: '偏好',        icon: Setting },
   { path: '/settings/exchanges',    label: '交易所 API',  icon: Key },
-  { path: '/settings/notification', label: '通知',        icon: Bell }
 ]
 
 const isActive = (path) => route.path === path

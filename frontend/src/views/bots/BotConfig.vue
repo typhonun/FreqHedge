@@ -171,7 +171,7 @@
                   <div class="field-label">资金</div>
                   <div class="field-value">
                     <div class="inline-group inline-group--inputs">
-                      <div class="inline-field">
+                      <div class="inline-field" style="position: relative;">
                         <span class="inline-field__label">机器人可用资金 (USDT)</span>
                         <el-input-number
                           v-model="botBaseInfo.capital"
@@ -181,7 +181,7 @@
                         />
                       </div>
                       <!-- ★ 网格模式：单笔保证金显示为只读「每格金额」 -->
-                      <div class="inline-field">
+                      <div class="inline-field" style="position: relative;">
                         <template v-if="strategyType === 'grid'">
                           <span class="inline-field__label">每格金额 (USDT)</span>
                           <el-input :model-value="gridPerGridText" readonly style="width: 100%" />
@@ -205,7 +205,8 @@
                   <div class="field-label">持仓</div>
                   <div class="field-value">
                     <div class="inline-group inline-group--inputs">
-                      <div class="inline-field">
+                      <!-- ★ 关键修改点：给内联字段加 relative，把提示文字改为绝对定位，避免挤压 InputNumber -->
+                      <div class="inline-field" style="position: relative; padding-bottom: 8px;">
                         <span class="inline-field__label">杠杆</span>
                         <el-input-number
                           v-model="botBaseInfo.leverage"
@@ -222,12 +223,12 @@
                         >
                           现货固定 1x
                         </span>
-                        <!-- ★ 新增：被锁定时的提示 -->
-                        <span v-if="isLocked" class="inline-field__hint text-warning">
+                        <span v-if="isLocked" class="absolute-hint text-warning">
                           持仓中，不可修改杠杆
                         </span>
                       </div>
-                      <div class="inline-field">
+
+                      <div class="inline-field" style="position: relative; padding-bottom: 8px;">
                         <span class="inline-field__label">最大持仓数</span>
                         <el-input-number
                           v-model="botBaseInfo.maxOpenTrades"
@@ -2531,6 +2532,18 @@ onUnmounted(() => {
   color: var(--el-text-color-secondary);
   line-height: 1.4;
   margin-top: 4px;
+}
+
+/* ★ 新增：绝对定位的提示信息，用于解决锁定提示导致的布局抖动 */
+.absolute-hint {
+  position: absolute;
+  bottom: -18px;
+  left: 0;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--el-color-warning);
+  white-space: nowrap;
+  z-index: 2;
 }
 
 /* ══════════════════════════════════════════════════════════════════

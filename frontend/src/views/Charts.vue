@@ -425,14 +425,6 @@ function buildMarkerConfig(e) {
                 size: 3, // 稍微放大一点
                 title: `首仓成交价:${priceStr}\n数量:${e.amount}`
             }
-        case "grid_entry_signal":
-            return {
-                position: "belowBar",
-                color: "#4caf50",
-                shape: "circle", // 信号用圆点
-                text: `网格信号 ${priceStr}`,
-                title: `价格:${priceStr}\n数量:${e.amount}`
-            }
         case "grid_add":
             return {
                 position: "belowBar",

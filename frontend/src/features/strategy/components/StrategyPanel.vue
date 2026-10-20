@@ -146,39 +146,68 @@
           </template>
           <el-icon class="section-label__info"><InfoFilled /></el-icon>
         </el-tooltip>
-        <el-button size="small" type="success" plain @click="addRoi">
-          新增规则
-        </el-button>
       </template>
 
-      <div class="roi-header">
-        <span class="roi-header__idx">#</span>
-        <span class="roi-header__col">持仓时长 (分钟)</span>
-        <span class="roi-header__col">目标收益 (%)</span>
-        <span class="roi-header__col"></span>
-      </div>
+      <div class="roi-panel">
+        <!-- 表头 -->
+        <div class="roi-header">
+          <span class="roi-col-idx">#</span>
+          <span class="roi-col-time">持仓时长</span>
+          <span class="roi-col-profit">目标收益率</span>
+          <span class="roi-col-action"></span>
+        </div>
 
-      <div class="roi-list">
-        <div v-for="(roi, index) in config.tp.roi_levels || []"
-             :key="index" class="roi-row">
-          <span class="roi-index">{{ index + 1 }}</span>
+        <!-- 列表 -->
+        <div class="roi-list">
+          <div v-for="(roi, index) in config.tp.roi_levels || []" :key="index" class="roi-row">
+            <span class="roi-index">{{ index + 1 }}</span>
 
-          <div class="roi-cell">
-            <el-input-number v-model="roi.minutes" class="roi-input"
-              controls-position="right" :min="0" :max="10080" :step="1"
-              :precision="0" size="small" />
-            <span class="roi-unit">min</span>
+            <div class="roi-cell">
+              <el-input-number
+                v-model="roi.minutes"
+                class="roi-input"
+                controls-position="right"
+                :min="0" :max="10080" :step="1" :precision="0"
+                size="small"
+              />
+              <span class="roi-suffix">分钟</span>
+            </div>
+
+            <div class="roi-cell">
+              <el-input-number
+                v-model="roi.roi"
+                class="roi-input"
+                controls-position="right"
+                :min="-100" :max="1000" :step="0.1" :precision="2"
+                size="small"
+              />
+              <span class="roi-suffix">%</span>
+            </div>
+
+            <el-button
+              class="roi-delete"
+              type="danger"
+              link
+              size="small"
+              :disabled="(config.tp.roi_levels || []).length <= 1"
+              @click="removeRoi(index)"
+            >
+              <el-icon><Close /></el-icon>
+            </el-button>
           </div>
+        </div>
 
-          <div class="roi-cell">
-            <el-input-number v-model="roi.roi" class="roi-input"
-              controls-position="right" :min="-100" :max="100" :step="0.1"
-              :precision="2" size="small" />
-            <span class="roi-unit">%</span>
-          </div>
-
-          <el-button class="roi-delete" type="danger" link size="small"
-            @click="removeRoi(index)">✕</el-button>
+        <!-- 底部操作区：改为靠右并统一按钮样式 -->
+        <div class="roi-footer">
+          <el-button
+            class="add-btn"
+            type="success"
+            plain
+            size="small"
+            @click="addRoi"
+          >
+            + 新增一层
+          </el-button>
         </div>
       </div>
     </ToggleSection>
@@ -448,9 +477,18 @@
             @click="removeDca(index)">✕</el-button>
         </div>
 
-        <el-button class="dca-add-btn" type="success" plain size="small" @click="addDca">
-          + 新增一层
-        </el-button>
+        <!-- 底部操作区 -->
+        <div class="dca-footer">
+          <el-button
+            class="add-btn"
+            type="success"
+            plain
+            size="small"
+            @click="addDca"
+          >
+            + 新增一层
+          </el-button>
+        </div>
       </div>
     </ToggleSection>
 
@@ -828,7 +866,7 @@
 
 <script setup>
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { InfoFilled } from '@element-plus/icons-vue'
+import { InfoFilled, Close, Plus } from '@element-plus/icons-vue'
 import ToggleSection from './ToggleSection.vue'
 import { reactive } from 'vue'
 
@@ -1165,94 +1203,117 @@ const onHtfTimeframeChange = async (newTf) => {
   line-height: 1.4;
 }
 
-/* ==================== ROI 列表（每行两栏） ==================== */
-.roi-header {
-  display: grid;
-  grid-template-columns: 22px 1fr 1fr 20px;
-  gap: 8px;
-  padding: 0 8px 4px;
-  margin-bottom: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+/* ==================== ROI 止盈卡片 ==================== */
+.roi-panel {
+  background: var(--el-fill-color-extra-light);
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-light);
+  padding: 12px;
 }
 
-.roi-header__idx {
+.roi-header {
+  display: grid;
+  grid-template-columns: 28px 1fr 1fr 32px;
+  gap: 12px;
+  padding: 0 8px 8px 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  border-bottom: 1px dashed var(--el-border-color);
+  margin-bottom: 8px;
+}
+
+.roi-col-time,
+.roi-col-profit {
+  padding-left: 8px;
+}
+
+.roi-col-idx {
   text-align: center;
 }
 
-.roi-header__col {
-  text-align: left;
-}
-
 .roi-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
 .roi-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 28px 1fr 1fr 32px;
+  gap: 12px;
   align-items: center;
-  gap: 8px;
+  background: var(--el-bg-color);
   padding: 6px 8px;
-  border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
-  background: var(--el-fill-color-extra-light);
-  min-width: 0;
+  border: 1px solid var(--el-border-color-lighter);
+  transition: all 0.2s;
+}
+
+.roi-row:hover {
+  border-color: var(--el-color-primary-light-5);
 }
 
 .roi-index {
-  width: 20px;
   text-align: center;
-  font-weight: 700;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  flex: none;
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
 }
 
-/* 输入框 + 单位的小组 */
+/* 输入框与单位容器 */
 .roi-cell {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex: 1;
   min-width: 0;
 }
 
+/* 覆盖 Element 的输入框样式，让出右侧单位空间 */
 .roi-input {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
 }
-
 .roi-input :deep(.el-input__wrapper) {
-  padding-left: 4px;
-  padding-right: 24px;
+  padding-right: 40px; /* 留出空间给后缀 */
 }
-
 .roi-input :deep(.el-input__inner) {
-  font-size: 12px;
   text-align: left;
+  font-family: var(--el-font-family-monospace, monospace);
+  font-size: 13px;
 }
 
-.roi-input :deep(.el-input-number__increase),
-.roi-input :deep(.el-input-number__decrease) {
-  width: 20px;
-}
-
-.roi-unit {
-  flex: none;
+/* 自定义后缀单位 */
+.roi-suffix {
+  position: absolute;
+  right: 32px; /* 避开 Element 的上下加减按钮 */
   font-size: 12px;
-  color: var(--el-text-color-secondary);
-  min-width: 22px;
-  text-align: left;
+  color: var(--el-text-color-placeholder);
+  pointer-events: none;
+  z-index: 2;
 }
 
 .roi-delete {
-  width: 20px;
   padding: 0;
-  flex: none;
-  font-size: 12px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  font-size: 16px;
 }
+
+/* ==================== 统一的新增按钮底部样式 ==================== */
+.roi-footer,
+.dca-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end; /* 居右对齐 */
+}
+
+.add-btn {
+  /* 已经通过 element 的 type="success" 确定了颜色，这里控制大小 */
+  border-style: solid;
+  transition: all 0.2s;
+}
+
 
 /* ==================== 提示框（保留兼容） ==================== */
 .section-alert {

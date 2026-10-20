@@ -43,7 +43,6 @@
               <el-option label="等比" value="geometric" />
             </el-select>
           </el-form-item>
-          <!-- ★ 新增：K 线周期 -->
           <el-form-item label="K 线周期" class="form-item-third">
             <el-select
               v-model="config.timeframe"
@@ -70,12 +69,11 @@
         </div>
         <div class="form-row">
           <el-form-item label="跌破下沿止损" class="form-item-full">
-            <div class="input-with-hint" style="flex-direction: row; align-items: center; gap: 12px;">
+            <div class="input-with-icon">
               <el-switch v-model="config.grid.stop_below_lower" />
-              <span class="inline-hint">
+              <el-tooltip placement="top" effect="dark" content="价格跌破下沿时，清空所有持仓并停止机器人">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
-                价格跌破下沿时，清空所有持仓并停止机器人
-              </span>
+              </el-tooltip>
             </div>
           </el-form-item>
         </div>
@@ -89,11 +87,28 @@
 
         <div class="form-row">
           <el-form-item label="启动模式" class="form-item-full">
-            <el-radio-group v-model="config.grid.start_mode">
-              <el-radio-button value="grid">网格触发</el-radio-button>
-              <el-radio-button value="trigger">触发价启动</el-radio-button>
-              <el-radio-button value="immediate">立即启动</el-radio-button>
-            </el-radio-group>
+            <div class="input-with-icon">
+              <el-radio-group v-model="config.grid.start_mode">
+                <el-radio-button value="grid">网格触发</el-radio-button>
+                <el-radio-button value="trigger">触发价启动</el-radio-button>
+                <el-radio-button value="immediate">立即启动</el-radio-button>
+              </el-radio-group>
+              <el-tooltip placement="top" effect="dark">
+                <template #content>
+                  <template v-if="config.grid.start_mode === 'grid'">
+                    价格跌到最近的买格（多头）/ 涨到最近的卖格（空头）时，自动买入首仓
+                  </template>
+                  <template v-else-if="config.grid.start_mode === 'trigger'">
+                    价格跌破（多头）/ 突破（空头）触发价时，买入首仓并启动网格。<br/>
+                    <span style="color: #e6a23c;">若机器人启动时价格已在触发价下方（多头）/ 上方（空头），需等价格重新穿越触发价才会开仓。</span>
+                  </template>
+                  <template v-else>
+                    机器人启动后，以当前价立即买入首仓
+                  </template>
+                </template>
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
           </el-form-item>
         </div>
 
@@ -116,20 +131,6 @@
               </div>
             </div>
           </el-form-item>
-        </div>
-
-        <div class="field-hint-block" v-if="config.grid.start_mode === 'grid'">
-          <el-icon class="section-label__info"><InfoFilled /></el-icon>
-          价格跌到最近的买格（多头）/ 涨到最近的卖格（空头）时，自动买入首仓
-        </div>
-        <div class="field-hint-block" v-else-if="config.grid.start_mode === 'trigger'">
-          <el-icon class="section-label__info"><InfoFilled /></el-icon>
-          价格跌破（多头）/ 突破（空头）触发价时，买入首仓并启动网格。
-          <span class="text-warning">若机器人启动时价格已在触发价下方（多头）/ 上方（空头），需等价格重新穿越触发价才会开仓。</span>
-        </div>
-        <div class="field-hint-block" v-else>
-          <el-icon class="section-label__info"><InfoFilled /></el-icon>
-          机器人启动后，以当前价立即买入首仓
         </div>
       </div>
 
@@ -161,8 +162,10 @@
               </span>
             </div>
             <div class="grid-preview__tip">
-              <el-icon class="section-label__info"><InfoFilled /></el-icon>
-              网格逻辑：价格跌到某格，在该格买入；价格涨到该格上沿，卖出止盈
+              <el-tooltip placement="top" effect="dark" content="价格跌到某格，在该格买入；价格涨到该格上沿，卖出止盈">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+              <span>网格逻辑</span>
             </div>
           </div>
         </el-collapse-transition>
@@ -482,14 +485,21 @@ const gridPreview = computed(() => {
   margin-left: 8px;
 }
 
-/* 带提示的输入框容器 */
+/* ★ 统一的行内图标布局 */
+.input-with-icon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 带提示的输入框容器（保留用于触发价） */
 .input-with-hint {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-/* 内联提示文字 */
+/* 内联提示文字（保留用于触发价） */
 .inline-hint {
   display: inline-flex;
   align-items: center;
@@ -506,16 +516,6 @@ const gridPreview = computed(() => {
   font-weight: 500;
 }
 
-/* 独占一行的提示 */
-.field-hint-block {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.4;
-  margin-top: 6px;
-}
 .text-warning {
   color: var(--el-color-warning);
   font-weight: 500;
@@ -596,21 +596,23 @@ const gridPreview = computed(() => {
   border: 1px solid var(--el-border-color-lighter);
 }
 
+/* ★ 网格逻辑提示 */
 .grid-preview__tip {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
   color: var(--el-text-color-placeholder);
   line-height: 1.4;
 }
 
-/* 基础信息图标 */
+/* ★ 基础信息图标悬浮效果（统一） */
 .section-label__info {
   color: var(--el-text-color-placeholder);
-  font-size: 14px;
+  font-size: 15px;
   cursor: help;
   transition: color 0.2s;
+  margin-left: 2px;
 }
 .section-label__info:hover {
   color: var(--el-color-primary);

@@ -5,22 +5,11 @@ import { ElMessage } from "element-plus"
 const API = "http://localhost:9000"
 
 const roiLevels = [
-    { minutes: 1440, roi: 0 },
-    { minutes: 720, roi: 2 },
-    { minutes: 480, roi: 4 },
-    { minutes: 360, roi: 6 },
-    { minutes: 300, roi: 8 },
-    { minutes: 240, roi: 10 },
-    { minutes: 210, roi: 12 },
-    { minutes: 180, roi: 14 },
-    { minutes: 150, roi: 16 },
-    { minutes: 120, roi: 18 },
-    { minutes: 100, roi: 20 },
-    { minutes: 80, roi: 22 },
-    { minutes: 60, roi: 24 },
-    { minutes: 40, roi: 26 },
-    { minutes: 20, roi: 28 },
-    { minutes: 0, roi: 30 }
+    { minutes: 1440, roi: 1.5 },
+    { minutes: 480, roi: 2.5 },
+    { minutes: 120, roi: 4.0 },
+    { minutes: 30, roi: 6.0 },
+    { minutes: 0, roi: 8.0 }
 ]
 
 const isPlainObject = (v) =>
@@ -430,7 +419,7 @@ const createDefaultStrategyConfig = (side = "long") => ({
     },
     loss_tp:{
         enable:false,
-        dca_tp_profit:3,
+        dca_tp_profit:2.0,
         is_partial: false,
         target_wallet_percent:5,
         target_wallet_amount: 50.0
