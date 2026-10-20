@@ -6,11 +6,6 @@
 
 用一个 Web 界面管理多个交易机器人：配置 DCA 或网格策略、运行回测、监控持仓、追踪交易事件，并执行统一风控。
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?logo=fastapi&logoColor=white)
-![Vue](https://img.shields.io/badge/Vue-3-4FC08D?logo=vuedotjs&logoColor=white)
-![Freqtrade](https://img.shields.io/badge/Powered%20by-Freqtrade-orange)
-
 [快速了解](#nexusbot-是什么) · [功能预览](#-功能预览) · [核心能力](#核心能力) · [开始使用](#开始使用)
 
 </div>
@@ -211,7 +206,7 @@ NexusBot 使用 Vue 3、FastAPI、SQLite、SQLAlchemy、APScheduler 和 Freqtrad
 - [Node.js 18+](https://nodejs.org/) 与 [pnpm](https://pnpm.io/installation)（前端包管理器）
 - [Git](https://git-scm.com/)
 
-###  克隆代码与创建虚拟环境
+###  创建虚拟环境
 ```
 # 克隆仓库到本地
 git clone https://github.com/typhonun/NexusBot
@@ -250,6 +245,7 @@ pnpm install
 
 ```powershell
 # 如果虚拟环境未激活，请先运行 venv\Scripts\activate
+venv\Scripts\activate
 cd backend
 uvicorn app.main:app --reload --port 9000
 ```
@@ -275,8 +271,8 @@ NexusBot/
 ├── frontend/src/
 │   ├── features/                # dashboard、策略配置等功能模块
 │   ├── views/                   # 仪表盘、持仓、图表、bot 和设置页面
-│   ├── api/                    # 后端接口封装
-│   └── stores/                 # Pinia 状态管理
+│   ├── api/                     # 后端接口封装
+│   └── stores/                  # Pinia 状态管理
 └── freqtrade/user_data/
     ├── strategies/              # DCA/网格策略基类、方向策略和事件记录器
     │   ├── DcaTpBotBase.py      # DCA 机器人基础策略
