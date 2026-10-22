@@ -13,6 +13,7 @@ export const GRID_DEFAULTS = Object.freeze({
   max_open_grids: 20,
   amount_per_grid: 0,
   trigger_price: 0,
+  restart_after_all_tp: false,
 })
 
 export function getDefaultGridConfig() {

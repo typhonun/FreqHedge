@@ -242,6 +242,32 @@
                   </div>
                 </div>
 
+                <!-- ★ 新增：订单类型展示 -->
+                <div class="field-row">
+                  <div class="field-label">
+                    <span>
+                      订单类型
+                      <el-tooltip placement="top" effect="dark">
+                        <template #content>
+                          网格策略依赖即时成交，强制使用市价单；其它策略默认使用限价单
+                        </template>
+                        <el-icon class="section-label__info"><InfoFilled /></el-icon>
+                      </el-tooltip>
+                    </span>
+                  </div>
+                  <div class="field-value">
+                    <el-radio-group :model-value="strategyType === 'grid' ? 'market' : 'limit'" disabled>
+                      <el-radio-button value="limit">限价单 (Limit)</el-radio-button>
+                      <el-radio-button value="market">市价单 (Market)</el-radio-button>
+                    </el-radio-group>
+                    <span class="inline-field__hint">
+                      {{ strategyType === 'grid'
+                        ? '网格策略需高频触发，系统强制使用市价单'
+                        : '当前策略使用限价单，降低滑点' }}
+                    </span>
+                  </div>
+                </div>
+                
                 <!-- 金额模式 (网格不显示) -->
                 <div class="field-row" v-if="strategyType !== 'grid'">
                   <div class="field-label">

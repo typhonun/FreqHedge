@@ -114,6 +114,33 @@ class ConfigService:
         cfg["bot_id"] = bot_id
         cfg["side"] = side
 
+        if strategy_type == "grid":
+            # 网格策略：追求极速成交，必须市价单
+            cfg["order_types"] = {
+                "entry": "market",
+                "exit": "market",
+                "stoploss": "market",
+                "position_adjustment": "market",
+                "stoploss_on_exchange": False
+            }
+            # 市价单不需要超时撤单机制
+            cfg.pop("unfilledtimeout", None)
+        else:
+            # DCA / 趋势等其它策略：默认限价单，降低滑点
+            cfg["order_types"] = {
+                "entry": "limit",
+                "exit": "limit",
+                "stoploss": "limit",
+                "position_adjustment": "limit",
+                "stoploss_on_exchange": False
+            }
+            cfg["unfilledtimeout"] = {
+                "entry": 10,
+                "exit": 10,
+                "exit_timeout_count": 0,
+                "unit": "minutes"
+            }
+
         strategy_cls = strategy_class(strategy_type, side)
         if strategy_cls is None:
             raise ValueError(f"未知策略类型: {strategy_type}/{side}")

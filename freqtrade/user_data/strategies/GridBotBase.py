@@ -138,9 +138,15 @@ class GridBotBase(DcaTpBotBase):
             levels = self._build_grid_levels()
             if not levels: return 0.0
             if self._is_short:
-                return float(levels[idx - 1]) if 0 < idx < len(levels) else 0.0
+                # 如果是最高线（idx=len-1），不需要止盈，直接返回 0 跳过
+                # 如果是最低线（idx=0），没有下一根线了，返回一个极低值兜底
+                if idx <= 0: return levels[0] * 0.99
+                return float(levels[idx - 1])
             else:
-                return float(levels[idx + 1]) if 0 <= idx < len(levels) - 1 else 0.0
+                # 如果是最低线（idx=0），不需要止盈
+                # 如果是最高线（idx=len-1），返回一个极高值兜底
+                if idx >= len(levels) - 1: return levels[-1] * 1.01
+                return float(levels[idx + 1])
         except Exception:
             return 0.0
 
@@ -317,15 +323,65 @@ class GridBotBase(DcaTpBotBase):
             except Exception:
                 lev = 1.0
 
-            # 网格仓位已经全部成交退出后，合约精度或保证金换算可能仍在
-            # Trade 中留下少量实际数量。不能让这个残余 Trade 一直持有到
-            # 回测结束的 force_exit。
+            # 网格仓位已经全部成交退出后（或者首次启动前）
             if not positions:
+                # 1. 清理残余碎片
                 cleanup_stake = (actual_amount * close_price) / lev if lev > 0 else 0.0
                 if cleanup_stake > 0 and np.isfinite(cleanup_stake):
                     self._last_candle_str[trade.pair] = candle_str
                     self._set(trade, "grid_pending_reduce", [])
                     return -float(cleanup_stake), "grid_reduce_cleanup"
+
+                # 2. 检查是否允许重启（只有真实止盈全平才允许）
+                restart = self._cfg_bool(g, "restart_after_all_tp", False)
+                if restart:
+                    if self._get_bool(trade, "grid_stopped", False):
+                        return None
+
+                    # ★ 核心修改：必须要有真实止盈留下的标记才允许重启
+                    if not self._get_bool(trade, "grid_allow_restart", False):
+                        return None
+
+                    # 防重复保护：同一根K线、或已有挂单时，不重复触发
+                    if self._last_candle_str.get(trade.pair) == candle_str:
+                        return None
+                    if getattr(trade, "has_open_orders", False):
+                        return None
+
+                    buy_usdt = self._calc_grid_amount(trade, close_price)
+                    if buy_usdt <= 0 or pd.isna(buy_usdt) or np.isinf(buy_usdt):
+                        return None
+
+                    # 计算当前价格落在哪一根网格线
+                    levels = self._build_grid_levels()
+                    idx = bisect.bisect_right(levels, close_price) - 1
+                    if idx < 0: idx = 0
+                    if idx >= len(levels) - 1: idx = len(levels) - 2
+
+                    logger.info(
+                        f"{GRID_TAG} {RED}▲ 触发全部平仓后重启(立即开首仓){RESET} | "
+                        f"{trade.pair} | 线{idx} | 价格={close_price:.4f} | 保证金={buy_usdt:.2f}"
+                    )
+
+                    # 记录 K 线锁和 Pending，防止重复触发
+                    self._last_candle_str[trade.pair] = candle_str
+                    self._pending_add = getattr(self, "_pending_add", {})
+                    self._pending_add[trade.id] = {
+                        "idx": [int(idx)],
+                        "timestamp": current_time.timestamp(),
+                    }
+                    self._set(
+                        trade,
+                        "grid_pending_add",
+                        json.dumps(self._pending_add[trade.id], allow_nan=False),
+                    )
+
+                    # ★ 消耗掉重启标记，防止下一 tick 继续开仓
+                    self._set(trade, "grid_allow_restart", False)
+
+                    # 返回正数表示加仓（首仓）
+                    return float(buy_usdt), f"grid_add_multi_{idx}"
+
                 return None
 
             # ---- 1) 检查止盈（减仓）----
@@ -557,6 +613,7 @@ class GridBotBase(DcaTpBotBase):
                 )
                 self._set(trade, "grid_pending_add", None)
                 self._set(trade, "grid_pending_reduce", [])
+                self._set(trade, "grid_allow_restart", False)
 
                 self._record_chart_marker(
                     event_type="grid_entry", pair=pair, trade_id=trade.id,
@@ -619,12 +676,13 @@ class GridBotBase(DcaTpBotBase):
                 self._set_grid_positions(trade, positions)
                 self._set(trade, "grid_pending_reduce", [])
                 self._pending_reduce.pop(trade.id, None)
+
+                # ★ 核心修改：如果真实止盈后，positions 空了，打上允许重启的标记
                 if not positions:
                     logger.info(f"{GRID_TAG} 🏁 当前所有网格已平仓，等待后续 K 线继续操作。")
-
-                logger.info(
-                    f"{GRID_TAG} ▼ 真实减仓成交 | 价格={filled_price:.4f} | 金额={margin:.2f} | 已移除网格: {sorted(pending_reduce_set)}"
-                )
+                    self._set(trade, "grid_allow_restart", True)  # 标记：由于真实止盈导致的全平
+                else:
+                    self._set(trade, "grid_allow_restart", False)
 
             # ---- D. 网格状态已清空后的实际数量清理 ----
             elif reason.startswith("grid_reduce_cleanup"):
@@ -633,6 +691,7 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_positions", "{}")
                 self._set(trade, "grid_pending_reduce", [])
                 self._set(trade, "grid_pending_add", None)
+                self._set(trade, "grid_allow_restart", False)
                 logger.info(f"{GRID_TAG} ▼ 清理残余实际仓位成交 | 价格={entry_price:.4f}")
 
             # ---- E. 整体止损 ----
@@ -644,6 +703,8 @@ class GridBotBase(DcaTpBotBase):
                 )
                 logger.info(f"{GRID_TAG} ✖ 整体止损成交 | 价格={entry_price:.4f}")
                 self._set(trade, "grid_positions", "{}")
+                self._set(trade, "grid_stopped", True)
+                self._set(trade, "grid_allow_restart", False)
                 self._pending_add.pop(trade.id, None)
                 self._pending_reduce.pop(trade.id, None)
         except Exception:

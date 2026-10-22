@@ -65,10 +65,20 @@
           <div class="section-title">止损</div>
         </div>
         <div class="form-row">
-          <el-form-item label="跌破下沿止损" class="form-item-full">
+          <!-- 做多显示跌破下沿 -->
+          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-full">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.stop_below_lower" />
               <el-tooltip placement="top" effect="dark" content="价格跌破下沿时，清空所有持仓并停止机器人">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+          <!-- 做空显示突破上沿 -->
+          <el-form-item v-if="direction === 'short'" label="突破上沿止损" class="form-item-full">
+            <div class="input-with-icon">
+              <el-switch v-model="config.grid.stop_above_upper" />
+              <el-tooltip placement="top" effect="dark" content="价格突破上沿时，清空所有持仓并停止机器人">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
               </el-tooltip>
             </div>
@@ -131,7 +141,24 @@
         </div>
       </div>
 
-      <!-- ── 5. 网格预览（可折叠，放在启动模式下方） ── -->
+      <!-- ── 5. 高级选项 ── -->
+      <div class="section-block">
+        <div class="section-header">
+          <div class="section-title">高级选项</div>
+        </div>
+        <div class="form-row">
+          <el-form-item label="全部止盈后重启" class="form-item-full">
+            <div class="input-with-icon">
+              <el-switch v-model="config.grid.restart_after_all_tp" />
+              <el-tooltip placement="top" effect="dark" content="当所有网格仓位全部止盈平仓后，如果价格继续上涨/下跌，不等待回落，直接以当前价再次买入首仓">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+        </div>
+      </div>
+
+      <!-- ── 6. 网格预览（可折叠） ── -->
       <div v-if="gridPreview" class="grid-preview-wrapper">
         <div class="grid-preview-header" @click="showGridPreview = !showGridPreview">
           <div class="grid-preview-title">
@@ -152,17 +179,32 @@
 
         <el-collapse-transition>
           <div v-show="showGridPreview" class="grid-preview-content">
-            <div class="grid-preview__lines">
-              <!-- 渲染全部网格线 -->
-              <span v-for="(p, i) in gridPreview.allLevels" :key="i">
-                {{ p }}
-              </span>
+
+            <!-- 分界线：当前价参考 -->
+            <div class="grid-preview-divider">
+              <span class="divider-line"></span>
+              <span class="divider-text">当前价 {{ gridPreview.refPriceText }}</span>
+              <span class="divider-line"></span>
             </div>
-            <div class="grid-preview__tip">
-              <el-tooltip placement="top" effect="dark" content="价格跌到某格，在该格买入；价格涨到该格上沿，卖出止盈">
-                <el-icon class="section-label__info"><InfoFilled /></el-icon>
-              </el-tooltip>
-              <span>网格逻辑</span>
+
+            <!-- 上半部分 -->
+            <div class="grid-preview-section">
+              <div class="grid-preview-section-title">{{ gridPreview.topLabel }}</div>
+              <div class="grid-preview__lines">
+                <span v-for="(p, i) in gridPreview.topLevels" :key="'top-'+i">
+                  {{ p }}
+                </span>
+              </div>
+            </div>
+
+            <!-- 下半部分 -->
+            <div class="grid-preview-section">
+              <div class="grid-preview-section-title">{{ gridPreview.bottomLabel }}</div>
+              <div class="grid-preview__lines">
+                <span v-for="(p, i) in gridPreview.bottomLevels" :key="'bot-'+i">
+                  {{ p }}
+                </span>
+              </div>
             </div>
           </div>
         </el-collapse-transition>
@@ -173,6 +215,7 @@
 </template>
 
 <script setup>
+// ... 下方原封不动，不需要改
 import { computed, ref, watch, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
@@ -209,9 +252,6 @@ const perGridText = computed(() => {
   return `${v.toFixed(2)} USDT`
 })
 
-// ============================================================
-// ★ 触发价智能提示与校验
-// ============================================================
 const triggerPriceTip = computed(() => {
   const g = props.config?.grid
   if (!g || g.start_mode !== 'trigger') return ''
@@ -244,7 +284,6 @@ const triggerPriceError = computed(() => {
   return tip.startsWith('做多时') || tip.startsWith('做空时')
 })
 
-/** 网格数量变化 → 自动跟随最大持仓 */
 const onGridCountChange = (val) => {
   const c = props.config?.grid
   if (!c) return
@@ -258,9 +297,6 @@ const onGridCountChange = (val) => {
   }
 }
 
-// ============================================================
-// ★ 智能区间
-// ============================================================
 const applySuggest = async (days) => {
   if (!props.pair) {
     ElMessage.warning('请先选择交易对')
@@ -299,9 +335,6 @@ const applySuggest = async (days) => {
   }
 }
 
-// ============================================================
-// ★ 默认值兜底
-// ============================================================
 const initDefaultRange = async () => {
   const g = props.config?.grid || {}
   if (Number(g.lower_price) > 0 && Number(g.upper_price) > 0) return
@@ -318,7 +351,6 @@ const initDefaultRange = async () => {
     props.config.grid.lower_price = +(price * 0.9).toFixed(4)
     props.config.grid.upper_price = +(price * 1.1).toFixed(4)
 
-    // ★ 修复：wait 改为 trigger
     if (props.config.grid.start_mode === 'trigger' &&
         (!props.config.grid.trigger_price || props.config.grid.trigger_price <= 0)) {
       const isShort = props.direction === 'short'
@@ -368,7 +400,7 @@ watch(
 )
 
 // ============================================================
-// 网格预览（完整列表）
+// 网格预览（完整列表，按当前价划分加减仓区）
 // ============================================================
 const gridPreview = computed(() => {
   const c = props.config?.grid || {}
@@ -377,6 +409,7 @@ const gridPreview = computed(() => {
   const count = Number(c.grid_count || 0)
   if (lower <= 0 || upper <= 0 || count <= 0 || upper <= lower) return null
 
+  // 1. 生成所有网格线
   const levels = []
   if (c.spacing_algo === 'geometric') {
     const ratio = Math.pow(upper / lower, 1 / count)
@@ -393,19 +426,51 @@ const gridPreview = computed(() => {
   const profitMinPct = (step0 / levels[1]) * 100
   const profitMaxPct = (step0 / levels[0]) * 100
   const profitUsdt = perGrid.value * (profitMinPct / 100)
-
   const profitText = `${profitUsdt.toFixed(2)} USDT (${profitMinPct.toFixed(2)}% ~ ${profitMaxPct.toFixed(2)}%)`
   const tooNarrow = stepPct < 0.2
   const total = (perGrid.value * count).toFixed(2)
 
-  // 显示全部网格
-  const allLevels = levels.map(lv => lv.toFixed(2))
+  // 2. 找出当前价对应的网格线索引
+  // 如果有当前价格则用当前价，否则用网格中心点作为参考
+  const refPrice = currentPrice.value || (lower + upper) / 2
+  // 找到当前价所处的位置：介于 levels[splitIdx] 和 levels[splitIdx+1] 之间
+  let splitIdx = levels.findIndex(lv => lv >= refPrice)
+  if (splitIdx === -1) splitIdx = count // 若超出上限，分界设为最高线
+
+  // 格式化显示
+  const formatLv = (lv) => lv.toFixed(2)
+
+  // 3. 根据做多/做空划分上下区域
+  let topLevels = [] // 上方的线
+  let bottomLevels = [] // 下方的线
+  let topLabel = ''
+  let bottomLabel = ''
+
+  if (props.direction === 'long') {
+    // 做多：上方是减仓区（止盈），下方是加仓区（建仓/补仓）
+    topLevels = levels.slice(splitIdx).map(formatLv).reverse() // 从高到低排，反转为了从下往上显示
+    bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse() // 从高到低排
+
+    topLabel = '🟢 减仓网格'
+    bottomLabel = '🔴 加仓网格'
+  } else {
+    // 做空：上方是加仓区（建仓/补仓），下方是减仓区（止盈）
+    topLevels = levels.slice(splitIdx).map(formatLv).reverse()
+    bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse()
+
+    topLabel = '🔴 加仓网格'
+    bottomLabel = '🟢 减仓网格'
+  }
 
   return {
     stepText,
     profitText,
     totalText: total,
-    allLevels,
+    topLevels,
+    bottomLevels,
+    topLabel,
+    bottomLabel,
+    refPriceText: refPrice.toFixed(2),
     tooNarrow,
   }
 })
@@ -613,5 +678,33 @@ const gridPreview = computed(() => {
 }
 .section-label__info:hover {
   color: var(--el-color-primary);
+}
+
+/* ★ 网格预览上下区域 */
+.grid-preview-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+}
+.divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--el-border-color);
+}
+.divider-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-color-primary);
+}
+
+.grid-preview-section {
+  margin-bottom: 12px;
+}
+.grid-preview-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--el-text-color-regular);
 }
 </style>

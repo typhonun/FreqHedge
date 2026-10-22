@@ -47,6 +47,8 @@ GRID_DEFAULTS = {
     "max_open_grids": 20,
     # ★ 保留旧字段：老数据兼容
     "amount_per_grid": 0,
+    "trigger_price": 0,
+    "restart_after_all_tp": False,
 }
 
 

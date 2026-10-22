@@ -354,16 +354,17 @@ function buildMarkers(rawEvents, candleData) {
             return
         }
 
-        // 4. 统一归类：把 grid_entry 也并入 grid_add 桶，确保同一根 K 线只有一根向上的箭头
-        let aggType = e.event_type === 'grid_entry' ? 'grid_add' : e.event_type;
+        // 4. 不再合并：保持首仓（grid_entry）和加仓（grid_add）独立
+        // 这样首仓会画一个单独的粉红色箭头，加仓画蓝色箭头
+        const aggType = e.event_type;
 
-        // 5. 聚合 Key 改为：K线时间 + 方向（买入/卖出）
-        // 这样无论加了几格、是不是首仓，同一根 K 线只有一个向上的箭头
+        // 5. 聚合 Key 改为：K线时间 + 类型
+        // 同一根 K 线内，无论是首仓还是加仓，各自独立聚合
         const bucketKey = `${nearestCandleTime}_${aggType}`
 
         if (!gridBuckets[bucketKey]) {
             gridBuckets[bucketKey] = {
-                event_type: aggType,
+                event_type: aggType, // 保留原始类型
                 time: Number(nearestCandleTime),
                 prices: [],
                 amount: 0,
@@ -380,12 +381,21 @@ function buildMarkers(rawEvents, candleData) {
     // 处理聚合后的网格事件
     Object.values(gridBuckets).forEach(b => {
         const avgPrice = (b.prices.reduce((sum, p) => sum + p, 0) / b.prices.length).toFixed(4)
+
+        // ★ 修复：不再强制改写 message，如果数量 > 1，附加在后缀上
+        let msgText = b.message
+        if (b.prices.length > 1 && b.event_type === 'grid_add') {
+            msgText = `网格加仓 (共${b.prices.length}笔)`
+        } else if (b.prices.length > 1 && b.event_type === 'grid_entry') {
+            msgText = `网格首仓 (共${b.prices.length}笔)`
+        }
+
         const aggEvent = {
             event_type: b.event_type,
             time: b.time,
             price: avgPrice,
             amount: b.amount.toFixed(2),
-            message: b.prices.length > 1 ? `网格加仓 (共${b.prices.length}笔)` : b.message,
+            message: msgText, // 使用修正后的文案
             count: b.prices.length,
             candle_time: b.candle_time,
             created_at: b.created_at
@@ -396,6 +406,32 @@ function buildMarkers(rawEvents, candleData) {
             normalMarkers.push({ ...config, time: Number(b.time) })
         }
     })
+
+    // ★ 新增：如果同一根 K 线既有首仓又有加仓，只保留首仓（首仓更关键）
+    const finalMarkers = []
+    const timeMap = new Map()
+
+    normalMarkers.forEach(m => {
+        const key = `${m.time}`
+        if (!timeMap.has(key)) {
+            timeMap.set(key, [])
+        }
+        timeMap.get(key).push(m)
+    })
+
+    timeMap.forEach((markers, time) => {
+        // 如果该 K 线有 grid_entry，把 grid_add 过滤掉
+        const hasEntry = markers.some(m => m.event_type === 'grid_entry' || (m.text && m.text.includes('网格首仓')))
+        markers.forEach(m => {
+            if (hasEntry && m.event_type === 'grid_add' && !(m.text && m.text.includes('网格首仓'))) {
+                return // 丢弃同根 K 线的加仓
+            }
+            finalMarkers.push(m)
+        })
+    })
+
+    // 按时间排序返回
+    return finalMarkers.sort((a, b) => a.time - b.time)
 
     return normalMarkers
 }
@@ -419,12 +455,12 @@ function buildMarkerConfig(e) {
         case "kdj_reduce":
             return { position: "aboveBar", color: "#9c27b0", shape: "arrowDown", text: `KDJ减仓 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}` }
-        case "grid_entry":  // ★ 新增的首仓标记
+        case "grid_entry":  // ★ 首仓标记
             return {
                 position: "belowBar",
-                color: "#e91e63",  // 用粉红色或醒目颜色区分加仓的绿色
+                color: "#e91e63",  // 粉红色
                 shape: "arrowUp",
-                text: e.message || `网格首仓 ${priceStr}`,
+                text: e.message || `网格首仓 ${priceStr}`, // 显示“网格首仓”
                 size: 3, // 稍微放大一点
                 title: `首仓成交价:${priceStr}\n数量:${e.amount}`
             }
