@@ -1,6 +1,6 @@
 # freqtrade/user_data/strategies/GridBotBase.py
 """
-网格机器人基类（绝对线版 - 1m 收盘价触发，终极修复版）
+网格机器人基类（动态锚点版 - 彻底修复滑点重启导致的网格脱节）
 """
 
 import sys
@@ -48,12 +48,9 @@ class GridBotBase(DcaTpBotBase):
         super().__init__(*args, **kwargs)
         self.position_adjustment_enable = True
 
-        # 第一道防线：Pair 级别的 1m K 线锁，针对加仓
         self._last_candle_str = {}
-
-        # 第二道防线：内存 Pending 锁，针对减仓（防止重复发平仓单）
         self._pending_reduce = {}  # {trade_id: set([idx1, idx2])}
-        self._pending_add = {}  # {trade_id: {"idx": int, "timestamp": float}}
+        self._pending_add = {}  # {trade_id: {"idx": list, "timestamp": float}}
 
     def bot_start(self, **kwargs) -> None:
         ft_cfg = self.config or {}
@@ -133,22 +130,30 @@ class GridBotBase(DcaTpBotBase):
         step = (upper - lower) / count
         return [lower + step * i for i in range(count + 1)]
 
-    def _grid_tp_price(self, idx: int) -> float:
-        try:
-            levels = self._build_grid_levels()
-            if not levels: return 0.0
-            if self._is_short:
-                # 如果是最高线（idx=len-1），不需要止盈，直接返回 0 跳过
-                # 如果是最低线（idx=0），没有下一根线了，返回一个极低值兜底
-                if idx <= 0: return levels[0] * 0.99
-                return float(levels[idx - 1])
-            else:
-                # 如果是最低线（idx=0），不需要止盈
-                # 如果是最高线（idx=len-1），返回一个极高值兜底
-                if idx >= len(levels) - 1: return levels[-1] * 1.01
-                return float(levels[idx + 1])
-        except Exception:
+    # ★ 新增：动态获取网格步长
+    def _get_grid_step(self) -> float:
+        g = self._grid_cfg()
+        upper = self._cfg_float(g, "upper_price", 0.0)
+        lower = self._cfg_float(g, "lower_price", 0.0)
+        count = self._cfg_int(g, "grid_count", 0)
+        algo = str(g.get("spacing_algo", "arithmetic")).lower()
+        if count <= 0 or upper <= lower or lower <= 0:
             return 0.0
+        if algo == "geometric":
+            # 等比取第一格间距作为近似基准
+            ratio = (upper / lower) ** (1.0 / count)
+            return lower * (ratio - 1.0)
+        return (upper - lower) / count
+
+    # ★ 重写：基于动态开仓价计算止盈价
+    def _grid_tp_price(self, entry_price: float) -> float:
+        step = self._get_grid_step()
+        if step <= 0 or entry_price <= 0:
+            return 0.0
+        if self._is_short:
+            return entry_price - step
+        else:
+            return entry_price + step
 
     @property
     def _is_short(self) -> bool:
@@ -246,49 +251,33 @@ class GridBotBase(DcaTpBotBase):
                 open_count = 0
             if open_count > 0: return False
 
-            levels = self._build_grid_levels()
-            if not levels: return False
-
-            # immediate 也必须遵守绝对网格上下沿，不能在区间外开仓。
+            # immediate 也必须遵守绝对网格上下沿
             if rate < lower or rate > upper:
                 return False
 
-            idx = bisect.bisect_right(levels, rate) - 1
-            if idx < 0: idx = 0
-            if idx >= len(levels) - 1: idx = len(levels) - 2
-
-            self._set_bot_grid_pending_level(pair, idx)
-            # 同一根 K 线只允许一次首仓，防止整仓止盈后立即重复入场。
             self._last_candle_str[pair] = candle_str
             return True
         except Exception:
             return False
 
     # ============================================================
-    # 核心：加仓 / 减仓（不刷单、不锁仓、防 NaN）
+    # 核心：加仓 / 减仓（基于动态锚点）
     # ============================================================
     def adjust_trade_position(self, trade, current_time, current_rate, current_profit, **kwargs):
         try:
             g = self._grid_cfg()
-            levels = self._build_grid_levels()
-            if not levels: return None
             if not self._get_bool(trade, "grid_n_initialized", False): return None
 
-            # 1. 有未完成订单时，绝对不发新单
             if getattr(trade, "has_open_orders", False): return None
 
-            # 2. 获取 K 线字符串
             candle_str = self._get_candle_str(current_time)
-
-            # 3. 若当前 K 线已经处理过加仓，则拦截
             if self._last_candle_str.get(trade.pair) == candle_str: return None
 
             df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
             if df is None or df.empty: return None
             close_price = float(df.iloc[-1]['close'])
             if close_price <= 0 or pd.isna(close_price) or np.isinf(close_price): return None
-            # 某些回测路径中分析数据仍停留在上一根 K 线，而 current_rate
-            # 已经反映当前撮合价。取对多头止盈更保守的较高值，避免漏掉止盈。
+
             try:
                 live_rate = float(current_rate or 0.0)
                 if np.isfinite(live_rate) and live_rate > 0:
@@ -296,9 +285,6 @@ class GridBotBase(DcaTpBotBase):
             except (TypeError, ValueError):
                 pass
 
-            # 首仓成交所在 K 线及短暂保护期内不允许立刻止盈/加仓。
-            # immediate 模式尤其需要此保护，否则首仓价已高于下一止盈线时
-            # 会在同一根 K 线立即生成减仓订单。
             entry_candle = self._get(trade, "grid_entry_candle", None)
             if entry_candle == candle_str:
                 return None
@@ -308,7 +294,6 @@ class GridBotBase(DcaTpBotBase):
 
             positions = self._get_grid_positions(trade)
 
-            # 没有真实持仓数量时，清除失效的虚拟网格状态，避免继续发减仓单。
             try:
                 actual_amount = float(getattr(trade, "amount", 0) or 0)
                 if actual_amount <= 0:
@@ -323,26 +308,21 @@ class GridBotBase(DcaTpBotBase):
             except Exception:
                 lev = 1.0
 
-            # 网格仓位已经全部成交退出后（或者首次启动前）
             if not positions:
-                # 1. 清理残余碎片
                 cleanup_stake = (actual_amount * close_price) / lev if lev > 0 else 0.0
                 if cleanup_stake > 0 and np.isfinite(cleanup_stake):
                     self._last_candle_str[trade.pair] = candle_str
                     self._set(trade, "grid_pending_reduce", [])
                     return -float(cleanup_stake), "grid_reduce_cleanup"
 
-                # 2. 检查是否允许重启（只有真实止盈全平才允许）
                 restart = self._cfg_bool(g, "restart_after_all_tp", False)
                 if restart:
                     if self._get_bool(trade, "grid_stopped", False):
                         return None
 
-                    # ★ 核心修改：必须要有真实止盈留下的标记才允许重启
                     if not self._get_bool(trade, "grid_allow_restart", False):
                         return None
 
-                    # 防重复保护：同一根K线、或已有挂单时，不重复触发
                     if self._last_candle_str.get(trade.pair) == candle_str:
                         return None
                     if getattr(trade, "has_open_orders", False):
@@ -352,22 +332,18 @@ class GridBotBase(DcaTpBotBase):
                     if buy_usdt <= 0 or pd.isna(buy_usdt) or np.isinf(buy_usdt):
                         return None
 
-                    # 计算当前价格落在哪一根网格线
-                    levels = self._build_grid_levels()
-                    idx = bisect.bisect_right(levels, close_price) - 1
-                    if idx < 0: idx = 0
-                    if idx >= len(levels) - 1: idx = len(levels) - 2
-
                     logger.info(
                         f"{GRID_TAG} {RED}▲ 触发全部平仓后重启(立即开首仓){RESET} | "
-                        f"{trade.pair} | 线{idx} | 价格={close_price:.4f} | 保证金={buy_usdt:.2f}"
+                        f"{trade.pair} | 价格={close_price:.4f} | 保证金={buy_usdt:.2f}"
                     )
 
-                    # 记录 K 线锁和 Pending，防止重复触发
                     self._last_candle_str[trade.pair] = candle_str
                     self._pending_add = getattr(self, "_pending_add", {})
+
+                    # 用时间戳作为新首仓的唯一 ID
+                    new_idx = int(current_time.timestamp())
                     self._pending_add[trade.id] = {
-                        "idx": [int(idx)],
+                        "idx": [new_idx],
                         "timestamp": current_time.timestamp(),
                     }
                     self._set(
@@ -375,16 +351,13 @@ class GridBotBase(DcaTpBotBase):
                         "grid_pending_add",
                         json.dumps(self._pending_add[trade.id], allow_nan=False),
                     )
-
-                    # ★ 消耗掉重启标记，防止下一 tick 继续开仓
                     self._set(trade, "grid_allow_restart", False)
 
-                    # 返回正数表示加仓（首仓）
-                    return float(buy_usdt), f"grid_add_multi_{idx}"
+                    return float(buy_usdt), f"grid_add_multi_{new_idx}"
 
                 return None
 
-            # ---- 1) 检查止盈（减仓）----
+            # ---- 1) 检查止盈（动态计算）----
             to_close = []
             pending_reduce_set = self._pending_reduce.get(trade.id)
             if pending_reduce_set is None:
@@ -402,14 +375,14 @@ class GridBotBase(DcaTpBotBase):
             for k, v in positions.items():
                 try:
                     idx = int(k)
-                    # 如果该网格已经在平仓中，直接跳过
                     if idx in pending_reduce_set:
                         continue
 
                     entry = float(v.get("entry", 0))
                     if entry <= 0 or pd.isna(entry) or np.isinf(entry): continue
 
-                    tp_price = self._grid_tp_price(idx)
+                    # ★ 基于开仓价计算止盈价
+                    tp_price = self._grid_tp_price(entry)
                     if tp_price <= 0: continue
 
                     if self._is_short:
@@ -428,7 +401,6 @@ class GridBotBase(DcaTpBotBase):
                     margin = (entry * qty) / lev if lev > 0 else 0.0
                     pnl = (entry - close_price) * qty if self._is_short else (close_price - entry) * qty
 
-                    # 防 NaN 处理
                     if pd.isna(margin) or np.isinf(margin): margin = 0.0
                     if pd.isna(pnl) or np.isinf(pnl): pnl = 0.0
 
@@ -439,8 +411,6 @@ class GridBotBase(DcaTpBotBase):
                 if total_margin <= 0 or not np.isfinite(total_margin):
                     return None
 
-                # 把这几个网格放进 Pending，防止下一次判断又触发。
-                # 持仓状态保留到真实成交回调，撤单时不会丢失网格。
                 pending_reduce_set.update([idx for idx, _, _, _, _ in closed])
                 self._pending_reduce[trade.id] = pending_reduce_set
                 self._set(trade, "grid_pending_reduce", sorted(pending_reduce_set))
@@ -448,11 +418,10 @@ class GridBotBase(DcaTpBotBase):
                 self._log_reduce(trade, close_price, closed, total_margin, total_pnl)
                 self._log_state_detail(trade, close_price)
 
-                # 防 NaN 返回
                 if pd.isna(total_margin) or np.isinf(total_margin): total_margin = 0.0
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
-            # ---- 2) 检查加仓 ----
+            # ---- 2) 检查加仓（动态计算）----
             pending_add = getattr(self, "_pending_add", {}).get(trade.id)
             if pending_add is None:
                 raw_pending_add = self._get(trade, "grid_pending_add", None)
@@ -464,92 +433,71 @@ class GridBotBase(DcaTpBotBase):
                 pending_add = raw_pending_add
 
             if pending_add:
-                # 【#4】pending_add 超时释放：防止订单挂起/重启/回调丢失后永久卡死
                 try:
                     ts = float(pending_add.get("timestamp", 0) or 0) \
                         if isinstance(pending_add, dict) else 0.0
                 except (TypeError, ValueError):
                     ts = 0.0
-                add_timeout = self._cfg_int(g, "pending_add_timeout", 300)  # 默认5分钟
+                add_timeout = self._cfg_int(g, "pending_add_timeout", 300)
                 if ts <= 0 or (current_time.timestamp() - ts) > add_timeout:
-                    logger.warning(
-                        f"{GRID_TAG} pending_add 超时释放 | trade={trade.id} | "
-                        f"ts={ts:.0f} | 已过={current_time.timestamp() - ts:.0f}s"
-                    )
+                    logger.warning(f"{GRID_TAG} pending_add 超时释放")
                     self._pending_add.pop(trade.id, None)
                     self._set(trade, "grid_pending_add", None)
-                    # 释放后继续往下走，本 tick 允许重新判断加仓
                 else:
                     return None
 
-            # 【#8】跳空补格：找出所有"价格已触及但尚未持仓"的格，逐格补齐
-            held_indices = [int(k) for k in positions.keys()]
             max_grids = self._cfg_int(g, "max_open_grids", self._cfg_int(g, "grid_count", 20))
             if len(positions) >= max_grids:
                 return None
 
+            step = self._get_grid_step()
+            if step <= 0:
+                return None
+
+            # 找出最边缘的 entry
+            all_entries = [float(v.get("entry", 0)) for v in positions.values() if "entry" in v]
+            if not all_entries: return None
+
+            should_add = False
             if not self._is_short:
-                lowest_idx = min(held_indices)
-                # 所有 idx < lowest_idx 且 close_price <= levels[idx] 的格都是待补格
-                target_indices = [
-                    i for i in range(lowest_idx - 1, -1, -1)
-                    if close_price <= levels[i] and str(i) not in positions
-                ]
+                # 做多：跌破最低开仓价 - step
+                lowest_entry = min(all_entries)
+                if close_price <= (lowest_entry - step):
+                    should_add = True
             else:
-                highest_idx = max(held_indices)
-                target_indices = [
-                    i for i in range(highest_idx + 1, len(levels))
-                    if close_price >= levels[i] and str(i) not in positions
-                ]
+                # 做空：突破最高开仓价 + step
+                highest_entry = max(all_entries)
+                if close_price >= (highest_entry + step):
+                    should_add = True
 
-            if not target_indices:
+            if not should_add:
                 return None
 
-            # 按最大可开格数截断（从最近格开始补）
-            room = max_grids - len(positions)
-            target_indices = target_indices[:room]
-            if not target_indices:
-                return None
-
-            # 一次补多格：总额 = 单格 × 格数
             buy_usdt_per = self._calc_grid_amount(trade, close_price)
             if buy_usdt_per <= 0 or pd.isna(buy_usdt_per) or np.isinf(buy_usdt_per):
                 return None
 
-            total_buy_usdt = buy_usdt_per * len(target_indices)
-            # 可用余额保护：不够补全部时，能补几格补几格
+            # 可用余额保护
             available = self._available_stake()
-            if available > 0 and total_buy_usdt > available * 0.8:
-                affordable = int((available * 0.8) // buy_usdt_per)
-                if affordable <= 0:
-                    logger.warning(
-                        f"{GRID_TAG} 可用余额不足补格 | 需要={buy_usdt_per:.2f}/格 | 可用={available:.2f}"
-                    )
-                    return None
-                target_indices = target_indices[:affordable]
-                total_buy_usdt = buy_usdt_per * len(target_indices)
-                logger.warning(
-                    f"{GRID_TAG} 可用余额不足，本次只补 {len(target_indices)} 格"
-                )
+            if available > 0 and buy_usdt_per > available * 0.8:
+                logger.warning(f"{GRID_TAG} 可用余额不足补格 | 需要={buy_usdt_per:.2f} | 可用={available:.2f}")
+                return None
 
-            add_qty = (total_buy_usdt * lev) / close_price if close_price > 0 else 0
+            add_qty = (buy_usdt_per * lev) / close_price if close_price > 0 else 0
             if add_qty <= 0 or not np.isfinite(add_qty):
                 return None
 
-            # 记录本次要补的格（reason 里带格列表，order_filled 按格拆）
-            target_indices = sorted(target_indices)   # 多头从高到低补，排序后统一
-            idx_tag = ",".join(str(i) for i in target_indices)
-            tp_price_first = self._grid_tp_price(target_indices[0])
+            # ★ 用时间戳作为新加仓的唯一 ID
+            new_idx = int(current_time.timestamp())
             logger.info(
-                f"{GRID_TAG} {RED}▲ 触发线加仓(补{len(target_indices)}格){RESET} | "
-                f"{trade.pair} | 线{idx_tag} | 收盘价={close_price:.4f} | "
-                f"首格止盈线={tp_price_first:.4f} | 单格={buy_usdt_per:.2f} | 合计={total_buy_usdt:.2f}"
+                f"{GRID_TAG} {RED}▲ 触发线加仓{RESET} | "
+                f"{trade.pair} | 价格={close_price:.4f} | 保证金={buy_usdt_per:.2f}"
             )
 
             self._last_candle_str[trade.pair] = candle_str
             self._pending_add = getattr(self, "_pending_add", {})
             self._pending_add[trade.id] = {
-                "idx": target_indices,          # ★ 改为列表
+                "idx": [new_idx],
                 "timestamp": current_time.timestamp(),
             }
             self._set(
@@ -557,7 +505,7 @@ class GridBotBase(DcaTpBotBase):
                 "grid_pending_add",
                 json.dumps(self._pending_add[trade.id], allow_nan=False),
             )
-            return float(total_buy_usdt), f"grid_add_multi_{idx_tag}"
+            return float(buy_usdt_per), f"grid_add_multi_{new_idx}"
 
         except Exception:
             logger.exception(f"{GRID_TAG} adjust_trade_position 异常")
@@ -587,15 +535,8 @@ class GridBotBase(DcaTpBotBase):
 
             # ---- A. 首仓成交 ----
             if not self._get_bool(trade, "grid_n_initialized", False) and order.ft_order_side == self._entry_order_side:
-                idx = self._get_bot_grid_pending_level(trade.pair)
-                if idx is None:
-                    levels = self._build_grid_levels()
-                    if levels:
-                        idx = bisect.bisect_right(levels, entry_price) - 1
-                        if idx < 0: idx = 0
-                        if idx >= len(levels) - 1: idx = len(levels) - 2
-                    else:
-                        idx = 0
+                # 由于是动态网格，用时间戳作为首仓 ID
+                idx = int(current_time.timestamp())
 
                 positions = self._get_grid_positions(trade)
                 positions[str(int(idx))] = {"entry": entry_price, "qty": qty}
@@ -618,12 +559,12 @@ class GridBotBase(DcaTpBotBase):
                 self._record_chart_marker(
                     event_type="grid_entry", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
-                    current_time=current_time, message=f"网格首仓 线{idx}", candle_time=candle_str
+                    current_time=current_time, message=f"网格首仓 价格{entry_price:.2f}", candle_time=candle_str
                 )
-                logger.info(f"{GRID_TAG} ▶ 首仓成交 | 线{idx} | 价格={entry_price:.4f}")
+                logger.info(f"{GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")
                 return
 
-            # ---- B. 加仓成交（支持单格 grid_add_lvN 与多格 grid_add_multi_i,j,k） ----
+            # ---- B. 加仓成交 ----
             if reason.startswith("grid_add_lv") or reason.startswith("grid_add_multi_"):
                 try:
                     if reason.startswith("grid_add_lv"):
@@ -634,19 +575,11 @@ class GridBotBase(DcaTpBotBase):
                 except Exception:
                     logger.error(f"{GRID_TAG} 无法解析加仓 reason={reason}")
                     return
-                if not idx_list:
-                    return
-                if (
-                    qty <= 0
-                    or entry_price <= 0
-                    or not np.isfinite(qty)
-                    or not np.isfinite(entry_price)
-                ):
+                if not idx_list: return
+                if qty <= 0 or entry_price <= 0 or not np.isfinite(qty) or not np.isfinite(entry_price):
                     return
 
-                # 多格时按格均分成交数量；单格时 qty 原样
                 per_qty = qty / len(idx_list)
-
                 for i in idx_list:
                     self._add_grid_position(trade, i, entry_price, per_qty)
 
@@ -658,11 +591,11 @@ class GridBotBase(DcaTpBotBase):
                     event_type="grid_add", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
                     current_time=current_time,
-                    message=f"网格加仓 线{grid_str}", candle_time=candle_str,
+                    message=f"网格加仓 价格{entry_price:.2f}", candle_time=candle_str,
                 )
                 logger.info(
                     f"{GRID_TAG} ▲ 真实加仓成交 | 价格={entry_price:.4f} | "
-                    f"金额={margin:.2f} | 格={idx_list} | 每格qty={per_qty:.6f}"
+                    f"金额={margin:.2f} | ID={idx_list} | 每格qty={per_qty:.6f}"
                 )
 
             # ---- C. 减仓成交 ----
@@ -677,12 +610,15 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_pending_reduce", [])
                 self._pending_reduce.pop(trade.id, None)
 
-                # ★ 核心修改：如果真实止盈后，positions 空了，打上允许重启的标记
                 if not positions:
                     logger.info(f"{GRID_TAG} 🏁 当前所有网格已平仓，等待后续 K 线继续操作。")
-                    self._set(trade, "grid_allow_restart", True)  # 标记：由于真实止盈导致的全平
+                    self._set(trade, "grid_allow_restart", True)
                 else:
                     self._set(trade, "grid_allow_restart", False)
+
+                logger.info(
+                    f"{GRID_TAG} ▼ 真实减仓成交 | 价格={filled_price:.4f} | 金额={margin:.2f} | 已移除: {sorted(pending_reduce_set)}"
+                )
 
             # ---- D. 网格状态已清空后的实际数量清理 ----
             elif reason.startswith("grid_reduce_cleanup"):
@@ -721,7 +657,6 @@ class GridBotBase(DcaTpBotBase):
         if trade.id in self._pending_reduce:
             self._pending_reduce.pop(trade.id, None)
             self._set(trade, "grid_pending_reduce", [])
-            logger.info(f"{GRID_TAG} 订单撤销，释放 Pending 锁")
         if trade.id in self._pending_add:
             self._pending_add.pop(trade.id, None)
             self._set(trade, "grid_pending_add", None)
@@ -734,7 +669,6 @@ class GridBotBase(DcaTpBotBase):
         if trade.id in self._pending_reduce:
             self._pending_reduce.pop(trade.id, None)
             self._set(trade, "grid_pending_reduce", [])
-            logger.info(f"{GRID_TAG} 订单拒绝，释放 Pending 锁")
         if trade.id in self._pending_add:
             self._pending_add.pop(trade.id, None)
             self._set(trade, "grid_pending_add", None)
@@ -774,18 +708,12 @@ class GridBotBase(DcaTpBotBase):
             else:
                 per_grid = self._collateral_total() * (amount_per_grid / 100.0)
         else:
-            # ★ 改为：固定 = dry_run_wallet / grid_count
             wallet = float((self.config or {}).get("dry_run_wallet", 0) or 0)
             grid_count = max(1, self._cfg_int(g, "grid_count", 20))
             per_grid = wallet / grid_count
 
-        # 可用余额保护：保留，但只在不足时截断，并打日志
         available = self._available_stake()
         if available > 0 and per_grid > available * 0.8:
-            logger.warning(
-                f"{GRID_TAG} 单格保证金 {per_grid:.2f} 超过可用余额80% "
-                f"({available * 0.8:.2f})，已截断"
-            )
             per_grid = available * 0.8
 
         if pd.isna(per_grid) or np.isinf(per_grid) or per_grid <= 0:
@@ -824,9 +752,9 @@ class GridBotBase(DcaTpBotBase):
             if len(closed) == 1:
                 idx, entry, qty, margin, pnl = closed[0]
                 pnl_pct = (price - entry) / entry * 100 if entry > 0 else 0
-                tp_price = self._grid_tp_price(idx)
+                tp_price = self._grid_tp_price(entry)
                 logger.info(
-                    f"{GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | 线{idx} | {entry:.4f} → {price:.4f}(止盈线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
+                    f"{GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | {entry:.4f} → {price:.4f}(止盈线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
                 )
             else:
                 logger.info(f"{GRID_TAG} {GREEN}▼ 减仓多格{RESET} | 释放={total_margin:.2f} | pnl={total_pnl:+.2f}")
@@ -843,11 +771,10 @@ class GridBotBase(DcaTpBotBase):
                 parts = []
                 for k in sorted(positions.keys(), key=lambda x: int(x)):
                     v = positions[k]
-                    idx = int(k)
                     entry = float(v.get("entry", 0))
-                    tp_price = self._grid_tp_price(idx)
+                    tp_price = self._grid_tp_price(entry)
                     tp_pct = (tp_price - entry) / entry * 100 if entry > 0 else 0
-                    parts.append(f"线{idx}={entry:.4f}(止盈={tp_price:.4f}, {tp_pct:+.2f}%)")
+                    parts.append(f"建仓={entry:.4f}(止盈={tp_price:.4f}, {tp_pct:+.2f}%)")
                 logger.info(f"{GRID_TAG}    └ 持仓: {' '.join(parts)} | 共{len(positions)}单")
             else:
                 logger.info(f"{GRID_TAG}    └ 持仓: 无 | 共0单")
