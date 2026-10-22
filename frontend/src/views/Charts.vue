@@ -332,31 +332,38 @@ function buildMarkers(rawEvents, candleData) {
     const gridBuckets = {}
 
     filteredEvents.forEach(e => {
-        // 获取事件时间
+        // 1. 获取事件时间
         let markerTime = parseEventTime(e.candle_time) ?? parseEventTime(e.time)
         if (markerTime === null) return
 
-        // 找到最接近的 K 线时间（确保 marker 必须画在存在的 K 线上）
+        // 2. 找到最接近的 K 线时间
         const nearestCandleTime = findNearestCandleTime(markerTime, candleData)
         if (!nearestCandleTime) return
 
-        const isGridEvent = ['grid_add', 'grid_sell'].includes(e.event_type)
+        // 3. 过滤中间信号
+        // 我们只关心真实的成交（entry/add/sell），不画触发信号
+        if (e.event_type === 'grid_entry_signal') return;
+
+        const isGridEvent = ['grid_entry', 'grid_add', 'grid_sell'].includes(e.event_type)
 
         if (!isGridEvent) {
-            // DCA 及其他事件不聚合，直接记录
             const config = buildMarkerConfig(e)
             if (config) {
-                // ★ 核心：强制指定最新的 K 线时间，且放到最后
                 normalMarkers.push({ ...config, time: Number(nearestCandleTime) })
             }
             return
         }
 
-        // 网格事件聚合
-        const bucketKey = `${nearestCandleTime}_${e.event_type}`
+        // 4. 统一归类：把 grid_entry 也并入 grid_add 桶，确保同一根 K 线只有一根向上的箭头
+        let aggType = e.event_type === 'grid_entry' ? 'grid_add' : e.event_type;
+
+        // 5. 聚合 Key 改为：K线时间 + 方向（买入/卖出）
+        // 这样无论加了几格、是不是首仓，同一根 K 线只有一个向上的箭头
+        const bucketKey = `${nearestCandleTime}_${aggType}`
+
         if (!gridBuckets[bucketKey]) {
             gridBuckets[bucketKey] = {
-                event_type: e.event_type,
+                event_type: aggType,
                 time: Number(nearestCandleTime),
                 prices: [],
                 amount: 0,
@@ -365,10 +372,7 @@ function buildMarkers(rawEvents, candleData) {
                 created_at: e.created_at
             }
         }
-        if (e.event_type === 'grid_entry_signal' &&
-            normalMarkers.some(m => m.time === Number(nearestCandleTime) && m.event_type === 'grid_entry')) {
-            return;
-        }
+
         gridBuckets[bucketKey].prices.push(Number(e.price || 0))
         gridBuckets[bucketKey].amount += Number(e.amount || 0)
     })
@@ -381,7 +385,7 @@ function buildMarkers(rawEvents, candleData) {
             time: b.time,
             price: avgPrice,
             amount: b.amount.toFixed(2),
-            message: b.prices.length > 1 ? `${b.message} (共${b.prices.length}笔, 均价${avgPrice})` : b.message,
+            message: b.prices.length > 1 ? `网格加仓 (共${b.prices.length}笔)` : b.message,
             count: b.prices.length,
             candle_time: b.candle_time,
             created_at: b.created_at
@@ -389,7 +393,6 @@ function buildMarkers(rawEvents, candleData) {
 
         const config = buildMarkerConfig(aggEvent)
         if (config) {
-            // ★ 核心：强制指定 K 线时间，且放到最后
             normalMarkers.push({ ...config, time: Number(b.time) })
         }
     })
@@ -428,10 +431,13 @@ function buildMarkerConfig(e) {
         case "grid_add":
             return {
                 position: "belowBar",
-                color: "#2196f3", // 加仓用蓝色，避免和首仓混淆
+                // 如果你想完全统一颜色，可以全用 "#2196f3"
+                // 如果首仓要突出，可以根据 e.message 里的关键字判断，但由于上面聚合了，建议统一用蓝色，带上 xN 后缀即可
+                color: "#2196f3",
                 shape: "arrowUp",
                 text: `网格加仓${countSuffix} ${priceStr}`,
-                title: `价格:${priceStr}\n数量:${e.amount}`
+                title: `均价:${priceStr}\n总量:${e.amount}`,
+                size: 2
             }
         case "grid_sell":
             return {

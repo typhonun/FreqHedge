@@ -254,11 +254,6 @@ class GridBotBase(DcaTpBotBase):
             self._set_bot_grid_pending_level(pair, idx)
             # 同一根 K 线只允许一次首仓，防止整仓止盈后立即重复入场。
             self._last_candle_str[pair] = candle_str
-            self._record_chart_marker(
-                event_type="grid_entry_signal", pair=pair, trade_id=0,
-                side=self._side_str, price=rate, amount=amount,
-                current_time=current_time, message=f"网格首仓 线{idx}", candle_time=candle_str,
-            )
             return True
         except Exception:
             return False
@@ -411,41 +406,94 @@ class GridBotBase(DcaTpBotBase):
                     except (TypeError, ValueError):
                         raw_pending_add = None
                 pending_add = raw_pending_add
+
             if pending_add:
+                # 【#4】pending_add 超时释放：防止订单挂起/重启/回调丢失后永久卡死
+                try:
+                    ts = float(pending_add.get("timestamp", 0) or 0) \
+                        if isinstance(pending_add, dict) else 0.0
+                except (TypeError, ValueError):
+                    ts = 0.0
+                add_timeout = self._cfg_int(g, "pending_add_timeout", 300)  # 默认5分钟
+                if ts <= 0 or (current_time.timestamp() - ts) > add_timeout:
+                    logger.warning(
+                        f"{GRID_TAG} pending_add 超时释放 | trade={trade.id} | "
+                        f"ts={ts:.0f} | 已过={current_time.timestamp() - ts:.0f}s"
+                    )
+                    self._pending_add.pop(trade.id, None)
+                    self._set(trade, "grid_pending_add", None)
+                    # 释放后继续往下走，本 tick 允许重新判断加仓
+                else:
+                    return None
+
+            # 【#8】跳空补格：找出所有"价格已触及但尚未持仓"的格，逐格补齐
+            held_indices = [int(k) for k in positions.keys()]
+            max_grids = self._cfg_int(g, "max_open_grids", self._cfg_int(g, "grid_count", 20))
+            if len(positions) >= max_grids:
                 return None
 
-            held_indices = [int(k) for k in positions.keys()]
             if not self._is_short:
                 lowest_idx = min(held_indices)
-                target_idx = lowest_idx - 1
-                if target_idx < 0: return None
-                if close_price > levels[target_idx]: return None
+                # 所有 idx < lowest_idx 且 close_price <= levels[idx] 的格都是待补格
+                target_indices = [
+                    i for i in range(lowest_idx - 1, -1, -1)
+                    if close_price <= levels[i] and str(i) not in positions
+                ]
             else:
                 highest_idx = max(held_indices)
-                target_idx = highest_idx + 1
-                if target_idx >= len(levels): return None
-                if close_price < levels[target_idx]: return None
+                target_indices = [
+                    i for i in range(highest_idx + 1, len(levels))
+                    if close_price >= levels[i] and str(i) not in positions
+                ]
 
-            if str(target_idx) in positions: return None
-            max_grids = self._cfg_int(g, "max_open_grids", 20)
-            if len(positions) >= max_grids: return None
+            if not target_indices:
+                return None
 
-            buy_usdt = self._calc_grid_amount(trade, close_price)
-            if buy_usdt <= 0 or pd.isna(buy_usdt) or np.isinf(buy_usdt): return None
+            # 按最大可开格数截断（从最近格开始补）
+            room = max_grids - len(positions)
+            target_indices = target_indices[:room]
+            if not target_indices:
+                return None
 
-            add_qty = (buy_usdt * lev) / close_price if close_price > 0 else 0
-            if add_qty <= 0: return None
+            # 一次补多格：总额 = 单格 × 格数
+            buy_usdt_per = self._calc_grid_amount(trade, close_price)
+            if buy_usdt_per <= 0 or pd.isna(buy_usdt_per) or np.isinf(buy_usdt_per):
+                return None
 
-            tp_price = self._grid_tp_price(target_idx)
+            total_buy_usdt = buy_usdt_per * len(target_indices)
+            # 可用余额保护：不够补全部时，能补几格补几格
+            available = self._available_stake()
+            if available > 0 and total_buy_usdt > available * 0.8:
+                affordable = int((available * 0.8) // buy_usdt_per)
+                if affordable <= 0:
+                    logger.warning(
+                        f"{GRID_TAG} 可用余额不足补格 | 需要={buy_usdt_per:.2f}/格 | 可用={available:.2f}"
+                    )
+                    return None
+                target_indices = target_indices[:affordable]
+                total_buy_usdt = buy_usdt_per * len(target_indices)
+                logger.warning(
+                    f"{GRID_TAG} 可用余额不足，本次只补 {len(target_indices)} 格"
+                )
+
+            add_qty = (total_buy_usdt * lev) / close_price if close_price > 0 else 0
+            if add_qty <= 0 or not np.isfinite(add_qty):
+                return None
+
+            # 记录本次要补的格（reason 里带格列表，order_filled 按格拆）
+            target_indices = sorted(target_indices)   # 多头从高到低补，排序后统一
+            idx_tag = ",".join(str(i) for i in target_indices)
+            tp_price_first = self._grid_tp_price(target_indices[0])
             logger.info(
-                f"{GRID_TAG} {RED}▲ 触发线加仓{RESET} | {trade.pair} | 线{target_idx} | "
-                f"收盘价={close_price:.4f} | 止盈线={tp_price:.4f} | 保证金={buy_usdt:.2f}"
+                f"{GRID_TAG} {RED}▲ 触发线加仓(补{len(target_indices)}格){RESET} | "
+                f"{trade.pair} | 线{idx_tag} | 收盘价={close_price:.4f} | "
+                f"首格止盈线={tp_price_first:.4f} | 单格={buy_usdt_per:.2f} | 合计={total_buy_usdt:.2f}"
             )
 
             self._last_candle_str[trade.pair] = candle_str
             self._pending_add = getattr(self, "_pending_add", {})
             self._pending_add[trade.id] = {
-                "idx": int(target_idx),
+                "idx": target_indices,          # ★ 改为列表
                 "timestamp": current_time.timestamp(),
             }
             self._set(
@@ -453,7 +501,7 @@ class GridBotBase(DcaTpBotBase):
                 "grid_pending_add",
                 json.dumps(self._pending_add[trade.id], allow_nan=False),
             )
-            return float(buy_usdt), f"grid_add_lv{target_idx}"
+            return float(total_buy_usdt), f"grid_add_multi_{idx_tag}"
 
         except Exception:
             logger.exception(f"{GRID_TAG} adjust_trade_position 异常")
@@ -518,11 +566,18 @@ class GridBotBase(DcaTpBotBase):
                 logger.info(f"{GRID_TAG} ▶ 首仓成交 | 线{idx} | 价格={entry_price:.4f}")
                 return
 
-            # ---- B. 加仓成交 ----
-            if reason.startswith("grid_add_lv"):
+            # ---- B. 加仓成交（支持单格 grid_add_lvN 与多格 grid_add_multi_i,j,k） ----
+            if reason.startswith("grid_add_lv") or reason.startswith("grid_add_multi_"):
                 try:
-                    idx = int(reason[len("grid_add_lv"):])
+                    if reason.startswith("grid_add_lv"):
+                        idx_list = [int(reason[len("grid_add_lv"):])]
+                    else:
+                        tail = reason[len("grid_add_multi_"):]
+                        idx_list = [int(x) for x in tail.split(",") if x != ""]
                 except Exception:
+                    logger.error(f"{GRID_TAG} 无法解析加仓 reason={reason}")
+                    return
+                if not idx_list:
                     return
                 if (
                     qty <= 0
@@ -532,15 +587,26 @@ class GridBotBase(DcaTpBotBase):
                 ):
                     return
 
-                self._add_grid_position(trade, idx, entry_price, qty)
+                # 多格时按格均分成交数量；单格时 qty 原样
+                per_qty = qty / len(idx_list)
+
+                for i in idx_list:
+                    self._add_grid_position(trade, i, entry_price, per_qty)
+
                 self._pending_add.pop(trade.id, None)
                 self._set(trade, "grid_pending_add", None)
+
+                grid_str = ",".join([str(i) for i in idx_list])
                 self._record_chart_marker(
                     event_type="grid_add", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
-                    current_time=current_time, message=f"网格加仓 {reason}", candle_time=candle_str
+                    current_time=current_time,
+                    message=f"网格加仓 线{grid_str}", candle_time=candle_str,
                 )
-                logger.info(f"{GRID_TAG} ▲ 真实加仓成交 | 价格={entry_price:.4f} | 金额={margin:.2f}")
+                logger.info(
+                    f"{GRID_TAG} ▲ 真实加仓成交 | 价格={entry_price:.4f} | "
+                    f"金额={margin:.2f} | 格={idx_list} | 每格qty={per_qty:.6f}"
+                )
 
             # ---- C. 减仓成交 ----
             elif reason.startswith("grid_reduce_multi"):
