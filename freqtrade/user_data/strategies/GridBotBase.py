@@ -418,7 +418,54 @@ class GridBotBase(DcaTpBotBase):
                 self._log_reduce(trade, close_price, closed, total_margin, total_pnl)
                 self._log_state_detail(trade, close_price)
 
-                if pd.isna(total_margin) or np.isinf(total_margin): total_margin = 0.0
+                # ★★★ 核心修改点：动态获取交易所的最小限制 ★★★
+                try:
+                    # 获取当前交易对的最小名义价值，如果系统没传，默认给个 5.0
+                    min_exit_stake = float(kwargs.get("min_exit_stake") or 5.0)
+
+                    # Freqtrade 会通过 get_market_price 拿到更准确的估价
+                    exit_rate = float(kwargs.get("current_exit_rate") or close_price)
+
+                    # 算出如果按照原计划减仓，还剩多少数量
+                    requested_qty = sum(item[2] for item in closed)
+                    remaining_qty = max(actual_amount - requested_qty, 0.0)
+
+                    # 算出剩余数量在当前交易所环境下的估值
+                    remaining_value = remaining_qty * exit_rate
+
+                    # 如果剩余价值 > 0 且 小于交易所的最小限制，则改为全部平仓
+                    if 0 < remaining_value < min_exit_stake:
+                        logger.info(
+                            f"{GRID_TAG} 剩余仓位价值={remaining_value:.4f} 小于最小减仓金额="
+                            f"{min_exit_stake:.4f}，为防止卡单，强制改为全部平仓"
+                        )
+
+                        # 将剩余的所有网格索引全部加入待平仓集合
+                        pending_reduce_set.update(int(key) for key in positions)
+                        self._pending_reduce[trade.id] = pending_reduce_set
+                        self._set(trade, "grid_pending_reduce", sorted(pending_reduce_set))
+
+                        # 获取全部平仓所需的保证金/本金
+                        # 遍历当前手里所有的网格，累加它们的保证金
+                        full_close_stake = 0.0
+                        for k, v in positions.items():
+                            entry = float(v.get("entry", 0))
+                            qty = float(v.get("qty", 0))
+                            full_close_stake += (entry * qty) / lev if lev > 0 else 0.0
+
+                        if full_close_stake <= 0 or not np.isfinite(full_close_stake):
+                            full_close_stake = total_margin
+
+                        if full_close_stake <= 0 or not np.isfinite(full_close_stake):
+                            logger.warning(f"{GRID_TAG} 全平本金计算异常，取消本次平仓")
+                            return None
+                        
+                        return -full_close_stake, f"grid_reduce_multi_{len(pending_reduce_set)}"
+
+                except Exception as e:
+                    logger.warning(f"{GRID_TAG} 计算动态最小减仓限制时出错: {e}，将按原计划减仓")
+
+                # 如果剩余价值安全，就按照正常的部分网格减仓执行
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
             # ---- 2) 检查加仓（动态计算）----
@@ -561,7 +608,7 @@ class GridBotBase(DcaTpBotBase):
                     side=self._side_str, price=entry_price, amount=margin,
                     current_time=current_time, message=f"网格首仓 价格{entry_price:.2f}", candle_time=candle_str
                 )
-                logger.info(f"{GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")
+                logger.info(f"[STRATEGY] [ENTRY] {GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")
                 return
 
             # ---- B. 加仓成交 ----
@@ -588,13 +635,18 @@ class GridBotBase(DcaTpBotBase):
 
                 grid_str = ",".join([str(i) for i in idx_list])
                 self._record_chart_marker(
-                    event_type="grid_add", pair=pair, trade_id=trade.id,
-                    side=self._side_str, price=entry_price, amount=margin,
+                    event_type="grid_add",  # ✅ 改回加仓
+                    pair=pair,
+                    trade_id=trade.id,
+                    side=self._side_str,
+                    price=entry_price,      # ✅ 加仓用 entry_price
+                    amount=margin,
                     current_time=current_time,
-                    message=f"网格加仓 价格{entry_price:.2f}", candle_time=candle_str,
+                    message=f"网格加仓 价格{entry_price:.2f}", # ✅ 文案改回加仓
+                    candle_time=current_time.strftime("%Y-%m-%d %H:%M:%S")
                 )
                 logger.info(
-                    f"{GRID_TAG} ▲ 真实加仓成交 | 价格={entry_price:.4f} | "
+                    f"[STRATEGY] [ADD] {GRID_TAG} ▲ 真实加仓成交 | 价格={entry_price:.4f} | "
                     f"金额={margin:.2f} | ID={idx_list} | 每格qty={per_qty:.6f}"
                 )
 
@@ -617,7 +669,21 @@ class GridBotBase(DcaTpBotBase):
                     self._set(trade, "grid_allow_restart", False)
 
                 logger.info(
-                    f"{GRID_TAG} ▼ 真实减仓成交 | 价格={filled_price:.4f} | 金额={margin:.2f} | 已移除: {sorted(pending_reduce_set)}"
+                    f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 真实减仓成交 | 价格={filled_price:.4f} | "
+                    f"金额={margin:.2f} | 已移除: {sorted(pending_reduce_set)}"
+                )
+
+                # ★ 新增：记录网格减仓的图表标记
+                self._record_chart_marker(
+                    event_type="grid_reduce",  # 我们新增一种事件类型
+                    pair=pair,
+                    trade_id=trade.id,
+                    side=self._side_str,
+                    price=filled_price,
+                    amount=margin,
+                    current_time=current_time,
+                    message=f"网格减仓 价格{filled_price:.2f}",
+                    candle_time=candle_str
                 )
 
             # ---- D. 网格状态已清空后的实际数量清理 ----
@@ -754,7 +820,7 @@ class GridBotBase(DcaTpBotBase):
                 pnl_pct = (price - entry) / entry * 100 if entry > 0 else 0
                 tp_price = self._grid_tp_price(entry)
                 logger.info(
-                    f"{GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | {entry:.4f} → {price:.4f}(止盈线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
+                    f"[STRATEGY] [REDUCE] {GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | {entry:.4f} → {price:.4f}(止盈线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
                 )
             else:
                 logger.info(f"{GRID_TAG} {GREEN}▼ 减仓多格{RESET} | 释放={total_margin:.2f} | pnl={total_pnl:+.2f}")

@@ -582,7 +582,7 @@ class DcaTpBotBase(IStrategy):
             if trade.id not in self._stop_loss_logged:
                 self._stop_loss_logged.add(trade.id)
                 logger.info(
-                    f"{YELLOW} [{trade.pair}] {RED}触发时间止损{RESET} "
+                    f"[STRATEGY] [SL] [{trade.pair}] {RED}触发时间止损{RESET} "
                     f"未成交时长={elapsed_hours:.2f}h (阈值={hours}h), "
                     f"累计收益={profit_display} (阈值<{threshold_display}), "
                     f"当前价={rate:.4f} {RESET}"
@@ -1026,7 +1026,7 @@ class DcaTpBotBase(IStrategy):
             logger.warning(f"[{pair}] confirm_trade_entry 读取指标失败: {e}")
 
         logger.info(
-            f"[{pair}] {GREEN} 开仓信号触发 {RESET}"
+            f"[STRATEGY] [SIGNAL] [{pair}] {GREEN} 开仓信号触发 {RESET}"
             f"entry_tag={entry_tag} 当前价={rate:.4f} "
             f"保证金={stake_amount:.4f} USDT RSI={rsi_value} is_manual={is_manual}"
         )
@@ -1900,7 +1900,7 @@ class DcaTpBotBase(IStrategy):
                 self._set(trade, 'dca_done', False)
                 self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
                 logger.info(
-                    f"[{trade.pair}] {GREEN}[DCA止盈全平]{RESET}, "
+                    f"[STRATEGY] [TP] [{trade.pair}] {GREEN}[DCA止盈全平]{RESET}, "
                     f"DCA次数={u}, 当前收益={account_profit * 100:.2f}%, "
                     f"{YELLOW}保证金={margin_val:.2f}{RESET}, 当前价={price:.4f}"
                 )
@@ -1991,7 +1991,7 @@ class DcaTpBotBase(IStrategy):
         self._set(trade, 'need_rebuy', bool(tp_cfg.get("rebuy_enable", True)))
 
         logger.info(
-            f"[{trade.pair}] {GREEN}[浮盈减仓 {reduce_text}]{RESET}, "
+            f"[STRATEGY] [TP] [{trade.pair}] {GREEN}[浮盈减仓 {reduce_text}]{RESET}, "
             f"持仓时间={elapsed:.0f}min, ROI目标={roi_text}, "
             f"当前收益率={account_profit * 100:.2f}%, "
             f"{YELLOW}保证金={margin:.2f}{RESET}, 当前价={last.get('close'):.4f}, "
@@ -2286,7 +2286,7 @@ class DcaTpBotBase(IStrategy):
             if trade.id not in self._stop_loss_logged:
                 self._stop_loss_logged.add(trade.id)
                 logger.info(
-                    f"[{pair}] {RED}触发ROI止损{RESET} "
+                    f"[STRATEGY] [SL] [{pair}] {RED}触发ROI止损{RESET} "
                     f"收益率={current_profit * 100:.2f}% "
                     f"持仓价={trade.open_rate:.4f} "
                     f"开仓价={current_rate:.4f}"

@@ -157,10 +157,8 @@ class ConfigService:
             amount_per_grid = float(grid_cfg.get("amount_per_grid", 0) or 0)
 
             if amount_per_grid > 0:
-                # 老数据兼容：如果手填了 amount_per_grid，尊重它
                 stake_amount = amount_per_grid
             else:
-                # ★ 新逻辑：每格金额 = 投入资金 / 网格数量
                 stake_amount = capital / max(1, grid_count)
 
             cfg["stake_amount"] = round(stake_amount, 8)
@@ -232,8 +230,30 @@ class ConfigService:
         return BOTS_DIR / str(bot_id) / f"config_bot{bot_id}_{side}.json"
 
     @staticmethod
-    def log_path(bot_id: int, side: str) -> Path:
-        return BOTS_DIR / str(bot_id) / "logs" / f"{side}.log"
+    def log_path(bot_id: int, side: str | None = None) -> Path:
+        """
+        bot 策略日志路径。
+
+        规则：
+          - 只跑一个 side 时 → bots/{bot_id}/logs/strategy.log
+          - 同时跑两个 side → bots/{bot_id}/logs/strategy_long.log / strategy_short.log
+                              （避免两个进程写同一文件导致锁冲突）
+        """
+        log_dir = BOTS_DIR / str(bot_id) / "logs"
+
+        # 读该 bot 的 enableLong / enableShort，决定文件名
+        try:
+            from app.services.bot_manager import BotManager
+            bot = BotManager.get(bot_id) or {}
+            enable_long = bool(bot.get("enableLong"))
+            enable_short = bool(bot.get("enableShort"))
+        except Exception:
+            enable_long, enable_short = True, False
+
+        # 双方向 → 带 side 后缀；单方向 → 统一 strategy.log
+        if enable_long and enable_short and side:
+            return log_dir / f"strategy_{side}.log"
+        return log_dir / "strategy.log"
 
     @staticmethod
     def db_path(bot_id: int, side: str) -> Path:

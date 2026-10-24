@@ -344,7 +344,7 @@ function buildMarkers(rawEvents, candleData) {
         // 我们只关心真实的成交（entry/add/sell），不画触发信号
         if (e.event_type === 'grid_entry_signal') return;
 
-        const isGridEvent = ['grid_entry', 'grid_add', 'grid_sell'].includes(e.event_type)
+        const isGridEvent = ['grid_entry', 'grid_add', 'grid_sell', 'grid_reduce'].includes(e.event_type)
 
         if (!isGridEvent) {
             const config = buildMarkerConfig(e)
@@ -388,6 +388,8 @@ function buildMarkers(rawEvents, candleData) {
             msgText = `网格加仓 (共${b.prices.length}笔)`
         } else if (b.prices.length > 1 && b.event_type === 'grid_entry') {
             msgText = `网格首仓 (共${b.prices.length}笔)`
+        } else if (b.prices.length > 1 && (b.event_type === 'grid_reduce' || b.event_type === 'grid_sell')) { // ★ 新增这里
+            msgText = `网格减仓 (共${b.prices.length}笔)`
         }
 
         const aggEvent = {
@@ -475,12 +477,12 @@ function buildMarkerConfig(e) {
                 title: `均价:${priceStr}\n总量:${e.amount}`,
                 size: 2
             }
-        case "grid_sell":
+        case "grid_reduce":
             return {
                 position: "aboveBar",
                 color: "#ff9800", // 减仓用橙色
                 shape: "arrowDown",
-                text: `网格减仓${countSuffix} ${priceStr}`,
+                text: `网格减仓 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}`
             }
         case "tp":

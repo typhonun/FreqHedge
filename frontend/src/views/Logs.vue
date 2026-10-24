@@ -25,12 +25,32 @@
           <div>系统日志</div>
 
           <div>
+            <!-- 下拉选项 -->
             <el-select v-model="source" style="width:130px">
               <el-option label="全部" value="all" />
               <el-option label="Backend" value="backend" />
               <el-option label="Frontend" value="frontend" />
-              <el-option label="Long" value="long" />
-              <el-option label="Short" value="short" />
+              <el-option label="Strategy" value="strategy" />
+            </el-select>
+
+            <!-- 新增 bot 选择（仅 strategy 需要） -->
+            <el-select
+              v-if="source === 'strategy'"
+              v-model="botId"
+              style="width:220px;margin-left:10px"
+              placeholder="选择机器人"
+              :loading="botLoading"
+              no-data-text="暂无机器人，请先新建"
+            >
+              <el-option
+                v-for="b in botList"
+                :key="b.id"
+                :label="`${b.id} · ${b.name}`"
+                :value="b.id"
+              >
+                <span style="float:left">{{ b.id }} · {{ b.name }}</span>
+
+              </el-option>
             </el-select>
 
             <el-input
@@ -87,40 +107,98 @@
 import { ref, nextTick, computed, onMounted, onUnmounted, watch } from "vue"
 import axios from "axios"
 
+const API = "http://localhost:9000"
+
+// ★ 不再写死，动态拉取
+const botList = ref([])
+
 const source = ref("all")
+const botId = ref(null)          // ★ 初始 null，加载完列表再选默认
 const keyword = ref("")
 const logs = ref([])
 const logBox = ref(null)
 const searchInput = ref(null)
 const matchIndex = ref(0)
 const timer = ref(null)
+const listTimer = ref(null)      // ★ bot 列表也要定时刷新
 let searchTimer = null
 const autoScroll = ref(true)
 
 const services = [
   { name: "Backend API" },
   { name: "Frontend" },
-  { name: "Long Bot" },
-  { name: "Short Bot" }
+  { name: "Strategy Bot" },
 ]
 
-const load = async () => {
-  let url = source.value === "all"
-    ? "http://localhost:9000/logs/all/list"
-    : `http://localhost:9000/logs/${source.value}`
+// =========================================================
+// ★ 拉取 bot 列表
+// =========================================================
+const botLoading = ref(false)
+const loadBots = async () => {
+  try {
+    const res = await axios.get(`${API}/bots`)
+    const list = res.data ?? []
+    botList.value = list.map(b => ({
+      id: b.id,
+      name: b.name || `Bot ${b.id}`,
+      status: b.status,
+      enableLong: b.enableLong,
+      enableShort: b.enableShort,
+    }))
 
-  const res = await axios.get(url)
-  logs.value = res.data.data
+    // ★ 首次加载：如果 botId 为空，默认选第一个
+    if (!botId.value && botList.value.length > 0) {
+      botId.value = botList.value[0].id
+    }
 
-  await nextTick()
-  if (logBox.value && autoScroll.value && !keyword.value) {
-    logBox.value.scrollTop = logBox.value.scrollHeight
+    // ★ 当前选中的 bot 被删掉了 → 切到第一个
+    if (botId.value && !botList.value.some(b => b.id === botId.value)) {
+      botId.value = botList.value[0]?.id ?? null
+    }
+  } catch (e) {
+    console.error("load bots failed:", e)
+    // 失败不阻塞日志展示
   }
 }
 
+// =========================================================
+// 拉日志
+// =========================================================
+const load = async () => {
+  try {
+    let url
+    if (source.value === "all") {
+      url = `${API}/logs/all/list`
+    } else if (source.value === "strategy") {
+      if (!botId.value) {
+        logs.value = []
+        return
+      }
+      url = `${API}/logs/strategy?bot_id=${botId.value}`
+    } else {
+      url = `${API}/logs/${source.value}`
+    }
+
+    const res = await axios.get(url)
+    logs.value = res.data?.data ?? []
+
+    await nextTick()
+    if (logBox.value && autoScroll.value && !keyword.value) {
+      logBox.value.scrollTop = logBox.value.scrollHeight
+    }
+  } catch (e) {
+    console.error("load logs failed:", e)
+    logs.value = []
+  }
+}
+
+// =========================================================
+// 其它逻辑不变
+// =========================================================
 const filteredLogs = computed(() => {
   if (!keyword.value) return logs.value
-  return logs.value.filter(x => x.message.toLowerCase().includes(keyword.value.toLowerCase()))
+  const kw = keyword.value.toLowerCase()
+  return logs.value.filter(x => x.message.toLowerCase().includes(kw))
 })
 
 function highlight(text) {
@@ -150,7 +228,10 @@ function scrollToMatch() {
   })
 }
 
-watch(source, load)
+watch([source, botId], () => {
+  matchIndex.value = 0
+  load()
+})
 
 watch(keyword, () => {
   clearTimeout(searchTimer)
@@ -190,15 +271,18 @@ const searchFocus = (e) => {
   }
 }
 
-onMounted(() => {
-  load()
+onMounted(async () => {
+  await loadBots()          // ★ 先拉 bot 列表
+  load()                    // 再拉日志（首次）
   window.addEventListener("keydown", searchFocus)
-  timer.value = setInterval(load, 5000)
+  timer.value = setInterval(load, 5000)          // 日志 5s 刷
+  listTimer.value = setInterval(loadBots, 15000) // ★ bot 列表 15s 刷
 })
 
 onUnmounted(() => {
   window.removeEventListener("keydown", searchFocus)
   clearInterval(timer.value)
+  clearInterval(listTimer.value)
   clearTimeout(searchTimer)
 })
 </script>
@@ -257,13 +341,8 @@ onUnmounted(() => {
   color: white;
 }
 
-.long {
+.strategy {
   background: #67c23a;
-  color: white;
-}
-
-.short {
-  background: #f56c6c;
   color: white;
 }
 
