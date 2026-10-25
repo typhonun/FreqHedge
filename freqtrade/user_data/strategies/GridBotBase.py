@@ -606,7 +606,8 @@ class GridBotBase(DcaTpBotBase):
                 self._record_chart_marker(
                     event_type="grid_entry", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
-                    current_time=current_time, message=f"网格首仓 价格{entry_price:.2f}", candle_time=candle_str
+                    current_time=current_time, message=f"网格首仓 价格{entry_price:.2f}",
+                    candle_time=current_time
                 )
                 logger.info(f"[STRATEGY] [ENTRY] {GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")
                 return
@@ -643,7 +644,7 @@ class GridBotBase(DcaTpBotBase):
                     amount=margin,
                     current_time=current_time,
                     message=f"网格加仓 价格{entry_price:.2f}", # ✅ 文案改回加仓
-                    candle_time=current_time.strftime("%Y-%m-%d %H:%M:%S")
+                    candle_time=current_time
                 )
                 logger.info(
                     f"[STRATEGY] [ADD] {GRID_TAG} ▲ 真实加仓成交 | 价格={entry_price:.4f} | "
@@ -683,7 +684,7 @@ class GridBotBase(DcaTpBotBase):
                     amount=margin,
                     current_time=current_time,
                     message=f"网格减仓 价格{filled_price:.2f}",
-                    candle_time=candle_str
+                    candle_time=current_time
                 )
 
             # ---- D. 网格状态已清空后的实际数量清理 ----
