@@ -17,11 +17,15 @@ from app.schemas.chart import (
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 router = APIRouter()
+
+# 全局 K 线缓存
 kline_cache = {}
+# 网格建议缓存
+suggest_cache = {}
 
 exchange = ccxt.binance({
     "enableRateLimit": True,
-    "rateLimit": 1200,
+    "rateLimit": 1200,  # 略微调大速率限制，防止瞬间并发触发限流
     "options": {
         "defaultType": "future"
     }
@@ -62,6 +66,7 @@ def get_candles(pair: str, timeframe: str = "5m"):
     key = f"{pair}_{timeframe}"
     now = time.time()
 
+    # 缓存 300 秒有效
     if key in kline_cache:
         cache_time, data = kline_cache[key]
         if now - cache_time < 300:
@@ -78,31 +83,17 @@ def get_candles(pair: str, timeframe: str = "5m"):
 
 
 @router.get("/latest")
-def latest_candle(
-        pair: str,
-        timeframe: str = "30m"
-):
+def latest_candle(pair: str, timeframe: str = "30m"):
     key = f"{pair}_{timeframe}"
 
+    # ★ 核心优化 1：只允许读缓存，绝不允许穿透请求交易所
     if key in kline_cache:
         data = kline_cache[key][1]
+        if data:
+            return data[-1]
 
-        return data[-1]
-
-    candle = exchange.fetch_ohlcv(
-        pair,
-        timeframe=timeframe,
-        limit=1
-    )[0]
-
-    return {
-        "time": candle[0],
-        "open": candle[1],
-        "high": candle[2],
-        "low": candle[3],
-        "close": candle[4],
-        "volume": candle[5]
-    }
+    # 如果缓存未命中，直接返回 None，由前端逻辑处理
+    return None
 
 
 @router.get("/bot-positions/{bot_id}")
@@ -118,84 +109,44 @@ def get_bot_positions(bot_id: int):
 
 def cache_refresh_loop():
     warmup_cache()
-
     while True:
-
         try:
-
             warmup_cache()
-
         except Exception as e:
+            print(f"缓存刷新失败: {e}")
 
-            print(
-                f"缓存刷新失败: {e}"
-            )
-
-        time.sleep(60)
+        # ★ 核心优化 2：从 60 秒改为 300 秒（5分钟），大幅降低请求频率
+        time.sleep(300)
 
 
 def warmup_cache():
-    print(
-        "\n===== 开始预热K线缓存 ====="
-    )
-
+    print("\n===== 开始预热K线缓存 =====")
     pairs = load_whitelist_pairs()
 
-    timeframes = [
-        "30m"
-    ]
+    # 仅为 30m 周期做预热（如果要支持前端随意切周期，建议前端切换时自行拉取）
+    timeframes = ["30m"]
 
     for pair in pairs:
-
         for tf in timeframes:
-
             try:
-
                 key = f"{pair}_{tf}"
-
-                print(
-                    f"预热: {key}"
-                )
-
-                ohlcv = exchange.fetch_ohlcv(
-                    pair,
-                    timeframe=tf,
-                    limit=1000
-                )
-
+                print(f"预热: {key}")
+                ohlcv = exchange.fetch_ohlcv(pair, timeframe=tf, limit=1000)
                 data = [
-
-                    {
-                        "time": c[0],
-                        "open": c[1],
-                        "high": c[2],
-                        "low": c[3],
-                        "close": c[4],
-                        "volume": c[5]
-                    }
-
+                    {"time": c[0], "open": c[1], "high": c[2], "low": c[3],
+                     "close": c[4], "volume": c[5]}
                     for c in ohlcv
                 ]
-
-                kline_cache[key] = (
-                    time.time(),
-                    data
-                )
-
+                kline_cache[key] = (time.time(), data)
             except Exception as e:
+                print(f"{pair} 预热失败: {e}")
 
-                print(
-                    f"{pair} 预热失败: {e}"
-                )
-
-    print(
-        "===== K线缓存预热完成 =====\n"
-    )
+    print("===== K线缓存预热完成 =====\n")
 
 
 @router.post("/event")
 def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
-    # 用 candle_time 去重：同一策略、同一交易对、同一事件类型、同一根 K 线，只记录一次
+    # 用 candle_time 去重
     if event.candle_time:
         exists = db.query(TradeEvent).filter(
             TradeEvent.strategy == event.strategy,
@@ -206,7 +157,7 @@ def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
         if exists:
             return exists
 
-    # 如果没有 candle_time，退化为用 time 做 5 分钟窗口去重
+    # 退化为用 time 做 5 分钟窗口去重
     else:
         time_threshold = datetime.now() - timedelta(minutes=5)
         exists = db.query(TradeEvent).filter(
@@ -215,11 +166,9 @@ def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
             TradeEvent.event_type == event.event_type,
             TradeEvent.time >= time_threshold
         ).first()
-
         if exists:
             return exists
 
-    # 插入逻辑（无论是否有 candle_time，都要走到这里）
     obj = TradeEvent(
         bot_id=event.bot_id,
         strategy=event.strategy,
@@ -233,20 +182,18 @@ def create_event(event: TradeEventCreate, db: Session = Depends(get_db)):
         candle_time=event.candle_time,
         message=event.message
     )
-
     db.add(obj)
     db.commit()
     db.refresh(obj)
-
     return obj
 
 
 @router.get("/events", response_model=list[TradeEventOut])
 def get_events(
-    bot_id: int | None = None,
-    strategy: str | None = None,
-    pair: str = None,
-    db: Session = Depends(get_db),
+        bot_id: int | None = None,
+        strategy: str | None = None,
+        pair: str = None,
+        db: Session = Depends(get_db),
 ):
     pairs = [pair, pair.replace(":USDT", ""), pair.replace("/", "")]
     q = db.query(TradeEvent).filter(TradeEvent.pair.in_(pairs))
@@ -257,48 +204,44 @@ def get_events(
     return q.order_by(TradeEvent.time).all()
 
 
-# ============================================================
-# ★ 网格智能区间建议
-# ============================================================
 @router.get("/grid/suggest")
 def suggest_grid_range(
-    pair: str,
-    days: int = 30,
-    timeframe: str = "1d"
+        pair: str,
+        days: int = 30,
+        timeframe: str = "1d"
 ):
-    """
-    根据近 N 天的最高/最低价，给出网格上下限建议。
-    - 安全垫：向外扩展 3%
-    - 兜底：如果当前价不在区间内，强制把当前价包进去（再扩 5%）
-    - 默认网格数量：20
-    """
+    # ★ 核心优化 3：为智能建议添加 10 分钟缓存，防止用户狂点按钮
+    cache_key = f"{pair}_{days}_{timeframe}"
+    now = time.time()
+
+    if cache_key in suggest_cache:
+        cache_time, cached_data = suggest_cache[cache_key]
+        if now - cache_time < 600:
+            return cached_data
+
     try:
-        # 1. 拉取 K 线
         limit = max(int(days), 10)
         ohlcv = exchange.fetch_ohlcv(pair, timeframe=timeframe, limit=limit)
         if not ohlcv or len(ohlcv) < 2:
             return {"error": "no data"}
 
-        highs  = [c[2] for c in ohlcv]
-        lows   = [c[3] for c in ohlcv]
+        highs = [c[2] for c in ohlcv]
+        lows = [c[3] for c in ohlcv]
         closes = [c[4] for c in ohlcv]
 
         high = max(highs)
-        low  = min(lows)
+        low = min(lows)
         current = closes[-1]
 
-        # 2. 安全垫 ±3%
-        lower_price = low  * 0.97
+        lower_price = low * 0.97
         upper_price = high * 1.03
 
-        # 3. 兜底：确保当前价在区间内
         if current >= upper_price:
             upper_price = current * 1.05
         if current <= lower_price:
             lower_price = current * 0.95
 
-        # 4. 价格保留 4 位小数（兼容小币种）
-        return {
+        result = {
             "lower_price": round(lower_price, 4),
             "upper_price": round(upper_price, 4),
             "raw_high": round(high, 4),
@@ -307,6 +250,10 @@ def suggest_grid_range(
             "suggest_grid_count": 20,
             "days": days,
         }
+
+        # 写入缓存
+        suggest_cache[cache_key] = (now, result)
+        return result
 
     except Exception as e:
         print(f"[grid/suggest] error: {e}")

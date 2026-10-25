@@ -2,6 +2,9 @@ import { defineStore } from "pinia"
 import axios from "axios"
 
 const API = "http://localhost:9000"
+let isRefreshingAccount = false
+let isRefreshingGeneral = false
+
 const _q = (botId) => {
   const parts = []
   if (botId != null) parts.push(`bot_id=${botId}`)
@@ -31,6 +34,9 @@ export const useTradeStore = defineStore("trade", {
   actions: {
     // 账户总览：summary / floating / balanceCurve
     async refreshAccount(botId = null) {
+      if (isRefreshingAccount) return
+      isRefreshingAccount = true
+
       this.accountBotId = botId
       const q = _q(botId)
       try {
@@ -44,6 +50,9 @@ export const useTradeStore = defineStore("trade", {
         this.balanceCurve = curve.data
       } catch (e) {
         console.error("refreshAccount error", e.response?.data || e)
+      } finally {
+        // ★ 无论成功失败，释放锁
+        isRefreshingAccount = false
       }
     },
 
@@ -61,6 +70,8 @@ export const useTradeStore = defineStore("trade", {
 
     // 其它页面用的（持仓等，保持全局）
     async refresh(botId = null) {
+      if (isRefreshingGeneral) return
+      isRefreshingGeneral = true
       const q = _q(botId)
       try {
         const [profit, positions, summary, floating] = await Promise.all([
@@ -75,6 +86,9 @@ export const useTradeStore = defineStore("trade", {
         this.floating = floating.data
       } catch (e) {
         console.error("refresh error", e.response?.data || e)
+      } finally {
+        // ★ 无论成功失败，释放锁
+        isRefreshingGeneral = false
       }
     },
 

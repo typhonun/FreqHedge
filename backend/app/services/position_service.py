@@ -11,6 +11,7 @@ from app.core import runtime
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from app.services.bot_manager import BotManager
+import threading  # ★ 新增：用于并发锁
 
 from app.services.bot_runtime import (
     get_bot_url,
@@ -21,10 +22,9 @@ from app.services.bot_runtime import (
 )
 
 # =========================================================
-# 缓存
+# 缓存与锁
 # =========================================================
 
-# 单 bot 的 snapshot 缓存： key = f"{bot_id}:{cache_seconds_group}"
 _snapshot_cache = {}  # {bot_id: {"time": ts, "data": snapshot}}
 _snapshot_all_cache = {"time": 0, "data": None}
 
@@ -33,6 +33,10 @@ _custom_data_cache = {}  # {(bot_id, side): {"time": ts, "data": {}}}
 
 CUSTOM_DATA_CACHE_SECONDS = 3
 SNAPSHOT_CACHE_SECONDS = 5
+
+# ★ 新增：线程锁与正在执行的字典（防止并发击穿）
+_snapshot_locks = {}  # {bot_id: threading.Lock()}
+_snapshot_all_lock = threading.Lock()
 
 
 def _empty_snapshot():
@@ -61,7 +65,7 @@ class PositionService:
     @staticmethod
     def _extract_trades(data):
         if isinstance(data, list):
-            return [dict(t) for t in data]  # ★ 每个 dict 浅拷贝
+            return [dict(t) for t in data]
         if isinstance(data, dict):
             trades = data.get("trades")
             if isinstance(trades, list):
@@ -70,12 +74,7 @@ class PositionService:
 
     @staticmethod
     def _fetch_one(bot_id: int, side: str, kind: str):
-        """
-        kind ∈ {"balance", "status", "trades"}
-        带 last_good 兜底
-        """
         key = (bot_id, side, kind)
-
         try:
             url = get_bot_url(bot_id, side)
             if not FreqtradeClient.is_freqtrade_alive(url):
@@ -100,7 +99,6 @@ class PositionService:
 
     @staticmethod
     def _build_snapshot_single(bot_id: int) -> dict:
-
         bot = BotManager.get(bot_id)
         if not bot:
             return _empty_snapshot()
@@ -122,65 +120,82 @@ class PositionService:
         return snap
 
     # =========================================================
-    # 对外：snapshot
+    # 对外：snapshot（带防击穿锁优化）
     # =========================================================
 
     @staticmethod
     def get_snapshot(bot_id: int | None = None, cache_seconds: int = SNAPSHOT_CACHE_SECONDS):
-        """
-        bot_id = None → 聚合所有 running bot
-        bot_id = N   → 只拉这个 bot
-        """
         now = time.time()
 
+        # 强制最低 1 秒微缓存，防止高频轮询
+        cache_seconds = max(cache_seconds, 1)
+
         if bot_id is not None:
+            # 1. 快速路径：检查缓存
             cached = _snapshot_cache.get(bot_id)
             if cached and now - cached["time"] < cache_seconds:
                 return cached["data"]
 
-            snap = PositionService._build_snapshot_single(bot_id)
-            _snapshot_cache[bot_id] = {"time": now, "data": snap}
-            return snap
+            # 2. 慢速路径：加锁获取
+            if bot_id not in _snapshot_locks:
+                _snapshot_locks[bot_id] = threading.Lock()
+
+            with _snapshot_locks[bot_id]:
+                # 双重检查（Double-Check）：等锁的期间可能别人已经拉取完了
+                cached = _snapshot_cache.get(bot_id)
+                now = time.time()
+                if cached and now - cached["time"] < cache_seconds:
+                    return cached["data"]
+
+                # 真正去请求 Freqtrade
+                snap = PositionService._build_snapshot_single(bot_id)
+                _snapshot_cache[bot_id] = {"time": now, "data": snap}
+                return snap
 
         # 聚合模式
-        if (
-                _snapshot_all_cache["data"]
-                and now - _snapshot_all_cache["time"] < cache_seconds
-        ):
-            return _snapshot_all_cache["data"]
+        cached_all = _snapshot_all_cache["data"]
+        if cached_all and now - _snapshot_all_cache["time"] < cache_seconds:
+            return cached_all
 
-        agg = _empty_snapshot()
-        bots = list_running_bots()
-        for bot in bots:
-            snap = PositionService.get_snapshot(bot_id=bot["id"], cache_seconds=cache_seconds)
+        with _snapshot_all_lock:
+            # 双重检查
+            cached_all = _snapshot_all_cache["data"]
+            now = time.time()
+            if cached_all and now - _snapshot_all_cache["time"] < cache_seconds:
+                return cached_all
 
-            for side in ("long", "short"):
-                status_list = PositionService._extract_trades(snap.get(f"{side}_status"))
-                trades_list = PositionService._extract_trades(snap.get(f"{side}_trades"))
+            agg = _empty_snapshot()
+            bots = list_running_bots()
+            for bot in bots:
+                # 递归调用自身（这里用的是带锁保护的 _get_snapshot，复用单 bot 缓存）
+                snap = PositionService.get_snapshot(bot_id=bot["id"], cache_seconds=cache_seconds)
 
-                for t in status_list:
-                    t.setdefault("bot_id", bot["id"])
-                for t in trades_list:
-                    t.setdefault("bot_id", bot["id"])
+                for side in ("long", "short"):
+                    status_list = PositionService._extract_trades(snap.get(f"{side}_status"))
+                    trades_list = PositionService._extract_trades(snap.get(f"{side}_trades"))
 
-                agg[f"{side}_balance"] = PositionService._merge_balance(
-                    agg[f"{side}_balance"],
-                    snap.get(f"{side}_balance") or {},
-                )
-                agg[f"{side}_status"].extend(status_list)
-                agg[f"{side}_trades"].extend(trades_list)
+                    for t in status_list:
+                        t.setdefault("bot_id", bot["id"])
+                    for t in trades_list:
+                        t.setdefault("bot_id", bot["id"])
 
-        _snapshot_all_cache["time"] = now
-        _snapshot_all_cache["data"] = agg
-        return agg
+                    agg[f"{side}_balance"] = PositionService._merge_balance(
+                        agg[f"{side}_balance"],
+                        snap.get(f"{side}_balance") or {},
+                    )
+                    agg[f"{side}_status"].extend(status_list)
+                    agg[f"{side}_trades"].extend(trades_list)
+
+            _snapshot_all_cache["time"] = now
+            _snapshot_all_cache["data"] = agg
+            return agg
 
     @staticmethod
     def _merge_balance(acc: dict, incoming: dict) -> dict:
-        """把两个 balance dict 的 currencies 累加"""
         if not incoming:
             return acc
         if not acc:
-            return json.loads(json.dumps(incoming))  # deep copy
+            return json.loads(json.dumps(incoming))
 
         acc_cur = {c["currency"]: c for c in acc.get("currencies", [])}
         for c in incoming.get("currencies", []):

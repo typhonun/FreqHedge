@@ -210,10 +210,18 @@ const changePair = async (data) => {
 // =========================================================
 // 自动刷新最后一根 K 线
 // =========================================================
+let lastCandleData = null // 记录上一次的数据用于去重
 
 const startAutoRefresh = () => {
     if (refreshTimer) clearInterval(refreshTimer)
-    refreshTimer = setInterval(updateLastCandle, REFRESH_INTERVAL)
+
+    // ★ 动态计算刷新频率
+    let interval = 15000; // 默认 15 秒
+    if (timeframe.value === '1m') interval = 3000;
+    else if (timeframe.value === '5m') interval = 5000;
+    else if (timeframe.value === '15m') interval = 10000;
+
+    refreshTimer = setInterval(updateLastCandle, interval)
 }
 
 const updateLastCandle = async () => {
@@ -222,13 +230,30 @@ const updateLastCandle = async () => {
         const res = await axios.get(`${API}/chart/latest`, {
             params: { pair: pair.value, timeframe: timeframe.value }
         })
-        candleSeries.update({
+
+        // ★ 核心优化 1：如果后端返回空（无缓存），直接忽略本次刷新，防止报错
+        if (!res.data || !res.data.time) return;
+
+        const newCandle = {
             time: Number(Math.floor(res.data.time / 1000)),
             open: Number(res.data.open),
             high: Number(res.data.high),
             low: Number(res.data.low),
             close: Number(res.data.close)
-        })
+        }
+
+        // ★ 核心优化 2：前端数据去重。如果价格没变，不触发重绘
+        if (lastCandleData &&
+            lastCandleData.time === newCandle.time &&
+            lastCandleData.close === newCandle.close &&
+            lastCandleData.high === newCandle.high &&
+            lastCandleData.low === newCandle.low) {
+            return;
+        }
+
+        lastCandleData = newCandle;
+        candleSeries.update(newCandle)
+
     } catch (e) {
         console.error("update candle error", e)
     }
@@ -257,6 +282,8 @@ const loadChart = async () => {
     }))
 
     candleSeries.setData(data)
+    // ★ 重置去重记录
+    lastCandleData = data[data.length - 1] || null;
 
     // 加载交易事件
     const eventRes = await axios.get(`${API}/chart/events`, {
@@ -278,35 +305,36 @@ const loadChart = async () => {
 
 function parseEventTime(time) {
     if (!time) return null
-    const date = new Date(time)
+    // API timestamps are UTC. Explicitly mark naive values as UTC instead of
+    // letting the browser interpret them in the user's local timezone.
+    const normalized = typeof time === "string" &&
+        !/[zZ]|[+-]\d{2}:?\d{2}$/.test(time)
+        ? `${time}Z`
+        : time
+    const date = new Date(normalized)
     const t = Math.floor(date.getTime() / 1000)
     return Number.isFinite(t) ? t : null
 }
 
-// 辅助函数：从排好序的 K 线中，二分查找/或直接遍历找最近的 K 线时间戳
-function findNearestCandleTime(targetTime, candleData) {
+// Return the candle containing the event, never the nearest candle.
+function findCandleTime(targetTime, candleData) {
     if (!candleData.length) return null;
-    let left = 0;
-    let right = candleData.length - 1;
+    const first = candleData[0].time
+    const last = candleData[candleData.length - 1].time
+    if (targetTime < first) return null
+    if (targetTime >= last) return last
 
-    // 如果超出了范围，直接返回首尾
-    if (targetTime <= candleData[left].time) return candleData[left].time;
-    if (targetTime >= candleData[right].time) return candleData[right].time;
-
-    // 二分查找
+    let left = 0
+    let right = candleData.length - 1
     while (left <= right) {
-        const mid = Math.floor((left + right) / 2);
-        if (candleData[mid].time === targetTime) return targetTime;
-        if (candleData[mid].time < targetTime) {
-            left = mid + 1;
+        const mid = Math.floor((left + right) / 2)
+        if (candleData[mid].time <= targetTime) {
+            left = mid + 1
         } else {
-            right = mid - 1;
+            right = mid - 1
         }
     }
-    // 比较 left 和 right 哪个离 target 更近
-    const timeLeft = candleData[right].time;
-    const timeRight = candleData[left].time;
-    return (targetTime - timeLeft) < (timeRight - targetTime) ? timeLeft : timeRight;
+    return right >= 0 ? candleData[right].time : null
 }
 
 function buildMarkers(rawEvents, candleData) {
@@ -333,12 +361,20 @@ function buildMarkers(rawEvents, candleData) {
 
     filteredEvents.forEach(e => {
         // 1. 获取事件时间
-        let markerTime = parseEventTime(e.candle_time) ?? parseEventTime(e.time)
+        const isFillEvent = [
+            'grid_entry', 'grid_add', 'grid_sell', 'grid_reduce',
+            'manual_entry', 'dca', 'trend_add', 'kdj_reduce'
+        ].includes(e.event_type)
+        // Fill callbacks carry the actual execution time in `time`. The
+        // candle_time field is retained for legacy events only.
+        let markerTime = isFillEvent
+            ? (parseEventTime(e.time) ?? parseEventTime(e.candle_time))
+            : (parseEventTime(e.candle_time) ?? parseEventTime(e.time))
         if (markerTime === null) return
 
-        // 2. 找到最接近的 K 线时间
-        const nearestCandleTime = findNearestCandleTime(markerTime, candleData)
-        if (!nearestCandleTime) return
+        // 2. Assign the event to the candle that contains the fill time.
+        const candleTime = findCandleTime(markerTime, candleData)
+        if (candleTime === null) return
 
         // 3. 过滤中间信号
         // 我们只关心真实的成交（entry/add/sell），不画触发信号
@@ -349,7 +385,7 @@ function buildMarkers(rawEvents, candleData) {
         if (!isGridEvent) {
             const config = buildMarkerConfig(e)
             if (config) {
-                normalMarkers.push({ ...config, time: Number(nearestCandleTime) })
+                normalMarkers.push({ ...config, time: Number(candleTime) })
             }
             return
         }
@@ -360,12 +396,12 @@ function buildMarkers(rawEvents, candleData) {
 
         // 5. 聚合 Key 改为：K线时间 + 类型
         // 同一根 K 线内，无论是首仓还是加仓，各自独立聚合
-        const bucketKey = `${nearestCandleTime}_${aggType}`
+        const bucketKey = `${candleTime}_${aggType}`
 
         if (!gridBuckets[bucketKey]) {
             gridBuckets[bucketKey] = {
                 event_type: aggType, // 保留原始类型
-                time: Number(nearestCandleTime),
+                time: Number(candleTime),
                 prices: [],
                 amount: 0,
                 message: e.message,
@@ -473,7 +509,7 @@ function buildMarkerConfig(e) {
                 // 如果首仓要突出，可以根据 e.message 里的关键字判断，但由于上面聚合了，建议统一用蓝色，带上 xN 后缀即可
                 color: "#2196f3",
                 shape: "arrowUp",
-                text: `网格加仓${countSuffix} ${priceStr}`,
+                text: `网格加仓 ${priceStr}`,
                 title: `均价:${priceStr}\n总量:${e.amount}`,
                 size: 2
             }

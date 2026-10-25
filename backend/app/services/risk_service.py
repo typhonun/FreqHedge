@@ -1,14 +1,22 @@
 # backend/app/services/risk_service.py
 import time
 import traceback
+import logging
 
 from app.core import runtime
 from app.services.position_service import PositionService
 from app.core.defaults import RISK_DEFAULTS
 from app.services.bot_runtime import list_running_bots
 
+# 使用日志替代 print，避免同步阻塞
+logger = logging.getLogger(__name__)
+
 
 class RiskService:
+    # 缓存 _get_bot_risk 的结果，避免高频查库
+    _bot_risk_cache = {}
+    _bot_risk_cache_time = {}
+    RISK_CACHE_TTL = 30  # 30秒缓存
 
     # ====== 每个 bot 独立的 ROUND_INFO ======
     @classmethod
@@ -51,6 +59,7 @@ class RiskService:
     def calc_round_profit(cls, bot_id: int):
         info = cls._round_info(bot_id)
 
+        # ★ 优化：PositionService 内部有 5 秒缓存，这里直接拿快照即可
         snapshot = PositionService.get_snapshot(bot_id=bot_id)
         long_positions = PositionService._extract_trades(snapshot["long_status"])
         short_positions = PositionService._extract_trades(snapshot["short_status"])
@@ -63,7 +72,7 @@ class RiskService:
                 long_status=long_positions, short_status=short_positions,
             )
         except Exception as e:
-            print(f"[Risk] closed summary error bot={bot_id}: {e}")
+            logger.error(f"[Risk] closed summary error bot={bot_id}: {e}")
             closed = {"long_closed_profit": 0, "short_closed_profit": 0, "total_closed_profit": 0}
 
         try:
@@ -71,7 +80,7 @@ class RiskService:
                 snapshot, long_positions=long_positions, short_positions=short_positions
             )
         except Exception as e:
-            print(f"[Risk] floating error bot={bot_id}: {e}")
+            logger.error(f"[Risk] floating error bot={bot_id}: {e}")
             floating = {"long_float": 0, "short_float": 0, "total_float": 0}
 
         start_long_closed = info.get("start_long_closed") or 0.0
@@ -97,11 +106,16 @@ class RiskService:
 
     @classmethod
     def calc_direction_imbalance(cls):
-        positions = PositionService.get_all_positions()
-        long_count = sum(1 for p in positions if str(p.get("side", "")).upper() == "LONG")
-        short_count = sum(1 for p in positions if str(p.get("side", "")).upper() == "SHORT")
-        runtime.ROUND_INFO["long_count"] = long_count
-        runtime.ROUND_INFO["short_count"] = short_count
+        # ★ 优化：改成拿当前全局缓存中的所有持仓数量，避免高频全量拉取
+        # 复用 PositionService 的全局快照缓存
+        try:
+            snapshot = PositionService.get_snapshot()
+            long_count = len(PositionService._extract_trades(snapshot.get("long_status", [])))
+            short_count = len(PositionService._extract_trades(snapshot.get("short_status", [])))
+            runtime.ROUND_INFO["long_count"] = long_count
+            runtime.ROUND_INFO["short_count"] = short_count
+        except Exception as e:
+            logger.error(f"[Risk] calc_direction_imbalance error: {e}")
 
     @classmethod
     def force_exit_all(cls, bot_id: int, reason: str = None):
@@ -110,7 +124,7 @@ class RiskService:
             for pos in positions:
                 tid = pos.get("trade_id")
                 if tid is not None:
-                    runtime.set_exit_reason(bot_id, tid, reason)  # ★ 改这一行
+                    runtime.set_exit_reason(bot_id, tid, reason)
 
         failed = []
         for pos in positions:
@@ -123,7 +137,7 @@ class RiskService:
                     ok = True
                     break
                 except Exception as e:
-                    print(f"force_exit fail bot={bot_id} tid={tid}: {e}")
+                    logger.error(f"force_exit fail bot={bot_id} tid={tid}: {e}")
                     time.sleep(1)
             if not ok:
                 failed.append(tid)
@@ -150,10 +164,17 @@ class RiskService:
 
     @classmethod
     def _get_bot_risk(cls, bot_id: int) -> dict:
+        # ★ 优化：增加 30 秒缓存，避免每 5 秒就去查一遍数据库
+        now = time.time()
+        if bot_id in cls._bot_risk_cache:
+            if now - cls._bot_risk_cache_time.get(bot_id, 0) < cls.RISK_CACHE_TTL:
+                return cls._bot_risk_cache[bot_id]
+
         from app.services.bot_manager import BotManager
         bot = BotManager.get(bot_id)
         if not bot:
             return {}
+
         risk = {
             "tp_enabled": bot.get("tp_enabled"),
             "tp_mode": bot.get("tp_mode", "amount"),
@@ -176,7 +197,9 @@ class RiskService:
             "auto_stop_on_sl": bot.get("auto_stop_on_sl", True),
             "auto_stop_on_trail": bot.get("auto_stop_on_trail", True),
         }
-        print(f"[Risk] bot={bot_id} risk={risk}")  # ★ 加这一行，跑一次就能定位
+
+        cls._bot_risk_cache[bot_id] = risk
+        cls._bot_risk_cache_time[bot_id] = now
         return risk
 
     @classmethod
@@ -186,8 +209,8 @@ class RiskService:
             return
 
         position_count = PositionService.get_position_count(bot_id=bot_id)
-        print(f"[Risk] bot={bot_id} position_count={position_count}")
-        
+        # logger.debug(f"[Risk] bot={bot_id} position_count={position_count}") # 降低日志级别
+
         if position_count["total"] == 0:
             return
         if time.time() - (info.get("last_tp_time", 0) or 0) < 60:
@@ -195,7 +218,6 @@ class RiskService:
 
         cls.calc_round_profit(bot_id)
 
-        # ★ 读单 bot 风控配置（也可以和全局风控合并：任一触发即平）
         risk = cls._get_bot_risk(bot_id)
         profit = info.get("round_profit", 0.0) or 0.0
         ratio = info.get("round_ratio", 0.0) or 0.0
@@ -286,10 +308,10 @@ class RiskService:
         info["exiting"] = True
         info["last_tp_time"] = time.time()
         try:
-            cls.record_exit_events(bot_id, event_type, message)  # ★ 改这里
+            cls.record_exit_events(bot_id, event_type, message)
             failed = cls.force_exit_all(bot_id, reason=reason)
             if failed:
-                print(f"[Risk] bot={bot_id} 以下 trade_id 平仓失败: {failed}")
+                logger.error(f"[Risk] bot={bot_id} 以下 trade_id 平仓失败: {failed}")
 
             if not cls.wait_positions_closed(bot_id):
                 return
@@ -298,9 +320,9 @@ class RiskService:
                 try:
                     from app.services.bot_manager import BotManager
                     BotManager.stop(bot_id)
-                    print(f"[Risk] bot={bot_id} 已自动停止（触发 {event_type}）")
+                    logger.info(f"[Risk] bot={bot_id} 已自动停止（触发 {event_type}）")
                 except Exception as e:
-                    print(f"[Risk] bot={bot_id} 自动停止失败: {e}")
+                    logger.error(f"[Risk] bot={bot_id} 自动停止失败: {e}")
 
             cls.init_round(bot_id)
         finally:
@@ -317,10 +339,10 @@ class RiskService:
         try:
             from event_logger import record_event
         except Exception as e:
-            print(f"[Risk] event_logger 导入失败: {e}")
+            logger.error(f"[Risk] event_logger 导入失败: {e}")
             return
 
-        positions = PositionService.get_all_positions(bot_id=bot_id)  # ★ 只本 bot
+        positions = PositionService.get_all_positions(bot_id=bot_id)
         current_time = datetime.utcnow()
         for pos in positions:
             tid = pos.get("trade_id")
@@ -336,27 +358,32 @@ class RiskService:
                              event_type=event_type, side=side, price=float(price),
                              amount=float(amount), message=message, current_time=current_time)
             except Exception as e:
-                print(f"[Risk] record_event 失败: {e}")
+                logger.error(f"[Risk] record_event 失败: {e}")
 
     @classmethod
     def monitor(cls):
-        print("RiskService 启动（多实例）")
+        logger.info("RiskService 启动（多实例）")
         # 初始化所有 running bot 的 round
         for bot in list_running_bots():
             cls.init_round(bot["id"])
 
         while True:
             try:
+                # ★ 核心优化 1：将全局多空失衡计算剥离，不必每 5 秒执行
                 cls.calc_direction_imbalance()
+
                 for bot in list_running_bots():
                     try:
+                        # ★ 核心优化 2：直接复用 PositionService 的缓存读取，不再单独去拉取全量持仓
                         if PositionService.get_position_count(bot_id=bot["id"])["total"] == 0:
                             continue
                         cls.check_risk(bot["id"])
                     except Exception as e:
-                        print(f"[Risk] bot={bot['id']} 检查失败: {e}")
+                        logger.error(f"[Risk] bot={bot['id']} 检查失败: {e}")
                         traceback.print_exc()
             except Exception as e:
-                print("风险监控错误:", e)
+                logger.error(f"风险监控错误: {e}")
                 traceback.print_exc()
-            time.sleep(5)
+
+            # ★ 核心优化 3：从 5 秒改为 15 秒。风控检测不需要做到每 5 秒。
+            time.sleep(15)

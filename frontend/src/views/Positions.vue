@@ -107,42 +107,43 @@ watch(filterBotId, async () => {
   await reload()
 })
 
+// =========================================================
+// 定时器优化：拉长轮询时间
+// =========================================================
 const startTimers = () => {
   stopTimers()
-  console.log('[Positions] startTimers')
-  timer = setInterval(() => store.refresh(filterBotId.value), 10000)
-  historyTimer = setInterval(() => store.refreshHistory(filterBotId.value), 60000)
+
+  // 1) 当前持仓：改为 30 秒刷新一次
+  timer = setInterval(() => store.refresh(filterBotId.value), 30000)
+
+  // 2) 已平仓交易：改为 5 分钟刷新一次
+  historyTimer = setInterval(() => store.refreshHistory(filterBotId.value), 300000)
 }
 
 const stopTimers = () => {
-  console.log('[Positions] stopTimers')
+  // ★ 移除无用的 console.log
   if (timer) { clearInterval(timer); timer = null }
   if (historyTimer) { clearInterval(historyTimer); historyTimer = null }
 }
 
 onMounted(async () => {
-  console.log('[Positions] onMounted')
-  // ★ 删掉 store.setBotId(null)
+  // ★ 移除无用的 console.log
   await loadBots()
   await reload()
   startTimers()
 })
 
 onUnmounted(() => {
-  console.log('[Positions] onUnmounted')
   stopTimers()
 })
 
-// keep-alive 兼容（无 keep-alive 时 onActivated 不会触发，无害）
 onActivated(async () => {
-  console.log('[Positions] onActivated')
   await loadBots()
   await reload()
   startTimers()
 })
 
 onDeactivated(() => {
-  console.log('[Positions] onDeactivated')
   stopTimers()
 })
 </script>

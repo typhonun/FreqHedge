@@ -96,18 +96,23 @@ const refreshAccount = () =>
 const refreshProfitCurve = () =>
   store.refreshProfitCurve(toBotId(profitSelected.value))
 
+// =========================================================
+// 定时器优化：降低轮询频率
+// =========================================================
 const startTimers = () => {
   stopTimers()
-  // 每 5 秒刷账户+收益曲线
+
+  // 1) 账户盈亏、收益曲线：改为 15 秒刷新一次
   timer = setInterval(async () => {
     await refreshAccount()
     await refreshProfitCurve()
-  }, 5000)
-  // 每 60 秒刷一次其它通用数据（持仓、已平仓）
+  }, 15000)
+
+  // 2) 持仓数量、平仓数量：这些数据不需要高频看，改为 5 分钟刷新一次
   historyTimer = setInterval(async () => {
     await store.refresh(null)
     await store.refreshHistory(null)
-  }, 60000)
+  }, 300000)
 }
 
 const stopTimers = () => {
