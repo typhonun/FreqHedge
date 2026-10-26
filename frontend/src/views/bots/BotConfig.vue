@@ -286,8 +286,8 @@
                       :model-value="currentStrategy.amount_mode"
                       @update:model-value="val => currentStrategy.amount_mode = val"
                     >
-                      <el-radio-button value="percent">百分比</el-radio-button>
                       <el-radio-button value="amount">固定金额</el-radio-button>
+                      <el-radio-button value="percent">百分比</el-radio-button>
                     </el-radio-group>
                   </div>
                 </div>

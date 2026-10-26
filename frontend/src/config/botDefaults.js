@@ -6,6 +6,7 @@ export const BOT_DEFAULTS = Object.freeze({
   maxOpenTrades: 3,
   tradingMode: 'futures',
   marginMode: 'cross',
+  amount_mode: 'amount',
 })
 
 export const RISK_DEFAULTS = Object.freeze({

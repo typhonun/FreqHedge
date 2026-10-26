@@ -256,7 +256,7 @@ const createDefaultStrategyConfig = (side = "long") => ({
     timeframe:"30m",
 
     // 全局金额模式
-    amount_mode: "percent",
+    amount_mode: "amount",
 
     entry:{
 
@@ -533,7 +533,7 @@ const normalizeAmountMode = (config) => {
     if (!config) return config
 
     if (!config.amount_mode) {
-        config.amount_mode = "percent"
+        config.amount_mode = "amount"
     }
 
     // trend_add.amount_amount
