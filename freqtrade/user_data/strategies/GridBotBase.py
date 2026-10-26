@@ -315,7 +315,7 @@ class GridBotBase(DcaTpBotBase):
                     self._set(trade, "grid_pending_reduce", [])
                     return -float(cleanup_stake), "grid_reduce_cleanup"
 
-                restart = self._cfg_bool(g, "restart_after_all_tp", False)
+                restart = bool(g.get("restart_after_all_tp", False))
                 if restart:
                     if self._get_bool(trade, "grid_stopped", False):
                         return None
@@ -378,7 +378,7 @@ class GridBotBase(DcaTpBotBase):
                     if idx in pending_reduce_set:
                         continue
 
-                    entry = float(v.get("entry", 0))
+                    entry = float(v.get("entry", 0.0))
                     if entry <= 0 or pd.isna(entry) or np.isinf(entry): continue
 
                     # ★ 基于开仓价计算止盈价
@@ -397,7 +397,7 @@ class GridBotBase(DcaTpBotBase):
                 total_pnl = 0.0
                 closed = []
                 for idx, entry, v in to_close:
-                    qty = float(v.get("qty", 0))
+                    qty = float(v.get("qty", 0.0))
                     margin = (entry * qty) / lev if lev > 0 else 0.0
                     pnl = (entry - close_price) * qty if self._is_short else (close_price - entry) * qty
 
@@ -433,11 +433,12 @@ class GridBotBase(DcaTpBotBase):
                     # 算出剩余数量在当前交易所环境下的估值
                     remaining_value = remaining_qty * exit_rate
 
-                    # 如果剩余价值 > 0 且 小于交易所的最小限制，则改为全部平仓
-                    if 0 < remaining_value < min_exit_stake:
+                    is_last_grid = (len(pending_reduce_set) == len(positions))
+
+                    # 如果剩余价值 > 0 且 (小于最小限制 或 这是最后一格)，强制全平
+                    if 0 < remaining_value and (remaining_value < min_exit_stake or is_last_grid):
                         logger.info(
-                            f"{GRID_TAG} 剩余仓位价值={remaining_value:.4f} 小于最小减仓金额="
-                            f"{min_exit_stake:.4f}，为防止卡单，强制改为全部平仓"
+                            f"{GRID_TAG} 触发兜底全平: 剩余价值={remaining_value:.4f} (最小限制={min_exit_stake:.4f}, 最后一格={is_last_grid})"
                         )
 
                         # 将剩余的所有网格索引全部加入待平仓集合
@@ -445,12 +446,10 @@ class GridBotBase(DcaTpBotBase):
                         self._pending_reduce[trade.id] = pending_reduce_set
                         self._set(trade, "grid_pending_reduce", sorted(pending_reduce_set))
 
-                        # 获取全部平仓所需的保证金/本金
-                        # 遍历当前手里所有的网格，累加它们的保证金
                         full_close_stake = 0.0
                         for k, v in positions.items():
-                            entry = float(v.get("entry", 0))
-                            qty = float(v.get("qty", 0))
+                            entry = float(v.get("entry", 0.0))
+                            qty = float(v.get("qty", 0.0))
                             full_close_stake += (entry * qty) / lev if lev > 0 else 0.0
 
                         if full_close_stake <= 0 or not np.isfinite(full_close_stake):
@@ -459,13 +458,13 @@ class GridBotBase(DcaTpBotBase):
                         if full_close_stake <= 0 or not np.isfinite(full_close_stake):
                             logger.warning(f"{GRID_TAG} 全平本金计算异常，取消本次平仓")
                             return None
-                        
+
+                        # 返回全平金额，确保把那一丝零头也平掉
                         return -full_close_stake, f"grid_reduce_multi_{len(pending_reduce_set)}"
 
                 except Exception as e:
                     logger.warning(f"{GRID_TAG} 计算动态最小减仓限制时出错: {e}，将按原计划减仓")
 
-                # 如果剩余价值安全，就按照正常的部分网格减仓执行
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
             # ---- 2) 检查加仓（动态计算）----
@@ -695,7 +694,7 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_pending_reduce", [])
                 self._set(trade, "grid_pending_add", None)
                 self._set(trade, "grid_allow_restart", False)
-                logger.info(f"{GRID_TAG} ▼ 清理残余实际仓位成交 | 价格={entry_price:.4f}")
+                logger.info(f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 清理残余实际仓位成交 | 价格={entry_price:.4f}")
 
             # ---- E. 整体止损 ----
             elif reason.startswith("grid_stop"):
@@ -838,7 +837,7 @@ class GridBotBase(DcaTpBotBase):
                 parts = []
                 for k in sorted(positions.keys(), key=lambda x: int(x)):
                     v = positions[k]
-                    entry = float(v.get("entry", 0))
+                    entry = float(v.get("entry", 0.0))
                     tp_price = self._grid_tp_price(entry)
                     tp_pct = (tp_price - entry) / entry * 100 if entry > 0 else 0
                     parts.append(f"建仓={entry:.4f}(止盈={tp_price:.4f}, {tp_pct:+.2f}%)")

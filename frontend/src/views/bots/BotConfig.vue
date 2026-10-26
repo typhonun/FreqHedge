@@ -657,7 +657,29 @@
           />
 
           <div v-else class="backtest-result">
+            <!-- ★ 新增：回测时间范围展示 -->
+            <div class="bt-range-header" v-if="backtestResult.summary.backtest_start">
+              <el-icon><Calendar /></el-icon>
+              回测范围：{{ backtestResult.summary.backtest_start }} ~ {{ backtestResult.summary.backtest_end }}
+            </div>
+
             <div class="bt-summary">
+              <!-- ★ 新增：初始资金 -->
+              <div class="bt-metric">
+                <div class="bt-metric__label">初始资金 (USDT)</div>
+                <div class="bt-metric__value bt-metric__value--neutral">
+                  {{ backtestResult.summary.starting_balance?.toFixed(2) }}
+                </div>
+              </div>
+
+              <!-- ★ 新增：结束资金 -->
+              <div class="bt-metric">
+                <div class="bt-metric__label">结束资金 (USDT)</div>
+                <div class="bt-metric__value" :class="profitClass(backtestResult.summary.final_balance - backtestResult.summary.starting_balance)">
+                  {{ backtestResult.summary.final_balance?.toFixed(2) }}
+                </div>
+              </div>
+
               <div class="bt-metric">
                 <div class="bt-metric__label">
                   总收益 (%)
@@ -669,12 +691,27 @@
                   {{ backtestResult.summary.total_profit_pct?.toFixed(2) }}%
                 </div>
               </div>
+
               <div class="bt-metric">
                 <div class="bt-metric__label">绝对收益 (USDT)</div>
                 <div class="bt-metric__value" :class="profitClass(backtestResult.summary.absolute_profit)">
                   {{ backtestResult.summary.absolute_profit?.toFixed(2) }}
                 </div>
               </div>
+
+              <!-- 把年化移到这里，比较显眼 -->
+              <div class="bt-metric">
+                <div class="bt-metric__label">
+                  年化收益 CAGR (%)
+                  <el-tooltip placement="top" content="年化复合增长率">
+                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
+                  </el-tooltip>
+                </div>
+                <div class="bt-metric__value" :class="profitClass(backtestResult.summary.cagr)">
+                  {{ backtestResult.summary.cagr?.toFixed(2) }}%
+                </div>
+              </div>
+
               <div class="bt-metric">
                 <div class="bt-metric__label">交易次数</div>
                 <div class="bt-metric__value">{{ backtestResult.summary.total_trades }}</div>
@@ -711,17 +748,6 @@
                   </el-tooltip>
                 </div>
                 <div class="bt-metric__value">{{ backtestResult.summary.profit_factor?.toFixed(2) }}</div>
-              </div>
-              <div class="bt-metric">
-                <div class="bt-metric__label">
-                  CAGR (%)
-                  <el-tooltip placement="top" content="年化复合增长率">
-                    <el-icon class="bt-metric__info"><InfoFilled /></el-icon>
-                  </el-tooltip>
-                </div>
-                <div class="bt-metric__value" :class="profitClass(backtestResult.summary.cagr)">
-                  {{ backtestResult.summary.cagr?.toFixed(2) }}%
-                </div>
               </div>
               <div class="bt-metric">
                 <div class="bt-metric__label">
@@ -859,7 +885,7 @@
  * ══════════════════════════════════════════════════════════════════ */
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
-import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, DataAnalysis, Download, Loading, InfoFilled, Calendar } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 import { BOT_DEFAULTS, RISK_DEFAULTS, getDirectionalDefaults } from '@/config/botDefaults.js'
@@ -2828,6 +2854,38 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 16px;
   padding: 4px;
+}
+
+/* 加在 .backtest-result 下面 */
+.bt-range-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  background: var(--el-fill-color-light);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+
+/* 原先的网格是 3 列，现在增加了两个指标（11个），改为 4 列更紧凑好看 */
+.bt-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+/* 针对小屏幕响应式调整为 3 列或 2 列 */
+@media (max-width: 1400px) {
+  .bt-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 992px) {
+  .bt-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .bt-summary {

@@ -148,6 +148,14 @@ const loadBots = async () => {
         botId.value = botList.value[0].id
     }
 
+    const selectedBot = botList.value.find(b => b.id === (queryBotId || botList.value[0].id))
+
+    if (selectedBot) {
+        // 直接判断 type
+        const isGrid = String(selectedBot.strategyType || '').toLowerCase().includes('grid')
+        timeframe.value = isGrid ? '1m' : '30m'
+    }
+
     await loadPairs()
 }
 
