@@ -205,8 +205,9 @@
                   <div class="field-label">持仓</div>
                   <div class="field-value">
                     <div class="inline-group inline-group--inputs">
-                      <!-- ★ 关键修改点：给内联字段加 relative，把提示文字改为绝对定位，避免挤压 InputNumber -->
-                      <div class="inline-field" style="position: relative; padding-bottom: 8px;">
+
+                      <!-- ★ 修改点 1：去掉 position: relative 和 padding-bottom，让内容自动撑开 -->
+                      <div class="inline-field">
                         <span class="inline-field__label">杠杆</span>
                         <el-input-number
                           v-model="botBaseInfo.leverage"
@@ -223,12 +224,14 @@
                         >
                           现货固定 1x
                         </span>
-                        <span v-if="isLocked" class="absolute-hint text-warning">
+                        <!-- ★ 修改点 2：去掉 absolute-hint 类，使用 inline-field__hint 统一风格 -->
+                        <span v-if="isLocked" class="inline-field__hint text-warning" style="margin-top: 4px;">
                           持仓中，不可修改杠杆
                         </span>
                       </div>
 
-                      <div class="inline-field" style="position: relative; padding-bottom: 8px;">
+                      <!-- ★ 同样去掉 position: relative 和 padding-bottom -->
+                      <div class="inline-field">
                         <span class="inline-field__label">最大持仓数</span>
                         <el-input-number
                           v-model="botBaseInfo.maxOpenTrades"
@@ -238,23 +241,14 @@
                           style="width: 100%"
                         />
                       </div>
+
                     </div>
                   </div>
                 </div>
 
                 <!-- ★ 新增：订单类型展示 -->
-                <div class="field-row">
-                  <div class="field-label">
-                    <span>
-                      订单类型
-                      <el-tooltip placement="top" effect="dark">
-                        <template #content>
-                          网格策略依赖即时成交，强制使用市价单；其它策略默认使用限价单
-                        </template>
-                        <el-icon class="section-label__info"><InfoFilled /></el-icon>
-                      </el-tooltip>
-                    </span>
-                  </div>
+                <div class="field-row" style="border-top: 1px dashed var(--el-border-color-lighter); padding-top: 12px;">
+                  <div class="field-label">订单类型</div>
                   <div class="field-value">
                     <el-radio-group :model-value="strategyType === 'grid' ? 'market' : 'limit'" disabled>
                       <el-radio-button value="limit">限价单 (Limit)</el-radio-button>
@@ -2532,6 +2526,7 @@ onUnmounted(() => {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   width: 100%;
+  align-items: start;
 }
 
 .inline-group--triple {
@@ -2585,18 +2580,6 @@ onUnmounted(() => {
   color: var(--el-text-color-secondary);
   line-height: 1.4;
   margin-top: 4px;
-}
-
-/* ★ 新增：绝对定位的提示信息，用于解决锁定提示导致的布局抖动 */
-.absolute-hint {
-  position: absolute;
-  bottom: -18px;
-  left: 0;
-  font-size: 12px;
-  line-height: 1.3;
-  color: var(--el-color-warning);
-  white-space: nowrap;
-  z-index: 2;
 }
 
 /* ══════════════════════════════════════════════════════════════════
