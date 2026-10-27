@@ -123,7 +123,7 @@ class DcaTpBotBase(IStrategy):
         """
         pairs = self.dp.current_whitelist()
         htf_tf = self._get_htf_timeframe()
-        logger.info(f"[HTF] informative_pairs → {len(pairs)} pairs × {htf_tf}")
+        # logger.info(f"[HTF] informative_pairs → {len(pairs)} pairs × {htf_tf}")
         return [(pair, htf_tf) for pair in pairs]
 
     def _calc_htf_ema(self, dataframe: DataFrame) -> DataFrame:

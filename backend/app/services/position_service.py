@@ -834,36 +834,55 @@ class PositionService:
     # =========================================================
 
     @staticmethod
+    def _has_balance_data(snapshot):
+        """Only persist a curve point after the exchange returned account data."""
+        for side in ("long", "short"):
+            balance = snapshot.get(f"{side}_balance")
+            if isinstance(balance, dict) and balance.get("currencies"):
+                return True
+        return False
+
+    @staticmethod
     def record_metrics():
         db = SessionLocal()
         try:
             now = int(time.time())
+            running_bots = list_running_bots()
+
+            # During restart the bots may not be ready yet. Do not append a
+            # synthetic zero point and make the persisted curve appear reset.
+            if not running_bots:
+                return
 
             # 1) 全局
             snapshot = PositionService.get_snapshot(cache_seconds=0)
-            summary = PositionService.get_account_summary(snapshot)
-            floating = PositionService.get_floating_profit(snapshot)
-            profit = PositionService.get_total_profit_summary(snapshot)
+            if PositionService._has_balance_data(snapshot):
+                summary = PositionService.get_account_summary(snapshot)
+                floating = PositionService.get_floating_profit(snapshot)
+                profit = PositionService.get_total_profit_summary(snapshot)
 
-            equity = summary["total_balance"] + floating["total_float"]
-            db.add(EquityHistory(
-                bot_id=None, timestamp=now,
-                equity=round(equity, 2),
-                wallet=round(summary["total_balance"], 2),
-                profit=round(floating["total_float"], 2),
-            ))
-            db.add(ProfitHistory(
-                bot_id=None, timestamp=now,
-                total_profit=round(profit["total_profit"], 2),
-                long_profit=round(profit["long_total_profit"], 2),
-                short_profit=round(profit["short_total_profit"], 2),
-            ))
+                equity = summary["total_balance"] + floating["total_float"]
+                db.add(EquityHistory(
+                    bot_id=None, timestamp=now,
+                    equity=round(equity, 2),
+                    wallet=round(summary["total_balance"], 2),
+                    profit=round(floating["total_float"], 2),
+                ))
+                db.add(ProfitHistory(
+                    bot_id=None, timestamp=now,
+                    total_profit=round(profit["total_profit"], 2),
+                    long_profit=round(profit["long_total_profit"], 2),
+                    short_profit=round(profit["short_total_profit"], 2),
+                ))
 
             # 2) 每个 running bot
-            for bot in list_running_bots():
+            for bot in running_bots:
                 bid = bot["id"]
 
                 snap = PositionService.get_snapshot(bot_id=bid, cache_seconds=0)
+                if not PositionService._has_balance_data(snap):
+                    continue
+
                 s = PositionService.get_account_summary(snap)
                 f = PositionService.get_floating_profit(snap)
                 p = PositionService.get_total_profit_summary(snap)

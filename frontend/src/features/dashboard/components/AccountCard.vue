@@ -93,7 +93,11 @@ const props = defineProps({
   modelValue: { type: [String, Number], default: '__total__' }
 })
 
-const emit = defineEmits(['update:modelValue', 'change'])
+const emit = defineEmits(['update:modelValue', 'change', 'periodChange'])
+
+const handlePeriodChange = (newPeriod) => {
+  emit('periodChange', newPeriod) // 父组件监听这个事件去请求新的曲线数据
+}
 
 const selected = ref(props.modelValue)
 

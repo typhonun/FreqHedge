@@ -372,6 +372,18 @@ class GridBotBase(DcaTpBotBase):
                 except (TypeError, ValueError):
                     pending_reduce_set = set()
 
+            # Freqtrade can reject a partial exit before creating an order when
+            # exchange precision leaves a remainder below the minimum stake.
+            # There is then no cancellation callback to clear this in-memory/
+            # persisted marker, so recover it on the next adjustment cycle.
+            if pending_reduce_set:
+                logger.warning(
+                    f"{GRID_TAG} 清理无订单的遗留减仓状态 | pending={sorted(pending_reduce_set)}"
+                )
+                pending_reduce_set.clear()
+                self._pending_reduce.pop(trade.id, None)
+                self._set(trade, "grid_pending_reduce", [])
+
             for k, v in positions.items():
                 try:
                     idx = int(k)
@@ -435,8 +447,9 @@ class GridBotBase(DcaTpBotBase):
 
                     is_last_grid = (len(pending_reduce_set) == len(positions))
 
-                    # 如果剩余价值 > 0 且 (小于最小限制 或 这是最后一格)，强制全平
-                    if 0 < remaining_value and (remaining_value < min_exit_stake or is_last_grid):
+                    # 最后一格必须按交易当前仓位全平；即使网格数量计算为
+                    # 0，也可能因交易所数量精度舍入留下低于最小限制的残仓。
+                    if is_last_grid or (0 < remaining_value and remaining_value < min_exit_stake):
                         logger.info(
                             f"{GRID_TAG} 触发兜底全平: 剩余价值={remaining_value:.4f} (最小限制={min_exit_stake:.4f}, 最后一格={is_last_grid})"
                         )
@@ -446,11 +459,10 @@ class GridBotBase(DcaTpBotBase):
                         self._pending_reduce[trade.id] = pending_reduce_set
                         self._set(trade, "grid_pending_reduce", sorted(pending_reduce_set))
 
-                        full_close_stake = 0.0
-                        for k, v in positions.items():
-                            entry = float(v.get("entry", 0.0))
-                            qty = float(v.get("qty", 0.0))
-                            full_close_stake += (entry * qty) / lev if lev > 0 else 0.0
+                        # Use the trade's current stake, not the grid metadata.
+                        # The latter can differ after fees and precision
+                        # rounding, which may leave an unexitable dust amount.
+                        full_close_stake = float(getattr(trade, "stake_amount", 0) or 0.0)
 
                         if full_close_stake <= 0 or not np.isfinite(full_close_stake):
                             full_close_stake = total_margin

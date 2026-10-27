@@ -1,4 +1,5 @@
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from app.services.position_service import PositionService
 
@@ -29,15 +30,15 @@ def start_scheduler():
 
         record_history_job,
 
-        trigger="cron",
-
-        minute="*",
+        trigger=IntervalTrigger(seconds=5),
 
         id="record_history",
 
         replace_existing=True,
 
-        max_instances=1
+        max_instances=1,
+
+        coalesce=True
 
     )
 

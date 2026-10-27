@@ -9,6 +9,7 @@
           :balanceCurve="store.balanceCurve"
           :botList="botList"
           @change="onAccountChange"
+          @periodChange="onPeriodChange"
         />
       </el-col>
       <el-col :span="8">
@@ -71,6 +72,9 @@ const store = useTradeStore()
 const accountSelected = ref('__total__')
 const profitSelected = ref('__total__')
 
+// 新增：记录当前曲线选择的周期
+const currentPeriod = ref('1D')
+
 const botList = ref([])
 
 const toBotId = (v) => (v === '__total__' ? null : v)
@@ -90,8 +94,36 @@ const goPositions = () => router.push({ name: 'Positions' })
 let timer = null
 let historyTimer = null
 
+// 1. 单独封装请求曲线的函数（直接调用 API）
+const fetchBalanceCurve = async (botId, period) => {
+  try {
+    let url = `${API}/position/balance_curve?period=${period}`
+    if (botId) {
+      url += `&bot_id=${botId}`
+    }
+    const { data } = await axios.get(url)
+    // 将数据存入 store
+    store.balanceCurve = data
+  } catch (e) {
+    console.error('获取曲线失败', e)
+  }
+}
+
+// 2. 周期切换事件（由 AccountCard -> BalanceCurve 触发）
+const onPeriodChange = async (newPeriod) => {
+  currentPeriod.value = newPeriod
+  await fetchBalanceCurve(toBotId(accountSelected.value), newPeriod)
+}
+
+// 3. 刷新账户数据（保留你原有的 refreshAccount）
 const refreshAccount = () =>
   store.refreshAccount(toBotId(accountSelected.value))
+
+// 4. 完整刷新账户（包括拉取曲线）
+const refreshAccountAll = async () => {
+  await refreshAccount()
+  await fetchBalanceCurve(toBotId(accountSelected.value), currentPeriod.value)
+}
 
 const refreshProfitCurve = () =>
   store.refreshProfitCurve(toBotId(profitSelected.value))
@@ -102,9 +134,9 @@ const refreshProfitCurve = () =>
 const startTimers = () => {
   stopTimers()
 
-  // 1) 账户盈亏、收益曲线：改为 15 秒刷新一次
+  // 1) 账户盈亏、收益曲线、权益曲线：改为 15 秒刷新一次
   timer = setInterval(async () => {
-    await refreshAccount()
+    await refreshAccountAll() // 包含曲线刷新
     await refreshProfitCurve()
   }, 15000)
 
@@ -131,7 +163,8 @@ const loadBotList = async () => {
 
 // 两个下拉框各自的 change 回调
 const onAccountChange = async () => {
-  await refreshAccount()
+  // 切换机器人时，重新拉取数据（使用当前选中的周期）
+  await refreshAccountAll()
 }
 
 const onProfitChange = async () => {
@@ -140,7 +173,7 @@ const onProfitChange = async () => {
 
 onMounted(async () => {
   await loadBotList()
-  await refreshAccount()
+  await refreshAccountAll() // 初始化时加载账户和曲线
   await refreshProfitCurve()
   await store.refresh(null)
   await store.refreshHistory(null)
@@ -152,7 +185,7 @@ onDeactivated(stopTimers)
 
 onActivated(async () => {
   await loadBotList()
-  await refreshAccount()
+  await refreshAccountAll() // 重新激活时加载账户和曲线
   await refreshProfitCurve()
   await store.refresh(null)
   await store.refreshHistory(null)
