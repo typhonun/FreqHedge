@@ -505,6 +505,10 @@ class GridBotBase(DcaTpBotBase):
                     return None
 
             max_grids = self._cfg_int(g, "max_open_grids", self._cfg_int(g, "grid_count", 20))
+            grid_count = self._cfg_int(g, "grid_count", 20)
+            # 强制不超过网格总数（防止历史/外部配置越界）
+            if grid_count > 0:
+                max_grids = max(1, min(max_grids, grid_count))
             if len(positions) >= max_grids:
                 return None
 

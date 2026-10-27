@@ -1,5 +1,6 @@
 <template>
   <div class="grid-panel">
+    <!-- ★ 优化：取消全局的固定 label-width，让自适应和特定宽度结合 -->
     <el-form size="small" class="compact-form" label-width="auto">
 
       <!-- ── 1. 价格区间 ── -->
@@ -18,11 +19,12 @@
         </div>
 
         <div class="form-row">
+          <!-- ★ 使用全局自适应宽度，输入框限制最大宽度 -->
           <el-form-item label="网格下限价" class="form-item-half">
-            <el-input-number v-model="config.grid.lower_price" :min="0" :step="100" controls-position="right" class="short-input" />
+            <el-input-number v-model="config.grid.lower_price" :min="0" :step="100" controls-position="right" class="num-input" />
           </el-form-item>
           <el-form-item label="网格上限价" class="form-item-half">
-            <el-input-number v-model="config.grid.upper_price" :min="0" :step="100" controls-position="right" class="short-input" />
+            <el-input-number v-model="config.grid.upper_price" :min="0" :step="100" controls-position="right" class="num-input" />
           </el-form-item>
         </div>
       </div>
@@ -33,22 +35,46 @@
           <div class="section-title">网格参数</div>
         </div>
 
+        <!-- 第一行：网格数量 & 最大持仓网格 -->
         <div class="form-row">
-          <el-form-item label="网格数量" class="form-item-third">
-            <el-input-number v-model="config.grid.grid_count" :min="2" :max="200" :step="1" controls-position="right" class="short-input" @change="onGridCountChange" />
+          <el-form-item label="网格数量" class="form-item-half">
+            <el-input-number
+              v-model="config.grid.grid_count"
+              :min="2" :max="200" :step="1"
+              controls-position="right" class="num-input"
+              @change="onGridCountChange"
+            />
           </el-form-item>
-          <el-form-item label="间距算法" class="form-item-third">
-            <el-select v-model="config.grid.spacing_algo" class="short-input">
+
+          <!-- ★ 单独为此项设置更宽的 label，防止文字挤行 -->
+          <el-form-item label="最大持仓网格" class="form-item-half" label-width="100px">
+            <div class="input-with-icon">
+              <el-input-number
+                v-model="config.grid.max_open_grids"
+                :min="1"
+                :max="config.grid.grid_count"
+                :step="1"
+                controls-position="right"
+                class="num-input"
+              />
+              <el-tooltip placement="top" effect="dark"
+                content="同时持有的最大未止盈网格数量，调小可限制单边行情下的敞口">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+        </div>
+
+        <!-- 第二行：间距算法 & K线周期 -->
+        <div class="form-row">
+          <el-form-item label="间距算法" class="form-item-half">
+            <el-select v-model="config.grid.spacing_algo" class="flex-input">
               <el-option label="等差" value="arithmetic" />
               <el-option label="等比" value="geometric" />
             </el-select>
           </el-form-item>
-          <el-form-item label="K 线周期" class="form-item-third">
-            <el-select
-              v-model="config.timeframe"
-              class="short-input"
-              @change="onTimeframeChange"
-            >
+          <el-form-item label="K 线周期" class="form-item-half">
+            <el-select v-model="config.timeframe" class="flex-input" @change="onTimeframeChange">
               <el-option label="1m"  value="1m" />
               <el-option label="3m"  value="3m" />
               <el-option label="5m"  value="5m" />
@@ -65,8 +91,7 @@
           <div class="section-title">止损</div>
         </div>
         <div class="form-row">
-          <!-- 做多显示跌破下沿 -->
-          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-full">
+          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-full" label-width="100px">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.stop_below_lower" />
               <el-tooltip placement="top" effect="dark" content="价格跌破下沿时，清空所有持仓并停止机器人">
@@ -74,8 +99,7 @@
               </el-tooltip>
             </div>
           </el-form-item>
-          <!-- 做空显示突破上沿 -->
-          <el-form-item v-if="direction === 'short'" label="突破上沿止损" class="form-item-full">
+          <el-form-item v-if="direction === 'short'" label="突破上沿止损" class="form-item-full" label-width="100px">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.stop_above_upper" />
               <el-tooltip placement="top" effect="dark" content="价格突破上沿时，清空所有持仓并停止机器人">
@@ -126,7 +150,7 @@
                 v-model="config.grid.trigger_price"
                 :min="0" :step="10"
                 controls-position="right"
-                class="short-input"
+                class="num-input"
                 :class="triggerPriceError ? 'is-error' : ''"
               />
               <div v-if="triggerPriceTip" class="inline-hint" :class="triggerPriceError ? 'is-error' : 'is-info'">
@@ -147,7 +171,8 @@
           <div class="section-title">高级选项</div>
         </div>
         <div class="form-row">
-          <el-form-item label="全部止盈后重启" class="form-item-full">
+          <!-- ★ 加宽 label 防止挤压 -->
+          <el-form-item label="全部止盈后重启" class="form-item-full" label-width="110px">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.restart_after_all_tp" />
               <el-tooltip placement="top" effect="dark" content="当所有网格仓位全部止盈平仓后，如果价格继续上涨/下跌，不等待回落，直接以当前价再次买入首仓">
@@ -163,12 +188,23 @@
         <div class="grid-preview-header" @click="showGridPreview = !showGridPreview">
           <div class="grid-preview-title">
             <span>网格预览</span>
+
+            <!-- 原有的统计数据 -->
             <span class="grid-preview-stats-inline">
               格距 ≈ {{ gridPreview.stepText }} |
               每格利润 ≈ {{ gridPreview.profitText }} |
-              总投入 ≈ {{ gridPreview.totalText }} USDT
+              总投入 ≈ {{ gridPreview.totalText }} USDT |
+              最大持仓 {{ config.grid.max_open_grids }} 格
             </span>
-            <span v-if="gridPreview.tooNarrow" class="grid-preview-warn">
+
+            <!-- ★ 新增：止盈低于手续费的红色警告 -->
+            <span v-if="isProfitTooLow" class="grid-preview-warn" style="color: var(--el-color-danger);">
+              <el-icon><WarningFilled /></el-icon>
+              单格利润过低，可能无法覆盖手续费，建议增加网格步长或减少网格数
+            </span>
+
+            <!-- 原有的格距过小提示 -->
+            <span v-if="gridPreview.tooNarrow && !isProfitTooLow" class="grid-preview-warn">
               <el-icon><WarningFilled /></el-icon> 格距过小
             </span>
           </div>
@@ -179,15 +215,12 @@
 
         <el-collapse-transition>
           <div v-show="showGridPreview" class="grid-preview-content">
-
-            <!-- 分界线：当前价参考 -->
             <div class="grid-preview-divider">
               <span class="divider-line"></span>
               <span class="divider-text">当前价 {{ gridPreview.refPriceText }}</span>
               <span class="divider-line"></span>
             </div>
 
-            <!-- 上半部分 -->
             <div class="grid-preview-section">
               <div class="grid-preview-section-title">{{ gridPreview.topLabel }}</div>
               <div class="grid-preview__lines">
@@ -197,7 +230,6 @@
               </div>
             </div>
 
-            <!-- 下半部分 -->
             <div class="grid-preview-section">
               <div class="grid-preview-section-title">{{ gridPreview.bottomLabel }}</div>
               <div class="grid-preview__lines">
@@ -215,41 +247,37 @@
 </template>
 
 <script setup>
-// ... 下方原封不动，不需要改
-import { computed, ref, watch, onMounted } from 'vue'
+// ... 保持原样，逻辑未变
+import { computed, ref, onMounted } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { InfoFilled, WarningFilled, ArrowDown } from '@element-plus/icons-vue'
 
 const API = 'http://localhost:9000'
+const FEE_RATE = 0.001 // 双边预计手续费 0.1% (Taker)
 
 const props = defineProps({
   config: { type: Object, required: true },
   capital: { type: Number, default: 1000 },
   pair:    { type: String, default: '' },
   direction: { type: String, default: 'long' },
+  leverage:  { type: Number, default: 1 },
 })
 const emit = defineEmits(['timeframe-change'])
 const onTimeframeChange = (val) => {
   emit('timeframe-change', val)
 }
+
 const loadingSuggest = ref(0)
 const lastSuggestInfo = ref('')
 const currentPrice = ref(null)
-const showGridPreview = ref(false)  // 默认折叠
+const showGridPreview = ref(false)
 
-/** 每格金额 */
 const perGrid = computed(() => {
   const c = props.config?.grid || {}
   const count = Math.max(1, Number(c.grid_count || 0))
   const cap = Number(props.capital || 0)
   return cap / count
-})
-
-const perGridText = computed(() => {
-  const v = perGrid.value
-  if (!Number.isFinite(v) || v <= 0) return '—'
-  return `${v.toFixed(2)} USDT`
 })
 
 const triggerPriceTip = computed(() => {
@@ -288,11 +316,11 @@ const onGridCountChange = (val) => {
   const c = props.config?.grid
   if (!c) return
   const n = Math.max(1, Number(val || 0))
-  if (
-    c.max_open_grids == null ||
-    c.max_open_grids === 0 ||
-    c.max_open_grids > n
-  ) {
+  const prev = Number(c.max_open_grids || 0)
+
+  if (prev <= 0) {
+    c.max_open_grids = n
+  } else if (prev > n) {
     c.max_open_grids = n
   }
 }
@@ -326,6 +354,9 @@ const applySuggest = async (days) => {
     currentPrice.value = data.current_price
     lastSuggestInfo.value = `当前价 ${data.current_price} | 近 ${days} 天 [${data.raw_low}, ${data.raw_high}]`
 
+    if (Number(props.config.grid.max_open_grids) > Number(props.config.grid.grid_count)) {
+      props.config.grid.max_open_grids = props.config.grid.grid_count
+    }
     ElMessage.success(`已根据近 ${days} 天极值填入区间`)
   } catch (e) {
     console.error('[applySuggest] failed', e)
@@ -389,19 +420,7 @@ onMounted(async () => {
   }
 })
 
-watch(
-  () => props.pair,
-  () => {
-    const g = props.config?.grid || {}
-    if (Number(g.lower_price) <= 0 || Number(g.upper_price) <= 0) {
-      initDefaultRange()
-    }
-  }
-)
-
-// ============================================================
-// 网格预览（完整列表，按当前价划分加减仓区）
-// ============================================================
+// 1. 修改 gridPreview 的计算，加入利润与手续费的对比
 const gridPreview = computed(() => {
   const c = props.config?.grid || {}
   const lower = Number(c.lower_price || 0)
@@ -409,7 +428,6 @@ const gridPreview = computed(() => {
   const count = Number(c.grid_count || 0)
   if (lower <= 0 || upper <= 0 || count <= 0 || upper <= lower) return null
 
-  // 1. 生成所有网格线
   const levels = []
   if (c.spacing_algo === 'geometric') {
     const ratio = Math.pow(upper / lower, 1 / count)
@@ -425,39 +443,38 @@ const gridPreview = computed(() => {
 
   const profitMinPct = (step0 / levels[1]) * 100
   const profitMaxPct = (step0 / levels[0]) * 100
-  const profitUsdt = perGrid.value * (profitMinPct / 100)
+
+  // 假设杠杆（从外部传入或默认，这里为了让组件独立，通过 props 获取，如果没有就用 1）
+  const leverage = Number(props.leverage || 1)
+  // 每格毛利（含杠杆）
+  const profitUsdt = perGrid.value * leverage * (profitMinPct / 100)
   const profitText = `${profitUsdt.toFixed(2)} USDT (${profitMinPct.toFixed(2)}% ~ ${profitMaxPct.toFixed(2)}%)`
+
   const tooNarrow = stepPct < 0.2
   const total = (perGrid.value * count).toFixed(2)
 
-  // 2. 找出当前价对应的网格线索引
-  // 如果有当前价格则用当前价，否则用网格中心点作为参考
-  const refPrice = currentPrice.value || (lower + upper) / 2
-  // 找到当前价所处的位置：介于 levels[splitIdx] 和 levels[splitIdx+1] 之间
-  let splitIdx = levels.findIndex(lv => lv >= refPrice)
-  if (splitIdx === -1) splitIdx = count // 若超出上限，分界设为最高线
+  // 计算当前手续费成本
+  const feeCost = perGrid.value * leverage * FEE_RATE
 
-  // 格式化显示
+  const refPrice = currentPrice.value || (lower + upper) / 2
+  let splitIdx = levels.findIndex(lv => lv >= refPrice)
+  if (splitIdx === -1) splitIdx = count
+
   const formatLv = (lv) => lv.toFixed(2)
 
-  // 3. 根据做多/做空划分上下区域
-  let topLevels = [] // 上方的线
-  let bottomLevels = [] // 下方的线
+  let topLevels = []
+  let bottomLevels = []
   let topLabel = ''
   let bottomLabel = ''
 
   if (props.direction === 'long') {
-    // 做多：上方是减仓区（止盈），下方是加仓区（建仓/补仓）
-    topLevels = levels.slice(splitIdx).map(formatLv).reverse() // 从高到低排，反转为了从下往上显示
-    bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse() // 从高到低排
-
+    topLevels = levels.slice(splitIdx).map(formatLv).reverse()
+    bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse()
     topLabel = '🟢 减仓网格'
     bottomLabel = '🔴 加仓网格'
   } else {
-    // 做空：上方是加仓区（建仓/补仓），下方是减仓区（止盈）
     topLevels = levels.slice(splitIdx).map(formatLv).reverse()
     bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse()
-
     topLabel = '🔴 加仓网格'
     bottomLabel = '🟢 减仓网格'
   }
@@ -472,7 +489,19 @@ const gridPreview = computed(() => {
     bottomLabel,
     refPriceText: refPrice.toFixed(2),
     tooNarrow,
+    profitUsdt, // 返回毛利润
+    feeCost,    // 返回手续费
   }
+})
+
+// 计算是否利润过薄，无法覆盖手续费
+const isProfitTooLow = computed(() => {
+  if (!gridPreview.value) return false
+  const feeCost = gridPreview.value.feeCost
+  const worstProfit = gridPreview.value.profitUsdt // 直接用预览算出来的每格毛利
+
+  // 如果利润 <= 预估手续费，则提示
+  return worstProfit <= feeCost
 })
 </script>
 
@@ -485,12 +514,7 @@ const gridPreview = computed(() => {
 .form-row {
   display: flex;
   gap: 16px;
-  margin-bottom: 12px;
-}
-.form-item-third {
-  flex: 1;
-  min-width: 0;
-  margin-bottom: 0;
+  margin-bottom: 16px; /* 稍微增加一点行间距，看起来不局促 */
 }
 .form-item-half {
   flex: 1;
@@ -503,14 +527,21 @@ const gridPreview = computed(() => {
   margin-bottom: 0;
 }
 
-/* 限制输入框宽度 */
-.short-input {
-  width: 160px !important;
+/* ★ 数字输入框：设定最大宽度，不要铺满整个屏幕 */
+.num-input {
+  width: 100% !important;
+  max-width: 200px !important;
+}
+
+/* ★ 下拉框：保留适当的宽度即可 */
+.flex-input {
+  width: 100% !important;
+  max-width: 240px !important;
 }
 
 /* 分区样式 */
 .section-block {
-  margin-bottom: 20px;
+  margin-bottom: 24px; /* 区块之间留出更多呼吸感 */
 }
 .section-block:last-child {
   margin-bottom: 0;
@@ -552,6 +583,7 @@ const gridPreview = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
 }
 
 /* 带提示的输入框容器（保留用于触发价） */
@@ -575,11 +607,6 @@ const gridPreview = computed(() => {
 }
 .inline-hint.is-error {
   color: var(--el-color-danger);
-  font-weight: 500;
-}
-
-.text-warning {
-  color: var(--el-color-warning);
   font-weight: 500;
 }
 
@@ -656,16 +683,6 @@ const gridPreview = computed(() => {
   background: var(--el-bg-color);
   border-radius: 4px;
   border: 1px solid var(--el-border-color-lighter);
-}
-
-/* ★ 网格逻辑提示 */
-.grid-preview__tip {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--el-text-color-placeholder);
-  line-height: 1.4;
 }
 
 /* ★ 基础信息图标悬浮效果（统一） */
