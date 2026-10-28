@@ -621,7 +621,7 @@ class GridBotBase(DcaTpBotBase):
                 self._record_chart_marker(
                     event_type="grid_entry", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
-                    current_time=current_time, message=f"网格首仓 价格{entry_price:.2f}",
+                    current_time=current_time, message=f"网格首仓 价格{entry_price:.4f}",
                     candle_time=current_time
                 )
                 logger.info(f"[STRATEGY] [ENTRY] {GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")

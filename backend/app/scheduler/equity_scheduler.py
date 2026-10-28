@@ -27,19 +27,14 @@ def start_scheduler():
     record_history_job()
 
     scheduler.add_job(
-
         record_history_job,
-
-        trigger=IntervalTrigger(seconds=5),
-
-        id="record_history",
-
-        replace_existing=True,
-
-        max_instances=1,
-
-        coalesce=True
-
+        trigger='interval',
+        seconds=5,
+        id='record_history_job',
+        max_instances=1,  # 确保同一时间只有一个任务
+        coalesce=True,  # ★ 如果因为卡顿错过多次，只补跑一次，不堆积
+        misfire_grace_time=15,  # ★ 允许最大延迟秒数（15秒内没跑的任务照样执行）
+        replace_existing=True
     )
 
     scheduler.start()

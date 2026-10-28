@@ -33,6 +33,7 @@ _custom_data_cache = {}  # {(bot_id, side): {"time": ts, "data": {}}}
 
 CUSTOM_DATA_CACHE_SECONDS = 3
 SNAPSHOT_CACHE_SECONDS = 5
+_offline_bots_cache = {}
 
 # ★ 新增：线程锁与正在执行的字典（防止并发击穿）
 _snapshot_locks = {}  # {bot_id: threading.Lock()}
@@ -75,10 +76,25 @@ class PositionService:
     @staticmethod
     def _fetch_one(bot_id: int, side: str, kind: str):
         key = (bot_id, side, kind)
+        now = time.time()
+
+        # ★ 修改点：判断过期逻辑更清晰
+        if bot_id in _offline_bots_cache:
+            # 如果超过 30 秒，清除缓存，允许重试
+            if now - _offline_bots_cache[bot_id] > 30:
+                _offline_bots_cache.pop(bot_id, None)
+            else:
+                # 未超过 30 秒，直接返回缓存
+                return _last_good_data.get(key, _default_for(kind))
+
         try:
             url = get_bot_url(bot_id, side)
             if not FreqtradeClient.is_freqtrade_alive(url):
+                _offline_bots_cache[bot_id] = now
                 raise Exception("bot offline")
+
+            # 如果检测成功，清除 offline 标记
+            _offline_bots_cache.pop(bot_id, None)
 
             if kind == "balance":
                 data = FreqtradeClient.get_balance(url)
@@ -855,7 +871,7 @@ class PositionService:
                 return
 
             # 1) 全局
-            snapshot = PositionService.get_snapshot(cache_seconds=0)
+            snapshot = PositionService.get_snapshot(cache_seconds=3)
             if PositionService._has_balance_data(snapshot):
                 summary = PositionService.get_account_summary(snapshot)
                 floating = PositionService.get_floating_profit(snapshot)
@@ -878,8 +894,8 @@ class PositionService:
             # 2) 每个 running bot
             for bot in running_bots:
                 bid = bot["id"]
-
-                snap = PositionService.get_snapshot(bot_id=bid, cache_seconds=0)
+                # ★ 同理，改为允许 3 秒缓存
+                snap = PositionService.get_snapshot(bot_id=bid, cache_seconds=3)
                 if not PositionService._has_balance_data(snap):
                     continue
 

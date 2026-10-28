@@ -172,7 +172,7 @@
         </div>
         <div class="form-row">
           <!-- ★ 加宽 label 防止挤压 -->
-          <el-form-item label="全部止盈后重启" class="form-item-full" label-width="110px">
+          <el-form-item label="网格平仓后入场" class="form-item-full" label-width="110px">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.restart_after_all_tp" />
               <el-tooltip placement="top" effect="dark" content="当所有网格仓位全部止盈平仓后，如果价格继续上涨/下跌，不等待回落，直接以当前价再次买入首仓">

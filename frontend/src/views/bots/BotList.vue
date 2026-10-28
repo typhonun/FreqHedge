@@ -7,11 +7,145 @@
           <el-radio-button value="running">运行中</el-radio-button>
           <el-radio-button value="stopped">已停止</el-radio-button>
         </el-radio-group>
-
-        <el-button type="primary" :icon="Plus" @click="goCreate">
-          新建机器人
-        </el-button>
+        <div>
+          <el-button type="warning" plain @click="openComboDialog">
+            联合止盈设置
+          </el-button>
+          <el-button type="primary" :icon="Plus" @click="goCreate">
+            新建机器人
+          </el-button>
+        </div>
       </div>
+
+      <!-- 联合止盈弹窗 -->
+      <el-dialog
+        v-model="showComboDialog"
+        title="多组联合止盈风控"
+        width="750px"
+        class="combo-dialog"
+        destroy-on-close
+      >
+        <div class="combo-container">
+          <!-- 顶部操作栏 -->
+          <div class="combo-header">
+            <span class="combo-tip">你可以创建多个组合，每个组合独立计算盈利并触发风控。</span>
+            <el-button type="primary" plain size="small" @click="addComboGroup">
+              + 新增组合
+            </el-button>
+          </div>
+
+          <!-- 空状态 -->
+          <el-empty
+            v-if="comboConfig.groups.length === 0"
+            description="暂无组合配置，点击上方新增"
+            :image-size="80"
+          />
+
+          <!-- 多组折叠面板 -->
+          <el-collapse v-else v-model="activeGroups" class="combo-collapse">
+            <el-collapse-item
+              v-for="(group, index) in comboConfig.groups"
+              :key="group.id"
+              :name="group.id"
+            >
+              <!-- 面板标题：组合名称 + 状态 + 实时收益展示 -->
+              <template #title>
+                <div class="group-title">
+                  <el-tag :type="group.enabled ? 'success' : 'info'" size="small" effect="dark">
+                    {{ group.enabled ? '已启用' : '已停用' }}
+                  </el-tag>
+                  <span class="group-name">{{ group.name || '未命名组合' }}</span>
+
+                  <!-- 实时状态摘要 -->
+                  <div class="group-summary" v-if="group.bot_ids.length">
+                    <span style="margin-right: 12px;">({{ group.bot_ids.length }} 个机器人)</span>
+                    <span>当前总利润：</span>
+                    <span :class="getGroupCurrentProfit(group) >= 0 ? 'profit' : 'loss'" style="font-weight: 600;">
+                      {{ getGroupCurrentProfit(group) >= 0 ? '+' : '' }}{{ getGroupCurrentProfit(group).toFixed(2) }} U
+                    </span>
+                    <span style="margin: 0 4px;">/ 目标 {{ group.target_profit }} U</span>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 面板内容：具体配置 -->
+              <div class="group-body">
+                <el-form label-width="110px" size="default">
+
+                  <div class="form-row-2">
+                    <el-form-item label="组合名称">
+                      <el-input v-model="group.name" placeholder="例如：BTC+ETH 网格组" />
+                    </el-form-item>
+                    <el-form-item label="启用此组">
+                      <el-switch v-model="group.enabled" />
+                    </el-form-item>
+                  </div>
+
+                  <el-form-item label="选择机器人">
+                    <el-select
+                      v-model="group.bot_ids"
+                      multiple
+                      placeholder="选择参与该组合的机器人"
+                      style="width: 100%"
+                    >
+                      <el-option
+                        v-for="bot in availableBotsForSelect"
+                        :key="bot.id"
+                        :label="`${bot.name} (${bot.status === 'running' ? '运行中' : '已停止'})`"
+                        :value="bot.id"
+                        :disabled="isBotUsedInOtherGroups(bot.id, group.id)"
+                      />
+                    </el-select>
+                    <div class="hint" style="margin-top: 4px; font-size: 12px; color: var(--el-text-color-secondary);">
+                      注：同一个机器人建议只参与一个组合，已被其他组合选中的机器人会置灰。
+                    </div>
+                  </el-form-item>
+
+                  <div class="form-row-2">
+                    <el-form-item label="目标总盈利 (USDT)">
+                      <el-input-number
+                        v-model="group.target_profit"
+                        :min="1"
+                        :step="10"
+                        style="width: 100%"
+                      />
+                    </el-form-item>
+                    <el-form-item label="触发后停止机器人">
+                      <el-switch v-model="group.auto_stop" />
+                    </el-form-item>
+                  </div>
+
+                  <!-- 底部详细实时收益提示 -->
+                  <div class="live-profit-box" v-if="group.bot_ids.length">
+                    <span>当前选中机器人累计总收益：</span>
+                    <span :class="getGroupCurrentProfit(group) >= 0 ? 'profit' : 'loss'">
+                      {{ getGroupCurrentProfit(group) >= 0 ? '+' : '' }}{{ getGroupCurrentProfit(group).toFixed(2) }} USDT
+                    </span>
+                    <span class="target-hint">
+                      (距离目标还差 {{ Math.max(0, group.target_profit - getGroupCurrentProfit(group)).toFixed(2) }} U)
+                    </span>
+                  </div>
+
+                  <!-- 删除按钮 -->
+                  <div class="group-actions">
+                    <el-button type="danger" plain size="small" @click="removeComboGroup(index)">
+                      删除此组合
+                    </el-button>
+                  </div>
+
+                </el-form>
+              </div>
+            </el-collapse-item>
+          </el-collapse>
+        </div>
+
+        <template #footer>
+          <el-button @click="showComboDialog = false">取消</el-button>
+          <el-button type="primary" @click="saveComboConfig" :loading="comboSaving">
+            保存全部配置
+          </el-button>
+        </template>
+      </el-dialog>
     </el-card>
 
     <!-- 机器人卡片列表 -->
@@ -35,7 +169,7 @@
             </el-tag>
           </div>
 
-          <!-- 更多菜单：@click.stop 放在 dropdown 外层包裹 -->
+          <!-- 更多菜单 -->
           <el-dropdown
             trigger="click"
             @command="(cmd) => handleCommand(cmd, bot)"
@@ -52,7 +186,7 @@
           </el-dropdown>
         </div>
 
-        <!-- 卡片主体信息（不变） -->
+        <!-- 卡片主体信息 -->
         <div class="bot-card__body" @click="goDetail(bot.id)">
           <div class="info-row">
             <span class="info-label">交易对</span>
@@ -149,7 +283,7 @@
       <el-button type="primary" @click="goCreate">新建机器人</el-button>
     </el-empty>
 
-    <!-- ★ 新增策略选择弹窗 -->
+    <!-- 策略选择弹窗 -->
     <StrategySelectDialog
       v-model="showStrategyDialog"
       @select="handleStrategySelect"
@@ -171,11 +305,12 @@ const API = 'http://localhost:9000'
 
 const router = useRouter()
 
+// ==========================================
+// 机器人列表相关逻辑
+// ==========================================
 const filterStatus = ref('all')
-// ★ 新增弹窗控制变量
 const showStrategyDialog = ref(false)
 
-// 只拿 BotList 需要的方法
 const { state, fetchBots, toggleBot, deleteBot, createDraft } = useBotStore()
 const bots = computed(() => state.bots)
 
@@ -186,15 +321,13 @@ const filteredBots = computed(() => {
   return bots.value.filter(b => b.status === filterStatus.value)
 })
 
-// ★ 修改：点击新建时，打开弹窗，不再直接跳转
 const goCreate = () => {
   showStrategyDialog.value = true
 }
 
-// ★ 新增：处理策略选择
 const handleStrategySelect = async (type) => {
   try {
-    const bot = await createDraft(type)      // ★ 传类型
+    const bot = await createDraft(type)
     router.push({
       name: 'BotDetail',
       params: { id: bot.id },
@@ -206,12 +339,10 @@ const handleStrategySelect = async (type) => {
   }
 }
 
-
 const goDetail = async (bot) => {
   const id = typeof bot === 'object' ? bot.id : bot
   let strategyType = typeof bot === 'object' ? bot.strategyType : null
 
-  // ★ 列表没带 strategyType 时，兜底查一次详情
   if (!strategyType) {
     try {
       const { data } = await axios.get(`${API}/bots/${id}`)
@@ -256,7 +387,7 @@ const handleDelete = async (bot) => {
   try {
     if (bot.status === 'running') {
       await toggleBot(bot.id, 'running')
-      await new Promise(r => setTimeout(r, 1500))   // ★
+      await new Promise(r => setTimeout(r, 1500))
     }
     await deleteBot(bot.id)
     ElMessage.success('已删除')
@@ -277,9 +408,8 @@ const handleCommand = async (cmd, bot) => {
   }
 }
 
-// ★ 复制：先建草稿，带上源 id
 const goCopy = async (bot) => {
-  const draft = await createDraft(bot.strategyType || 'dca')   // ★ 传类型
+  const draft = await createDraft(bot.strategyType || 'dca')
   router.push({
     name: 'BotDetail',
     params: { id: draft.id },
@@ -290,7 +420,132 @@ const goCopy = async (bot) => {
   })
 }
 
-// ============ ★ 定时刷新累计收益 ============
+// ==========================================
+// 联合止盈（多组）逻辑
+// ==========================================
+const showComboDialog = ref(false)
+const comboSaving = ref(false)
+const activeGroups = ref([]) // 控制哪些折叠面板展开
+
+// 配置结构：包含多组
+const comboConfig = ref({
+  groups: []
+})
+
+// 创建空组
+const createEmptyGroup = () => ({
+  id: Date.now().toString() + Math.random().toString(36).substring(2, 6),
+  name: '新组合',
+  enabled: false,
+  bot_ids: [],
+  target_profit: 100,
+  auto_stop: false
+})
+
+// 加载配置
+const loadComboConfig = async () => {
+  try {
+    const { data } = await axios.get(`${API}/combo`)
+    if (data && data.groups) {
+      comboConfig.value.groups = data.groups
+    } else {
+      comboConfig.value.groups = []
+    }
+  } catch (e) {
+    console.error('加载联合止盈配置失败', e)
+  }
+}
+
+// 打开弹窗（先拉取最新，再显示）
+const openComboDialog = async () => {
+  await loadComboConfig()
+  showComboDialog.value = true
+}
+
+// 保存配置
+const saveComboConfig = async () => {
+  // 校验
+  for (const g of comboConfig.value.groups) {
+    if (g.enabled && g.bot_ids.length === 0) {
+      ElMessage.warning(`组合「${g.name}」已启用，但未选择任何机器人`)
+      return
+    }
+  }
+
+  comboSaving.value = true
+  try {
+    // ★ 清洗数据：防止 null 或 undefined 导致后端 Pydantic 报错
+    const payload = {
+      groups: comboConfig.value.groups.map(g => ({
+        id: String(g.id),
+        name: g.name || '未命名组合',
+        bot_ids: g.bot_ids || [],
+        target_profit: Number(g.target_profit) || 100,
+        auto_stop: Boolean(g.auto_stop),
+        enabled: Boolean(g.enabled)
+      }))
+    }
+
+    await axios.post(`${API}/combo`, payload)
+    ElMessage.success('多组联合止盈配置已保存')
+    showComboDialog.value = false
+  } catch (e) {
+    console.error('保存错误详情:', e.response?.data || e)
+    // ★ 把后端的详细报错打印出来，方便排查
+    const detail = e.response?.data?.detail
+    let errMsg = '保存配置失败'
+    if (Array.isArray(detail) && detail.length > 0) {
+       errMsg = `参数校验失败: ${detail[0].loc.join('.')} - ${detail[0].msg}`
+    }
+    ElMessage.error(errMsg)
+  } finally {
+    comboSaving.value = false
+  }
+}
+
+// 计算属性：可选机器人列表
+const availableBotsForSelect = computed(() => {
+  return bots.value.filter(b => b.status !== 'draft')
+})
+
+// 检查某个机器人是否已被其他组选中（防止多组重复计算）
+const isBotUsedInOtherGroups = (botId, currentGroupId) => {
+  return comboConfig.value.groups.some(
+    g => g.id !== currentGroupId && g.bot_ids.includes(botId)
+  )
+}
+
+// 计算某个组当前的实时总利润
+const getGroupCurrentProfit = (group) => {
+  let total = 0
+  for (const id of group.bot_ids) {
+    const bot = bots.value.find(b => b.id === id)
+    if (bot && bot.total_profit) {
+      total += Number(bot.total_profit)
+    }
+  }
+  return total
+}
+
+// 新增组合
+const addComboGroup = () => {
+  const newGroup = createEmptyGroup()
+  comboConfig.value.groups.push(newGroup)
+  activeGroups.value.push(newGroup.id) // 默认展开新建的组
+}
+
+// 删除组合
+const removeComboGroup = (index) => {
+  ElMessageBox.confirm('确定要删除这个联合止盈组合吗？', '提示', { type: 'warning' })
+    .then(() => {
+      comboConfig.value.groups.splice(index, 1)
+    })
+    .catch(() => {})
+}
+
+// ==========================================
+// 定时刷新与生命周期
+// ==========================================
 let refreshTimer = null
 
 const startTimer = () => {
@@ -411,18 +666,12 @@ onUnmounted(stopTimer)
 }
 
 .bot-card__footer {
-  margin-top: 16px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border-color);
-}
-
-.bot-card__footer {
   display: flex;
   flex-direction: column;
   gap: 12px;
   margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid var(--border-color);
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 
 .created-at {
@@ -438,5 +687,119 @@ onUnmounted(stopTimer)
 .action-buttons .el-button {
   flex: 1;
   min-width: 72px;
+}
+
+/* ==========================================
+ * 联合止盈弹窗专属样式
+ * ========================================== */
+.combo-container {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.combo-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--el-fill-color-light);
+  padding: 12px 16px;
+  border-radius: 8px;
+}
+
+.combo-tip {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.combo-collapse {
+  border: none;
+}
+
+/* 修改折叠面板的默认样式使其更像卡片 */
+.combo-collapse :deep(.el-collapse-item__header) {
+  background: var(--el-bg-color);
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  padding: 0 16px;
+  height: 54px;
+  margin-bottom: 8px;
+}
+.combo-collapse :deep(.el-collapse-item__wrap) {
+  border: none;
+  background: transparent;
+}
+.combo-collapse :deep(.el-collapse-item__content) {
+  padding-bottom: 16px;
+}
+
+.group-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.group-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+}
+
+.group-summary {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-weight: normal;
+  margin-left: auto;
+  margin-right: 16px;
+}
+
+.group-body {
+  background: var(--el-fill-color-extra-light);
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+}
+
+.form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+/* 实时利润提示框 */
+.live-profit-box {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--el-color-primary-light-9);
+  border: 1px dashed var(--el-color-primary-light-5);
+  border-radius: 6px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.live-profit-box .profit {
+  color: var(--el-color-success);
+  font-weight: 700;
+  font-size: 16px;
+}
+.live-profit-box .loss {
+  color: var(--el-color-danger);
+  font-weight: 700;
+  font-size: 16px;
+}
+.live-profit-box .target-hint {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.group-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

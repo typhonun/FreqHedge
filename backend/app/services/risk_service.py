@@ -2,6 +2,8 @@
 import time
 import traceback
 import logging
+import json
+from pathlib import Path
 
 from app.core import runtime
 from app.services.position_service import PositionService
@@ -10,13 +12,14 @@ from app.services.bot_runtime import list_running_bots
 
 # 使用日志替代 print，避免同步阻塞
 logger = logging.getLogger(__name__)
-
+COMBO_CONFIG_PATH = Path("config/combo_profit.json")
 
 class RiskService:
     # 缓存 _get_bot_risk 的结果，避免高频查库
     _bot_risk_cache = {}
     _bot_risk_cache_time = {}
     RISK_CACHE_TTL = 30  # 30秒缓存
+    _combo_cooldown_time = 0
 
     # ====== 每个 bot 独立的 ROUND_INFO ======
     @classmethod
@@ -360,30 +363,93 @@ class RiskService:
             except Exception as e:
                 logger.error(f"[Risk] record_event 失败: {e}")
 
+
+    @classmethod
+    def check_combo_profit(cls):
+        if not COMBO_CONFIG_PATH.exists():
+            return
+
+        try:
+            cfg_data = json.loads(COMBO_CONFIG_PATH.read_text())
+        except Exception as e:
+            logger.error(f"[Combo] 读取配置文件失败: {e}")
+            return
+
+        groups = cfg_data.get("groups", [])
+        if not groups:
+            return
+
+        now = time.time()
+        # 冷却时间记录 (可以为每个组单独记录，这里简化为全局)
+        if now - cls._combo_cooldown_time < 60:
+            return
+
+        for group in groups:
+            if not group.get("enabled") or not group.get("bot_ids"):
+                continue
+
+            total_profit = 0.0
+            for bid in group.get("bot_ids"):
+                try:
+                    summary = PositionService.get_total_profit_summary(bot_id=bid)
+                    total_profit += summary.get("total_profit", 0.0)
+                except Exception as e:
+                    logger.warning(f"[Combo] 获取 bot={bid} 收益失败: {e}")
+
+            if total_profit >= group.get("target_profit", 100):
+                logger.info(f"[Combo] 🎯 触发组合【{group.get('name')}】联合止盈！当前利润={total_profit:.2f}")
+
+                for bid in group.get("bot_ids"):
+                    cls.force_exit_all(bid, reason=f"combo_{group.get('name')}")
+
+                for bid in group.get("bot_ids"):
+                    cls.wait_positions_closed(bid, timeout=10)
+
+                if group.get("auto_stop"):
+                    from app.services.bot_manager import BotManager
+                    for bid in group.get("bot_ids"):
+                        try:
+                            BotManager.stop(bid)
+                        except Exception:
+                            pass
+
+                # 触发后关闭这个组的开关
+                group["enabled"] = False
+                try:
+                    COMBO_CONFIG_PATH.write_text(json.dumps(cfg_data, indent=2))
+                except Exception as e:
+                    logger.error(f"[Combo] 更新配置失败: {e}")
+
+                cls._combo_cooldown_time = time.time()
+
     @classmethod
     def monitor(cls):
         logger.info("RiskService 启动（多实例）")
-        # 初始化所有 running bot 的 round
         for bot in list_running_bots():
             cls.init_round(bot["id"])
 
         while True:
             try:
-                # ★ 核心优化 1：将全局多空失衡计算剥离，不必每 5 秒执行
                 cls.calc_direction_imbalance()
 
+                # 1. 单机器人风控巡检
                 for bot in list_running_bots():
                     try:
-                        # ★ 核心优化 2：直接复用 PositionService 的缓存读取，不再单独去拉取全量持仓
                         if PositionService.get_position_count(bot_id=bot["id"])["total"] == 0:
                             continue
                         cls.check_risk(bot["id"])
                     except Exception as e:
                         logger.error(f"[Risk] bot={bot['id']} 检查失败: {e}")
                         traceback.print_exc()
+
+                # 2. ★ 新增：联合风控巡检
+                try:
+                    cls.check_combo_profit()
+                except Exception as e:
+                    logger.error(f"[Risk] 联合风控检查失败: {e}")
+
             except Exception as e:
                 logger.error(f"风险监控错误: {e}")
                 traceback.print_exc()
 
-            # ★ 核心优化 3：从 5 秒改为 15 秒。风控检测不需要做到每 5 秒。
             time.sleep(15)

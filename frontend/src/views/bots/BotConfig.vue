@@ -151,12 +151,6 @@
                             做空
                           </el-radio-button>
                         </el-radio-group>
-                        <span
-                          v-if="botBaseInfo.tradingMode === 'spot'"
-                          class="inline-field__hint"
-                        >
-                          现货不支持做空
-                        </span>
                         <!-- ★ 新增：被锁定时的提示 -->
                         <span v-if="isLocked" class="inline-field__hint text-warning">
                           持仓中，不可修改模式/方向
@@ -218,12 +212,6 @@
                           controls-position="right"
                           style="width: 100%"
                         />
-                        <span
-                          v-if="botBaseInfo.tradingMode === 'spot'"
-                          class="inline-field__hint"
-                        >
-                          现货固定 1x
-                        </span>
                         <!-- ★ 修改点 2：去掉 absolute-hint 类，使用 inline-field__hint 统一风格 -->
                         <span v-if="isLocked" class="inline-field__hint text-warning" style="margin-top: 4px;">
                           持仓中，不可修改杠杆
