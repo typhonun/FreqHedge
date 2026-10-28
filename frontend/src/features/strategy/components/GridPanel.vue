@@ -197,11 +197,6 @@
               最大持仓 {{ config.grid.max_open_grids }} 格
             </span>
 
-            <span v-if="minGridCapital > capital" class="grid-preview-warn" style="color: var(--el-color-danger);">
-              <el-icon><WarningFilled /></el-icon>
-              当前资金（{{ capital }}）低于建议最低资金（{{ minGridCapital.toFixed(2) }}），极易出现无法平仓的尾仓！
-            </span>
-
             <!-- ★ 新增：止盈低于手续费的红色警告 -->
             <span v-if="isProfitTooLow" class="grid-preview-warn" style="color: var(--el-color-danger);">
               <el-icon><WarningFilled /></el-icon>

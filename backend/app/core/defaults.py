@@ -3,7 +3,7 @@
 BOT_DEFAULTS = {
     "capital": 1000,
     "stakeAmount": 50,
-    "leverage": 5,
+    "leverage": 1,
     "maxOpenTrades": 3,
     "dryRun": True,
     "enableLong": True,

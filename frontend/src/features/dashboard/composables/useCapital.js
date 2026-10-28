@@ -57,7 +57,7 @@ export function useCapital() {
             stake_amount: longData.stake_amount,
             max_open_trades: longData.max_open_trades,
             max_usage: _apiToLocal(longData.max_usage),   // ★ 90 → 0.9
-            leverage: longData.leverage ?? 10,
+            leverage: longData.leverage ?? 1,
 
             imbalance_long_enable: longData.imbalance_long_enable ?? false,
             imbalance_long_count: longData.imbalance_long_count ?? 2,
@@ -68,7 +68,7 @@ export function useCapital() {
             stake_amount: shortData.stake_amount,
             max_open_trades: shortData.max_open_trades,
             max_usage: _apiToLocal(shortData.max_usage),  // ★ 90 → 0.9
-            leverage: shortData.leverage ?? 10,
+            leverage: shortData.leverage ?? 1,
 
             imbalance_short_enable: shortData.imbalance_short_enable ?? false,
             imbalance_short_count: shortData.imbalance_short_count ?? 2,

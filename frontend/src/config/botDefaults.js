@@ -2,7 +2,7 @@
 export const BOT_DEFAULTS = Object.freeze({
   capital: 1000,
   stakeAmount: 50,
-  leverage: 5,
+  leverage: 1,
   maxOpenTrades: 3,
   tradingMode: 'futures',
   marginMode: 'cross',

@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pydantic import model_validator
 
 from app.services.bot_manager import BotManager
-from app.services.position_service import PositionService   # ★ 新增
+from app.services.position_service import PositionService
 from app.services.config_service import ConfigService
 from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
 from app.core.strategy_registry import get_strategy
@@ -36,7 +36,6 @@ class BotBaseInfo(BaseModel):
             raise ValueError("不允许同时开启多头和空头")
         if not self.enableLong and not self.enableShort:
             raise ValueError("必须启用一个方向（多头或空头）")
-        # ★ 新增校验
         if self.tradingMode not in ("spot", "futures"):
             raise ValueError("tradingMode 必须是 spot 或 futures")
         if self.tradingMode == "futures" and self.marginMode not in ("cross", "isolated"):
@@ -85,12 +84,12 @@ def _attach_profit(bot: dict) -> dict:
     try:
         summary = PositionService.get_total_profit_summary(bot_id=bot_id)
         bot["total_profit"] = round(float(summary.get("total_profit", 0.0) or 0.0), 2)
-        bot["long_profit"]  = round(float(summary.get("long_total_profit", 0.0) or 0.0), 2)
+        bot["long_profit"] = round(float(summary.get("long_total_profit", 0.0) or 0.0), 2)
         bot["short_profit"] = round(float(summary.get("short_total_profit", 0.0) or 0.0), 2)
     except Exception as e:
         print(f"[bots] attach profit failed bot={bot_id}: {e}")
         bot["total_profit"] = 0.0
-        bot["long_profit"]  = 0.0
+        bot["long_profit"] = 0.0
         bot["short_profit"] = 0.0
     return bot
 
@@ -101,6 +100,40 @@ def _attach_profit_batch(bots: list[dict]) -> list[dict]:
         return bots
     with ThreadPoolExecutor(max_workers=8) as executor:
         return list(executor.map(_attach_profit, bots))
+
+
+# =========================================================
+# ★ 新增：网格资金校验工具函数
+# =========================================================
+def _validate_grid_capital(data: dict):
+    """校验网格策略的资金是否满足最低要求，防止无法平仓尾仓"""
+    base = data.get("base", {})
+    if base.get("strategyType") != "grid":
+        return  # 只有网格策略才校验
+
+    grid_config = data.get("gridConfig") or {}
+    grid = grid_config.get("grid", {})
+
+    capital = float(base.get("capital", 0))
+    leverage = float(base.get("leverage", 1))
+    count = int(grid.get("grid_count", 20))
+    # 读取配置中的最小名义价值，默认 10U
+    min_notional = float(grid.get("min_notional_value", 10))
+
+    if count <= 0:
+        raise HTTPException(400, "网格数量必须大于 0")
+
+    # 每格最低保证金 = 最小名义价值 / 杠杆
+    min_per_grid_capital = min_notional / leverage
+    # 最低总资金 = 每格最低保证金 * 网格数量
+    min_total_capital = min_per_grid_capital * count
+
+    if capital < min_total_capital:
+        raise HTTPException(
+            400,
+            f"资金不足：当前杠杆 {leverage}x 下，{count} 格网格最低需要 "
+            f"{min_total_capital:.2f} USDT，否则极易产生无法平仓的尾仓！"
+        )
 
 
 # =========================================================
@@ -154,6 +187,10 @@ async def get_bot(bot_id: int):
 @router.post("")
 async def create_bot(payload: BotPayload):
     data = payload.model_dump()
+
+    # ★ 调用网格资金校验
+    _validate_grid_capital(data)
+
     bot = BotManager.create(data)
     ConfigService.generate_configs(bot["id"], data)
     return _attach_profit(bot)
@@ -162,6 +199,10 @@ async def create_bot(payload: BotPayload):
 @router.put("/{bot_id}")
 async def update_bot(bot_id: int, payload: BotPayload):
     data = payload.model_dump()
+
+    # ★ 调用网格资金校验
+    _validate_grid_capital(data)
+
     bot = BotManager.update(bot_id, data)
     if not bot:
         raise HTTPException(404, "bot not found")
@@ -175,17 +216,14 @@ async def delete_bot(bot_id: int):
 
     bot = BotManager.get(bot_id)
     if not bot:
-        # 幂等：不存在也返回成功，避免前端重复点击报错
         return {"ok": True, "deleted": False, "reason": "not found"}
 
-    # 1. 若在运行，先停止并等待子进程退出
     if bot.get("status") == "running":
         try:
             BotManager.stop(bot_id)
         except Exception as e:
             print(f"[delete_bot] stop failed: {e}")
 
-        # 最多等 4s 让 freqtrade 释放 log 文件句柄
         for _ in range(20):
             try:
                 cur = BotManager.get(bot_id)
@@ -194,22 +232,18 @@ async def delete_bot(bot_id: int):
             except Exception:
                 break
             time.sleep(0.2)
-        time.sleep(0.3)   # Windows 文件句柄释放缓冲
+        time.sleep(0.3)
 
-    # 2. 删除数据库记录
     try:
         BotManager.delete(bot_id)
     except Exception as e:
         print(f"[delete_bot] delete db record failed: {e}")
         raise HTTPException(500, f"删除记录失败: {e}")
 
-    # 3. 删除目录（ConfigService.remove_bot_dir 内部已有重试）
     try:
         ConfigService.remove_bot_dir(bot_id)
     except Exception as e:
         print(f"[delete_bot] remove dir failed: {e}")
-        # 目录残留不算致命错误，日志警告即可
-        # 若希望严格失败，改成 raise HTTPException(500, ...)
 
     return {"ok": True, "deleted": True}
 
@@ -219,7 +253,6 @@ async def delete_draft_bot(bot_id: int):
     """只允许删除 status='draft' 的 bot；正式 bot 返回 400"""
     bot = BotManager.get(bot_id)
     if not bot:
-        # 幂等：不存在也返回成功，方便前端重复调用
         return {"success": True, "deleted": False, "reason": "not found"}
 
     if bot.get("status") != "draft":
