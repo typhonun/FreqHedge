@@ -60,7 +60,6 @@ const processedData = computed(() => {
 
   const rawData = [...props.data].sort((a, b) => a.time - b.time)
 
-  // 如果是 1D，保持原样，不做按天补全
   if (period.value === '1D') {
     return rawData.map(item => ({
       time: item.time,
@@ -71,10 +70,7 @@ const processedData = computed(() => {
     }))
   }
 
-  // 对于 7D, 30D, 90D，需要补全日期
   const daysMap = {}
-
-  // 1. 按天归类已有数据
   rawData.forEach(item => {
     const d = new Date(item.time * 1000)
     const dateStr = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
@@ -82,16 +78,13 @@ const processedData = computed(() => {
     daysMap[dateStr].push(item)
   })
 
-  // 2. 计算需要补全的日期范围
   const daysCount = { '7D': 7, '30D': 30, '90D': 90 }[period.value] || 7
   const result = []
   const now = new Date()
 
-  // 获取基准金额（如果有历史数据，用第一条的余额，否则用0）
   let lastKnownBalance = rawData.length > 0 ? Number(rawData[0].balance) : 0
   let lastKnownWallet = rawData.length > 0 ? Number(rawData[0].wallet) : 0
 
-  // 倒推生成日期序列
   for (let i = daysCount - 1; i >= 0; i--) {
     const d = new Date()
     d.setDate(now.getDate() - i)
@@ -99,7 +92,6 @@ const processedData = computed(() => {
     const displayTime = `${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`
 
     if (daysMap[dateStr]) {
-      // 这天有数据，取当天的最后一条
       const dayData = daysMap[dateStr][daysMap[dateStr].length - 1]
       lastKnownBalance = Number(dayData.balance)
       lastKnownWallet = Number(dayData.wallet || 0)
@@ -112,7 +104,6 @@ const processedData = computed(() => {
         wallet: lastKnownWallet
       })
     } else {
-      // 这天没有数据，用上一次已知的余额补齐，盈亏为0
       result.push({
         time: d.getTime() / 1000,
         displayTime,
@@ -127,53 +118,7 @@ const processedData = computed(() => {
 })
 
 // =========================================================
-// Y轴范围计算
-// =========================================================
-const _niceMin = (v) => {
-  if (!Number.isFinite(v)) return 0
-  const abs = Math.abs(v)
-  let step = abs >= 1000 ? 1 : abs >= 100 ? 0.1 : abs >= 10 ? 0.01 : abs >= 1 ? 0.001 : 0.0001
-  return Math.floor(v / step) * step
-}
-
-const _niceMax = (v) => {
-  if (!Number.isFinite(v)) return 100
-  const abs = Math.abs(v)
-  let step = abs >= 1000 ? 1 : abs >= 100 ? 0.1 : abs >= 10 ? 0.01 : abs >= 1 ? 0.001 : 0.0001
-  return Math.ceil(v / step) * step
-}
-
-const yAxisRange = computed(() => {
-  if (!processedData.value.length) return { min: 0, max: 100 }
-
-  const values = processedData.value
-    .map(item => item.balance)
-    .filter(v => Number.isFinite(v))
-
-  if (!values.length) return { min: 0, max: 100 }
-
-  const min = Math.min(...values)
-  const max = Math.max(...values)
-
-  if (min === max) {
-    const padding = Math.max(Math.abs(min) * 0.001, 1)
-    return {
-      min: _niceMin(Math.max(0, min - padding)),
-      max: _niceMax(max + padding)
-    }
-  }
-
-  const range = max - min
-  const padding = range * 0.2
-
-  return {
-    min: _niceMin(Math.max(0, min - padding)),
-    max: _niceMax(max + padding)
-  }
-})
-
-// =========================================================
-// ECharts Option
+// ECharts Option (移除了强制指定的 Y 轴 Range)
 // =========================================================
 const option = computed(() => {
   const dataLength = processedData.value.length
@@ -219,7 +164,10 @@ const option = computed(() => {
     },
     yAxis: {
       type: "value",
+      // 允许 Y 轴不从 0 开始，自适应数据
       scale: true,
+      // 上下留白 10%，防止曲线贴顶或贴底
+      boundaryGap: ['10%', '10%'],
       name: "USDT",
       nameLocation: "end",
       nameGap: 12,
@@ -228,8 +176,7 @@ const option = computed(() => {
         verticalAlign: "bottom",
         padding: [0, 0, 6, 0]
       },
-      min: yAxisRange.value.min,
-      max: yAxisRange.value.max,
+      // 移除 min 和 max，让 ECharts 自动根据当前渲染的数据计算
       axisLabel: {
         formatter: (value) => {
           const n = Number(value)
@@ -244,7 +191,8 @@ const option = computed(() => {
       {
         type: "inside",
         xAxisIndex: 0,
-        filterMode: "none",
+        // ★ 关键修改：改为 filter，当 X 轴缩放/拖拽时，Y 轴只计算当前可见区域的数据
+        filterMode: "filter",
         zoomOnMouseWheel: true,
         moveOnMouseMove: true,
         moveOnMouseWheel: true
@@ -253,7 +201,6 @@ const option = computed(() => {
     series: [
       {
         type: "line",
-        // ★ 核心修改：1D 时为 false (直角折线)，其他周期平滑
         smooth: period.value !== '1D',
         symbol: "none",
         sampling: "lttb",
@@ -291,7 +238,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 样式保持不变 */
 .chart {
   height: 320px;
   width: 100%;
