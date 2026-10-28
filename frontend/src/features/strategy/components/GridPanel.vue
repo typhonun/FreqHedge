@@ -197,6 +197,11 @@
               最大持仓 {{ config.grid.max_open_grids }} 格
             </span>
 
+            <span v-if="minGridCapital > capital" class="grid-preview-warn" style="color: var(--el-color-danger);">
+              <el-icon><WarningFilled /></el-icon>
+              当前资金（{{ capital }}）低于建议最低资金（{{ minGridCapital.toFixed(2) }}），极易出现无法平仓的尾仓！
+            </span>
+
             <!-- ★ 新增：止盈低于手续费的红色警告 -->
             <span v-if="isProfitTooLow" class="grid-preview-warn" style="color: var(--el-color-danger);">
               <el-icon><WarningFilled /></el-icon>
@@ -365,6 +370,17 @@ const applySuggest = async (days) => {
     loadingSuggest.value = 0
   }
 }
+
+const minGridCapital = computed(() => {
+  const c = props.config?.grid || {}
+  const count = Math.max(1, Number(c.grid_count || 20))
+  const leverage = Number(props.leverage || 1)
+  const minNotional = Number(props.config?.grid?.min_notional_value || 10)
+
+  // 反推：如果每格名义价值必须 >= 10U，那每格保证金最低 = 10 / leverage
+  const minPerGrid = minNotional / leverage
+  return minPerGrid * count
+})
 
 const initDefaultRange = async () => {
   const g = props.config?.grid || {}

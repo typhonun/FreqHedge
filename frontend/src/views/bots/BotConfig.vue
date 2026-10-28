@@ -173,7 +173,18 @@
                           controls-position="right"
                           style="width: 100%"
                         />
+                        <!-- ★ 新增：最低启动资金提示 -->
+                        <span
+                          v-if="strategyType === 'grid' && minGridCapital > 0"
+                          class="inline-field__hint"
+                          :style="{ color: botBaseInfo.capital < minGridCapital ? 'var(--el-color-danger)' : 'var(--el-text-color-placeholder)' }"
+                          style="margin-top: 4px;"
+                        >
+                          当前配置建议最低资金：<b>{{ minGridCapital.toFixed(2) }} USDT</b>
+                          <span v-if="botBaseInfo.capital < minGridCapital">（资金过低，极易产生无法平仓的尾仓！）</span>
+                        </span>
                       </div>
+
                       <!-- ★ 网格模式：单笔保证金显示为只读「每格金额」 -->
                       <div class="inline-field" style="position: relative;">
                         <template v-if="strategyType === 'grid'">
@@ -951,6 +962,24 @@ const hasOpenPositions = ref(false) // 记录是否有持仓
 const isLocked = computed(() => {
   // 如果是编辑模式，且机器人运行中，且有持仓，则锁定
   return isEdit.value && botStatus.value === 'running' && hasOpenPositions.value
+})
+
+// ★ 修改：计算网格最低启动资金（固定基准，不随输入资金变化）
+const minGridCapital = computed(() => {
+  if (strategyType.value !== 'grid') return 0
+
+  const grid = strategyConfig.grid || {}
+  const count = Math.max(1, Number(grid.grid_count || 20))
+  const leverage = Number(botBaseInfo.value.leverage || 1)
+
+  // 从 gridDefaults 读取，若没有则默认 10
+  const minNotional = Number(strategyConfig.grid?.min_notional_value || 10)
+
+  // 每格最低保证金 = 最小名义价值 / 杠杆
+  const minPerGridCapital = minNotional / leverage
+
+  // 最低总资金 = 每格最低保证金 × 网格数量
+  return minPerGridCapital * count
 })
 
 // 3. 修改 loadBotDetail 方法，获取持仓状态
