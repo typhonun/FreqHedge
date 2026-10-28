@@ -248,7 +248,7 @@
 
 <script setup>
 // ... 保持原样，逻辑未变
-import { computed, ref, onMounted } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { InfoFilled, WarningFilled, ArrowDown } from '@element-plus/icons-vue'
@@ -263,11 +263,14 @@ const props = defineProps({
   direction: { type: String, default: 'long' },
   leverage:  { type: Number, default: 1 },
 })
-const emit = defineEmits(['timeframe-change'])
+
+const emit = defineEmits(['timeframe-change', 'min-capital-change'])
+const minNotionalFromApi = ref(10)
+let pairLimitsRequestId = 0
 const onTimeframeChange = (val) => {
   emit('timeframe-change', val)
 }
-
+let pairLimitsTimer = null
 const loadingSuggest = ref(0)
 const lastSuggestInfo = ref('')
 const currentPrice = ref(null)
@@ -366,16 +369,44 @@ const applySuggest = async (days) => {
   }
 }
 
+watch(() => props.pair, (newPair) => {
+  if (!newPair) return
+  if (pairLimitsTimer) clearTimeout(pairLimitsTimer)
+  pairLimitsTimer = setTimeout(async () => {
+    const requestId = ++pairLimitsRequestId
+    minNotionalFromApi.value = 10
+    try {
+      const { data } = await axios.get(`${API}/exchange/pair_limits`, {
+        params: { pair: newPair }
+      })
+      const minNotional = Number(data?.min_notional)
+      if (requestId === pairLimitsRequestId && Number.isFinite(minNotional) && minNotional > 0) {
+        minNotionalFromApi.value = minNotional
+        if (props.config?.grid) {
+          props.config.grid.min_notional_value = minNotional
+        }
+      }
+    } catch (e) {
+      if (requestId !== pairLimitsRequestId) return
+      minNotionalFromApi.value = 10
+    }
+  }, 300)
+}, { immediate: true })
+
 const minGridCapital = computed(() => {
   const c = props.config?.grid || {}
   const count = Math.max(1, Number(c.grid_count || 20))
   const leverage = Number(props.leverage || 1)
-  const minNotional = Number(props.config?.grid?.min_notional_value || 10)
+  const minNotional = minNotionalFromApi.value
 
-  // 反推：如果每格名义价值必须 >= 10U，那每格保证金最低 = 10 / leverage
+  // 每格最低保证金 = 最小名义价值 / 杠杆
   const minPerGrid = minNotional / leverage
   return minPerGrid * count
 })
+
+watch(minGridCapital, (val) => {
+  emit('min-capital-change', val)
+}, { immediate: true })
 
 const initDefaultRange = async () => {
   const g = props.config?.grid || {}

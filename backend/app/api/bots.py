@@ -10,6 +10,7 @@ from app.services.position_service import PositionService
 from app.services.config_service import ConfigService
 from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
 from app.core.strategy_registry import get_strategy
+from app.services.exchange_service import ExchangeService
 
 router = APIRouter()
 
@@ -117,8 +118,13 @@ def _validate_grid_capital(data: dict):
     capital = float(base.get("capital", 0))
     leverage = float(base.get("leverage", 1))
     count = int(grid.get("grid_count", 20))
-    # 读取配置中的最小名义价值，默认 10U
+    # 以交易所实时规则为准，配置值只作为接口不可用时的回退。
     min_notional = float(grid.get("min_notional_value", 10))
+    pair = (base.get("pair") or [None])[0]
+    if pair:
+        pair_limits = ExchangeService.get_binance_usdt_futures_pair_limits(pair)
+        if pair_limits:
+            min_notional = float(pair_limits["min_notional"])
 
     if count <= 0:
         raise HTTPException(400, "网格数量必须大于 0")

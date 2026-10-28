@@ -514,6 +514,7 @@
             :leverage="botBaseInfo.leverage"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"
+            @min-capital-change="onMinCapitalChange"
           />
         </el-card>
       </div>
@@ -964,22 +965,15 @@ const isLocked = computed(() => {
   return isEdit.value && botStatus.value === 'running' && hasOpenPositions.value
 })
 
+const dynamicMinGridCapital = ref(0)
+const onMinCapitalChange = (val) => {
+  dynamicMinGridCapital.value = Number(val) || 0
+}
+
 // ★ 修改：计算网格最低启动资金（固定基准，不随输入资金变化）
 const minGridCapital = computed(() => {
   if (strategyType.value !== 'grid') return 0
-
-  const grid = strategyConfig.grid || {}
-  const count = Math.max(1, Number(grid.grid_count || 20))
-  const leverage = Number(botBaseInfo.value.leverage || 1)
-
-  // 从 gridDefaults 读取，若没有则默认 10
-  const minNotional = Number(strategyConfig.grid?.min_notional_value || 10)
-
-  // 每格最低保证金 = 最小名义价值 / 杠杆
-  const minPerGridCapital = minNotional / leverage
-
-  // 最低总资金 = 每格最低保证金 × 网格数量
-  return minPerGridCapital * count
+  return dynamicMinGridCapital.value
 })
 
 // 3. 修改 loadBotDetail 方法，获取持仓状态
@@ -1662,6 +1656,24 @@ const validate = () => {
     ElMessage.warning('请选择方向')
     return false
   }
+
+  // ★ 新增：网格资金兜底校验（防止绕过 syncConfig）
+  if (strategyType.value === 'grid') {
+    // 若动态最低资金尚未计算完成（= 0），说明 GridPanel 还没挂载完成
+    if (minGridCapital.value === 0) {
+      ElMessage.warning('网格最低资金尚未计算完成，请稍等片刻再保存')
+      return false
+    }
+    // ★ 真正拦截资金不足
+    if (botBaseInfo.value.capital < minGridCapital.value) {
+      ElMessage.warning(
+        `资金过低！当前交易对 + 杠杆下，最低需要 ${minGridCapital.value.toFixed(2)} USDT，` +
+        `否则极易产生无法平仓的尾仓。`
+      )
+      return false
+    }
+  }
+
   return true
 }
 
@@ -1777,11 +1789,13 @@ const syncConfig = async () => {
   if (!loaded.value) return   // ★ 新增：没加载完不准同步
 
   // ★ 新增：如果是网格，确保 core 参数有效再提交
-  if (strategyType.value === 'grid') {
-    const grid = strategyConfig.grid || {}
-    if (!grid.lower_price || !grid.upper_price || !grid.grid_count) {
-      return // 数据还没填全，不触发自动同步
-    }
+  if (strategyType.value === 'grid' && minGridCapital.value === 0) {
+    ElMessage.warning('网格最低资金尚未计算完成，请稍等片刻再保存')
+    return false
+  }
+  if (botBaseInfo.value.capital < minGridCapital.value) {
+    console.warn(`[syncConfig] 资金不足，未提交。capital=${botBaseInfo.value.capital}, min=${minGridCapital.value}`)
+    return false
   }
 
   try {

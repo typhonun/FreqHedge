@@ -51,11 +51,13 @@
         <el-form-item label="开仓金额">
           <el-input-number
             v-model="forceForm.stakeamount"
-            :min="1"
+            :min="minStakeAmount"
             :step="10"
             style="width: 100%"
           />
-          <div class="tip">单位 USDT，杠杆沿用机器人配置</div>
+          <div class="tip">
+            单位 USDT，杠杆沿用机器人配置。当前交易对最低需要 <b>{{ minStakeAmount }}</b> USDT。
+          </div>
         </el-form-item>
       </el-form>
 
@@ -75,6 +77,8 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import axios from 'axios'
+const API = 'http://localhost:9000'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { forceEnter, closeAll, getAvailablePairs } from '@/api/position'
 import { useBotStore } from '@/stores/botStore'
@@ -100,16 +104,36 @@ const botName = computed(() =>
   bot.value ? `${bot.value.name} (#${bot.value.id})` : ''
 )
 
-// ============ 开仓 ============
-const forceEnterVisible = ref(false)
-const submitting = ref(false)
-const pairsLoading = ref(false)
-const availablePairs = ref([])
 const forceForm = ref({
   side: 'long',
   pair: '',
   stakeamount: 10,
 })
+
+const minNotional = ref(10)
+const minStakeAmount = computed(() => {
+  const lev = bot.value?.leverage || 1
+  return Number((minNotional.value / lev).toFixed(2))
+})
+
+// 监听 forceForm.pair 变化，请求限额
+watch(() => forceForm.value.pair, async (newPair) => {
+  if (!newPair) return
+  try {
+    const { data } = await axios.get(`${API}/exchange/pair_limits`, {
+      params: { pair: newPair }
+    })
+    minNotional.value = Number(data.min_notional) || 10
+  } catch (e) {
+    minNotional.value = 10
+  }
+})
+
+// ============ 开仓 ============
+const forceEnterVisible = ref(false)
+const submitting = ref(false)
+const pairsLoading = ref(false)
+const availablePairs = ref([])
 
 // ============ 平仓 ============
 const closingAll = ref(false)
@@ -172,7 +196,10 @@ const submitForceEnter = async () => {
     ElMessage.warning('请输入有效的开仓金额')
     return
   }
-
+  if (forceForm.value.stakeamount * (bot.value?.leverage || 1) < minNotional.value) {
+    ElMessage.warning(`开仓金额过小，当前交易对最小名义价值为 ${minNotional.value} USDT`)
+    return
+  }
   submitting.value = true
   try {
     await forceEnter({

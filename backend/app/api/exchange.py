@@ -1,10 +1,12 @@
-from fastapi import APIRouter, Query, Body
+# backend/app/api/exchange.py
+from fastapi import APIRouter, Query, Body, HTTPException
 from app.services.exchange_service import ExchangeService
 from app.services.bot_manager import BotManager
 from app.services.config_service import ConfigService
+from app.services.freqtrade_client import FreqtradeClient
+from app.services.bot_runtime import list_running_bots, list_all_bots, get_bot_url
 
 router = APIRouter()
-
 
 @router.get("/pairs")
 def get_pairs(
@@ -14,6 +16,71 @@ def get_pairs(
     if exchange == "binance" and market == "futures":
         return ExchangeService.get_binance_usdt_futures_pairs()
     return []
+
+
+@router.get("/pair_limits")
+def get_pair_limits(pair: str = Query(...)):
+    """
+    动态获取指定交易对的最小下单量和最小名义价值 (USDT)
+    """
+    default_res = {"min_qty": 0.001, "min_notional": 10.0}
+
+    try:
+        # Binance exchangeInfo is authoritative for the selected Binance
+        # futures pair, including quantity-derived minimum notional.
+        direct_limits = ExchangeService.get_binance_usdt_futures_pair_limits(pair)
+        if direct_limits:
+            return direct_limits
+
+        # 1. 优先找正在运行的 bot
+        bots = list_running_bots()
+        if not bots:
+            # 如果没有正在运行的，找所有非草稿状态的机器人（即使是停止的）
+            bots = [b for b in list_all_bots() if b.get("status") != "draft"]
+
+        if not bots:
+            # 草稿阶段没有可借用的 bot，直接从币安获取交易对限额。
+            direct_limits = ExchangeService.get_binance_usdt_futures_pair_limits(pair)
+            return direct_limits or default_res
+
+        # 2. 借用这个 bot 的 API 去查
+        bot = bots[0]
+        url = get_bot_url(bot["id"], "long")
+
+        # 3. 请求 /api/v1/markets
+        markets = FreqtradeClient.get(url, "/api/v1/markets")
+
+        # 4. 解析目标交易对
+        if pair not in markets:
+            direct_limits = ExchangeService.get_binance_usdt_futures_pair_limits(pair)
+            return direct_limits or default_res
+
+        limits = markets[pair].get("limits", {})
+        amount_limits = limits.get("amount", {})
+        cost_limits = limits.get("cost", {})
+
+        min_qty = amount_limits.get("min")
+        min_notional = cost_limits.get("min")
+
+        result = {
+            "min_qty": float(min_qty) if min_qty else 0.001,
+            "min_notional": float(min_notional) if min_notional else 10.0
+        }
+        if not min_qty and not min_notional:
+            direct_limits = ExchangeService.get_binance_usdt_futures_pair_limits(pair)
+            return direct_limits or result
+        return result
+
+    except Exception as e:
+        print(f"[exchange] get_pair_limits failed: {e}")
+        try:
+            return (
+                ExchangeService.get_binance_usdt_futures_pair_limits(pair)
+                or default_res
+            )
+        except Exception as direct_error:
+            print(f"[exchange] direct pair limits lookup failed: {direct_error}")
+            return default_res
 
 
 @router.post("/sync-to-bots")

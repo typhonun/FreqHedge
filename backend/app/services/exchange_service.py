@@ -6,12 +6,98 @@ BINANCE_FAPI = "https://fapi.binance.com"
 
 _cache = {
     "pairs": None,
+    "limits": {},
     "time": 0,
 }
 CACHE_SECONDS = 600  # 10 分钟缓存
-
+_pair_limits_cache = {}
+_pair_limits_cache_ts = 0
+_PAIR_LIMITS_TTL = 60
 
 class ExchangeService:
+
+    @staticmethod
+    def get_binance_usdt_futures_pair_limits(pair: str):
+        global _pair_limits_cache, _pair_limits_cache_ts
+        now = time.time()
+        if now - _pair_limits_cache_ts >= _PAIR_LIMITS_TTL or not _pair_limits_cache:
+            try:
+                resp = requests.get(
+                    f"{BINANCE_FAPI}/fapi/v1/exchangeInfo",
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                new_cache = {}
+                for sym in data.get("symbols", []):
+                    name = sym.get("symbol", "")
+                    if (
+                        not name.endswith("USDT")
+                        or sym.get("quoteAsset") != "USDT"
+                        or sym.get("contractType") != "PERPETUAL"
+                        or sym.get("status") != "TRADING"
+                    ):
+                        continue
+                    # 转换成 Freqtrade 格式：BTC/USDT:USDT
+                    ft_pair = f"{name[:-4]}/USDT:USDT"
+                    filters = sym.get("filters", [])
+                    min_qty = None
+                    min_notional = None
+                    for f in filters:
+                        if f.get("filterType") in ("LOT_SIZE", "MARKET_LOT_SIZE"):
+                            try:
+                                value = float(f.get("minQty", 0.001))
+                                min_qty = value if min_qty is None else max(min_qty, value)
+                            except (TypeError, ValueError):
+                                continue
+                        elif f.get("filterType") in ("MIN_NOTIONAL", "NOTIONAL"):
+                            try:
+                                value = f.get("notional") or f.get("minNotional")
+                                value = float(value)
+                                min_notional = (
+                                    value if min_notional is None
+                                    else max(min_notional, value)
+                                )
+                            except (TypeError, ValueError):
+                                continue
+                    new_cache[ft_pair] = {
+                        "symbol": name,
+                        "min_qty": min_qty or 0.001,
+                        "min_notional": min_notional or 10.0,
+                    }
+                _pair_limits_cache = new_cache
+                _pair_limits_cache_ts = now
+            except (requests.RequestException, ValueError) as e:
+                print(f"[ExchangeService] fetch pair limits failed: {e}")
+                return None
+
+        result = _pair_limits_cache.get(pair)
+        if not result:
+            return None
+
+        try:
+            ticker = requests.get(
+                f"{BINANCE_FAPI}/fapi/v1/ticker/price",
+                params={"symbol": result["symbol"]},
+                timeout=5,
+            )
+            ticker.raise_for_status()
+            price = float(ticker.json()["price"])
+        except (requests.RequestException, KeyError, TypeError, ValueError) as e:
+            print(f"[ExchangeService] fetch pair price failed: {e}")
+            return result
+
+        # Binance checks both the minimum notional and the minimum quantity.
+        # The effective minimum is therefore the larger of the two values.
+        effective_notional = max(
+            result["min_notional"],
+            result["min_qty"] * price,
+        )
+        return {
+            "min_qty": result["min_qty"],
+            "min_notional": effective_notional,
+            "price": price,
+        }
 
     @staticmethod
     def get_binance_usdt_futures_pairs(force=False):
@@ -39,6 +125,7 @@ class ExchangeService:
             data = resp.json()
 
             pairs = []
+            limits = {}
             for s in data.get("symbols", []):
                 # 只保留 USDT 本位、状态 TRADING 的永续
                 if s.get("quoteAsset") != "USDT":
@@ -57,10 +144,23 @@ class ExchangeService:
                     "base": s["baseAsset"],
                 })
 
+                min_qty = None
+                min_notional = None
+                for item in s.get("filters", []):
+                    if item.get("filterType") == "LOT_SIZE":
+                        min_qty = item.get("minQty")
+                    elif item.get("filterType") in ("MIN_NOTIONAL", "NOTIONAL"):
+                        min_notional = item.get("notional") or item.get("minNotional")
+                limits[pairs[-1]["name"]] = {
+                    "min_qty": float(min_qty) if min_qty else 0.001,
+                    "min_notional": float(min_notional) if min_notional else 10.0,
+                }
+
             pairs.sort(key=lambda x: x["name"])
 
             # 请求成功，更新缓存
             _cache["pairs"] = pairs
+            _cache["limits"] = limits
             _cache["time"] = now
             return pairs
 
