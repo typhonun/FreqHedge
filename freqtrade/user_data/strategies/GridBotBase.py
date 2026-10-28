@@ -412,10 +412,8 @@ class GridBotBase(DcaTpBotBase):
                     qty = float(v.get("qty", 0.0))
                     margin = (entry * qty) / lev if lev > 0 else 0.0
                     pnl = (entry - close_price) * qty if self._is_short else (close_price - entry) * qty
-
                     if pd.isna(margin) or np.isinf(margin): margin = 0.0
                     if pd.isna(pnl) or np.isinf(pnl): pnl = 0.0
-
                     total_margin += margin
                     total_pnl += pnl
                     closed.append((idx, entry, qty, margin, pnl))
@@ -423,59 +421,39 @@ class GridBotBase(DcaTpBotBase):
                 if total_margin <= 0 or not np.isfinite(total_margin):
                     return None
 
+                # ★★★ 核心修复：检查本次减仓是否满足交易所最小下单量 ★★★
+                requested_qty = sum(item[2] for item in closed)
+                min_qty = 0.001
+                try:
+                    market = self.dp.market(trade.pair)
+                    if market and market.get("limits", {}).get("amount", {}).get("min"):
+                        min_qty = float(market["limits"]["amount"]["min"])
+                except Exception:
+                    pass
+
+                if requested_qty < min_qty:
+                    logger.warning(
+                        f"{GRID_TAG} 减仓数量 {requested_qty:.6f} 低于交易所最小限制 {min_qty:.6f}，"
+                        f"将强制全平所有剩余网格，防止尾仓残留在交易所！"
+                    )
+                    # 清空所有本地仓位记录
+                    self._set_grid_positions(trade, {})
+                    self._pending_reduce.pop(trade.id, None)
+                    self._set(trade, "grid_pending_reduce", [])
+
+                    # 返回全平指令（使用当前 trade 的 stake_amount 作为金额）
+                    full_close_stake = float(getattr(trade, "stake_amount", 0) or total_margin)
+                    if full_close_stake <= 0 or not np.isfinite(full_close_stake):
+                        return None
+
+                    return -full_close_stake, f"grid_reduce_multi_{len(positions)}"
+
+                # 正常流程
                 pending_reduce_set.update([idx for idx, _, _, _, _ in closed])
                 self._pending_reduce[trade.id] = pending_reduce_set
                 self._set(trade, "grid_pending_reduce", sorted(pending_reduce_set))
-
                 self._log_reduce(trade, close_price, closed, total_margin, total_pnl)
                 self._log_state_detail(trade, close_price)
-
-                # ★★★ 核心修改点：动态获取交易所的最小限制 ★★★
-                try:
-                    # 获取当前交易对的最小名义价值，如果系统没传，默认给个 5.0
-                    min_exit_stake = float(kwargs.get("min_exit_stake") or 5.0)
-
-                    # Freqtrade 会通过 get_market_price 拿到更准确的估价
-                    exit_rate = float(kwargs.get("current_exit_rate") or close_price)
-
-                    # 算出如果按照原计划减仓，还剩多少数量
-                    requested_qty = sum(item[2] for item in closed)
-                    remaining_qty = max(actual_amount - requested_qty, 0.0)
-
-                    # 算出剩余数量在当前交易所环境下的估值
-                    remaining_value = remaining_qty * exit_rate
-
-                    is_last_grid = (len(pending_reduce_set) == len(positions))
-
-                    # 最后一格必须按交易当前仓位全平；即使网格数量计算为
-                    # 0，也可能因交易所数量精度舍入留下低于最小限制的残仓。
-                    if is_last_grid or (0 < remaining_value and remaining_value < min_exit_stake):
-                        logger.info(
-                            f"{GRID_TAG} 触发兜底全平: 剩余价值={remaining_value:.4f} (最小限制={min_exit_stake:.4f}, 最后一格={is_last_grid})"
-                        )
-
-                        # 将剩余的所有网格索引全部加入待平仓集合
-                        pending_reduce_set.update(int(key) for key in positions)
-                        self._pending_reduce[trade.id] = pending_reduce_set
-                        self._set(trade, "grid_pending_reduce", sorted(pending_reduce_set))
-
-                        # Use the trade's current stake, not the grid metadata.
-                        # The latter can differ after fees and precision
-                        # rounding, which may leave an unexitable dust amount.
-                        full_close_stake = float(getattr(trade, "stake_amount", 0) or 0.0)
-
-                        if full_close_stake <= 0 or not np.isfinite(full_close_stake):
-                            full_close_stake = total_margin
-
-                        if full_close_stake <= 0 or not np.isfinite(full_close_stake):
-                            logger.warning(f"{GRID_TAG} 全平本金计算异常，取消本次平仓")
-                            return None
-
-                        # 返回全平金额，确保把那一丝零头也平掉
-                        return -full_close_stake, f"grid_reduce_multi_{len(pending_reduce_set)}"
-
-                except Exception as e:
-                    logger.warning(f"{GRID_TAG} 计算动态最小减仓限制时出错: {e}，将按原计划减仓")
 
                 return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
 
