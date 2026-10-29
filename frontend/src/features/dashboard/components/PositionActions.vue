@@ -31,6 +31,13 @@
           <span>{{ botName }}</span>
         </el-form-item>
 
+        <el-form-item label="方向">
+          <el-select v-model="forceForm.side" style="width: 100%">
+            <el-option v-if="bot?.enableLong" label="做多" value="long" />
+            <el-option v-if="bot?.enableShort" label="做空" value="short" />
+          </el-select>
+        </el-form-item>
+
         <el-form-item label="交易对">
           <el-select
             v-model="forceForm.pair"
@@ -50,7 +57,7 @@
 
         <el-form-item label="开仓金额">
           <el-input-number
-            v-model="forceForm.stakeamount"
+            v-model="forceForm.amount_usdt"
             :min="minStakeAmount"
             :step="10"
             style="width: 100%"
@@ -107,7 +114,7 @@ const botName = computed(() =>
 const forceForm = ref({
   side: 'long',
   pair: '',
-  stakeamount: 10,
+  amount_usdt: 10,
 })
 
 const minNotional = ref(10)
@@ -154,7 +161,7 @@ const openForceEnterDialog = async () => {
 
   forceForm.value.side = bot.value.enableLong ? 'long' : 'short'
   forceForm.value.pair = ''
-  forceForm.value.stakeamount = bot.value.stakeAmount || 10
+  forceForm.value.amount_usdt = bot.value.stakeAmount || 10
 
   forceEnterVisible.value = true
   await loadAvailablePairs()
@@ -192,11 +199,11 @@ const submitForceEnter = async () => {
     ElMessage.warning('请选择交易对')
     return
   }
-  if (!forceForm.value.stakeamount || forceForm.value.stakeamount <= 0) {
+  if (!forceForm.value.amount_usdt || forceForm.value.amount_usdt <= 0) {
     ElMessage.warning('请输入有效的开仓金额')
     return
   }
-  if (forceForm.value.stakeamount * (bot.value?.leverage || 1) < minNotional.value) {
+  if (forceForm.value.amount_usdt * (bot.value?.leverage || 1) < minNotional.value) {
     ElMessage.warning(`开仓金额过小，当前交易对最小名义价值为 ${minNotional.value} USDT`)
     return
   }
@@ -206,7 +213,7 @@ const submitForceEnter = async () => {
       bot_id: props.botId,
       side: forceForm.value.side,
       pair: forceForm.value.pair,
-      stakeamount: forceForm.value.stakeamount,
+      amount_usdt: forceForm.value.amount_usdt,
     })
     ElMessage.success('开仓成功')
     forceEnterVisible.value = false
@@ -275,10 +282,16 @@ const handleCloseAll = async () => {
 
   closingAll.value = true
   try {
+    let failedCount = 0
     for (const side of sides) {
-      await closeAll({ bot_id: props.botId, side })
+      const { data } = await closeAll({ bot_id: props.botId, side })
+      failedCount += Number(data?.failed_count || 0)
     }
-    ElMessage.success('平仓指令已提交')
+    if (failedCount > 0) {
+      ElMessage.warning(`部分平仓失败，共 ${failedCount} 个持仓未提交`)
+    } else {
+      ElMessage.success('平仓指令已提交')
+    }
     emit('success')
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '平仓失败')

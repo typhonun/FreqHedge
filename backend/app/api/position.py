@@ -9,15 +9,10 @@ router = APIRouter()
 
 class PositionAction(BaseModel):
     trade_id: int
-
     side: str
-
     action: str
-
-    amount: float | None = None
-
+    amount_usdt: float | None = None
     price: float | None = None
-
     bot_id: int | None = None
 
 
@@ -88,10 +83,19 @@ def position_action(data: PositionAction):
         trade_id=data.trade_id,
         side=data.side,
         action=data.action,
-        amount=data.amount,
+        amount_usdt=data.amount_usdt,
         price=data.price,
         bot_id=data.bot_id,
     )
+
+
+@router.get("/action_limits")
+def action_limits(
+    bot_id: int = Query(...),
+    side: str = Query(...),
+    pair: str = Query(...),
+):
+    return PositionService.get_action_limits(bot_id=bot_id, side=side, pair=pair)
 
 
 # =========================================================
@@ -100,9 +104,9 @@ def position_action(data: PositionAction):
 
 class ForceEnterAction(BaseModel):
     bot_id: int
-    side: str            # "long" / "short"
+    side: str
     pair: str
-    stakeamount: float
+    amount_usdt: float
 
 
 class CloseAllAction(BaseModel):
@@ -125,7 +129,7 @@ def force_enter(data: ForceEnterAction):
     return PositionService.force_enter(
         side=data.side,
         pair=data.pair,
-        stakeamount=data.stakeamount,
+        amount_usdt=data.amount_usdt,
         bot_id=data.bot_id,
     )
 

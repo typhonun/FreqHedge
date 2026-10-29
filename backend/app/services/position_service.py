@@ -20,6 +20,7 @@ from app.services.bot_runtime import (
     list_running_bots,
     list_all_bots,
 )
+from app.services.exchange_service import ExchangeService
 
 # =========================================================
 # 缓存与锁
@@ -756,28 +757,57 @@ class PositionService:
         return [p for p in whitelist if p not in opened]
 
     @staticmethod
-    def force_enter(side: str, pair: str, stakeamount: float, bot_id: int | None = None):
+    def force_enter(side: str, pair: str, amount_usdt: float, bot_id: int | None = None):
         if bot_id is None:
             raise ValueError("force_enter 需要指定 bot_id")
+        if side.lower() not in ("long", "short"):
+            raise ValueError("side 必须是 long 或 short")
+        if amount_usdt <= 0:
+            raise ValueError("amount_usdt 必须大于 0")
 
         url = get_bot_url(bot_id, side)
         payload = {
             "pair": pair,
             "side": side,
-            "stakeamount": stakeamount,
+            "stakeamount": amount_usdt,
             "ordertype": "market",
         }
         return FreqtradeClient.post(url, "/api/v1/forceenter", payload)
 
     @staticmethod
+    def get_action_limits(bot_id: int, side: str, pair: str):
+        if side.lower() not in ("long", "short"):
+            raise ValueError("side 必须是 long 或 short")
+        bot = BotManager.get(bot_id)
+        if not bot:
+            raise ValueError("机器人不存在")
+        leverage = float(bot.get("leverage") or 1)
+        limits = ExchangeService.get_binance_usdt_futures_pair_limits(pair) or {}
+        min_notional = float(limits.get("min_notional") or 10)
+        summary = PositionService.get_account_summary(bot_id=bot_id)
+        available_margin = float(summary.get(f"{side.lower()}_available") or 0)
+        max_notional = max(0.0, available_margin * leverage)
+        return {
+            "min_notional": round(min_notional, 2),
+            "available_margin": round(available_margin, 2),
+            "leverage": leverage,
+            "max_notional": round(max_notional, 2),
+        }
+
+    @staticmethod
     def trade_action(trade_id: int, side: str, action: str, amount: float = None,
-                     price: float = None, bot_id: int | None = None):
+                     price: float = None, bot_id: int | None = None,
+                     amount_usdt: float = None):
+        # amount_usdt is the public unit. Freqtrade's forceexit API expects base currency.
+        if amount_usdt is None:
+            amount_usdt = amount
         if bot_id is None:
             # 尝试从所有 running bot 里找
             for bot in list_running_bots():
                 try:
                     return PositionService.trade_action(
-                        trade_id, side, action, amount, price, bot_id=bot["id"]
+                        trade_id, side, action, amount_usdt=amount_usdt,
+                        price=price, bot_id=bot["id"]
                     )
                 except Exception:
                     continue
@@ -785,33 +815,69 @@ class PositionService:
 
         url = get_bot_url(bot_id, side.lower())
 
+        positions = PositionService.get_open_positions(bot_id=bot_id)
+        trades = positions["long"] if side.upper() == "LONG" else positions["short"]
+        trade = next((t for t in trades if t.get("trade_id") == trade_id), None)
+        if not trade:
+            raise ValueError("Trade not found")
+
         if action == "market_exit":
             payload = {"tradeid": trade_id}
-            if amount is not None:
-                payload["amount"] = amount
+            if amount_usdt is not None:
+                current_rate = float(trade.get("current_rate") or 0)
+                if current_rate <= 0:
+                    raise ValueError("无法获取持仓当前价格")
+                payload["amount"] = PositionService._exit_amount(
+                    trade, amount_usdt, current_rate
+                )
             return FreqtradeClient.post(url, "/api/v1/forceexit", payload)
 
         if action == "limit_exit":
-            payload = {"tradeid": trade_id, "ordertype": "limit", "rate": price}
-            if amount is not None:
-                payload["amount"] = amount
+            if price is None or price <= 0:
+                raise ValueError("限价必须大于 0")
+            payload = {"tradeid": trade_id, "ordertype": "limit", "price": price}
+            if amount_usdt is not None:
+                payload["amount"] = PositionService._exit_amount(
+                    trade, amount_usdt, price
+                )
             return FreqtradeClient.post(url, "/api/v1/forceexit", payload)
 
         if action == "increase":
-            positions = PositionService.get_open_positions(bot_id=bot_id)
-            trades = positions["long"] if side.upper() == "LONG" else positions["short"]
-            trade = next((t for t in trades if t.get("trade_id") == trade_id), None)
-            if not trade:
-                raise Exception("Trade not found")
+            if amount_usdt is None or amount_usdt <= 0:
+                raise ValueError("加仓金额必须大于 0 USDT")
+            limits = PositionService.get_action_limits(bot_id, side, trade["pair"])
+            if amount_usdt < limits["min_notional"]:
+                raise ValueError(
+                    f"加仓名义金额不能低于 {limits['min_notional']} USDT"
+                )
+            if amount_usdt > limits["max_notional"]:
+                raise ValueError(
+                    f"加仓名义金额不能超过可用上限 {limits['max_notional']} USDT"
+                )
             payload = {
                 "pair": trade["pair"],
                 "side": "long" if side.upper() == "LONG" else "short",
-                "stakeamount": amount,
+                "stakeamount": amount_usdt / limits["leverage"],
                 "ordertype": "market",
             }
             return FreqtradeClient.post(url, "/api/v1/forceenter", payload)
 
         raise ValueError(f"Unsupported action: {action}")
+
+    @staticmethod
+    def _exit_amount(trade: dict, amount_usdt: float, price: float) -> float:
+        if amount_usdt <= 0:
+            raise ValueError("退出数量必须大于 0 USDT")
+        base_amount = float(trade.get("amount") or 0)
+        if base_amount <= 0 or price <= 0:
+            raise ValueError("持仓数量或价格无效")
+        full_value = base_amount * price
+        if amount_usdt >= full_value:
+            return base_amount
+        amount = amount_usdt / price
+        if amount <= 0:
+            raise ValueError("退出数量换算后无效")
+        return min(amount, base_amount)
 
     @staticmethod
     def close_all(side: str, bot_id: int | None = None):
@@ -820,7 +886,14 @@ class PositionService:
             for bot in list_running_bots():
                 res = PositionService.close_all(side, bot_id=bot["id"])
                 results.extend(res.get("details", []))
-            return {"success": True, "side": side, "closed_count": len(results), "details": results}
+            failed_count = sum(1 for item in results if not item["success"])
+            return {
+                "success": failed_count == 0,
+                "side": side,
+                "closed_count": len(results) - failed_count,
+                "failed_count": failed_count,
+                "details": results,
+            }
 
         positions = PositionService.get_open_positions(bot_id=bot_id)
         trades = positions["long"] if side.lower() == "long" else positions["short"]
@@ -837,7 +910,14 @@ class PositionService:
             except Exception as e:
                 results.append({"trade_id": tid, "pair": t.get("pair"), "success": False, "error": str(e)})
 
-        return {"success": True, "side": side, "closed_count": len(results), "details": results}
+        failed_count = sum(1 for item in results if not item["success"])
+        return {
+            "success": failed_count == 0,
+            "side": side,
+            "closed_count": len(results) - failed_count,
+            "failed_count": failed_count,
+            "details": results,
+        }
 
     @staticmethod
     def force_exit(trade_id, side, bot_id: int | None = None):
