@@ -154,15 +154,15 @@
                     <div class="inline-group inline-group--inputs">
                       <div class="inline-field" style="position: relative;">
                         <span class="inline-field__label">机器人可用资金 (USDT)</span>
-                          <el-input-number
-                            v-model="botBaseInfo.capital"
-                            :min="capitalMin" :max="capitalMax"
-                            :step="10"
-                            :placeholder="liveBalanceLoading ? '正在拉取余额...' : (isDryRun ? '请输入资金' : '请输入资金')"
-                            :disabled="!isDryRun && liveBalanceLoading"
-                            controls-position="right"
-                            style="width: 100%"
-                          />
+                            <el-input-number
+                              v-model="botBaseInfo.capital"
+                              :min="capitalMin" :max="capitalMax"
+                              :step="10"
+                              :placeholder="liveBalanceLoading ? '正在获取余额...' : '请输入资金'"
+                              :disabled="false"
+                              controls-position="right"
+                              style="width: 100%"
+                            />
                         <!-- ★ 新增：最低启动资金提示 -->
                         <span
                           v-if="strategyType === 'grid' && minGridCapital > 0"
@@ -1390,15 +1390,25 @@ const capitalMin = computed(() => {
 const capitalMax = computed(() => {
   if (isDryRun.value) return undefined
   const balance = Number(liveAvailableBalance.value)
-  return Number.isFinite(balance) ? balance : undefined
+  // 如果余额小于 1，就不要限制最大值了，允许用户手动输入测试
+  return Number.isFinite(balance) && balance >= 1 ? balance : undefined
 })
 
 const loadLiveBalance = async () => {
   liveAvailableBalance.value = null
-  if (isDryRun.value || (isEdit.value && !isDraft.value)) return
+  // 如果是模拟盘直接返回
+  if (isDryRun.value) return
+
+  // ★ 核心修改：如果是编辑已保存的实盘机器人，不需要去重新获取可用余额限制，
+  // 直接保留数据库里的资金即可。
+  if (isEdit.value && !isDraft.value) {
+    return
+  }
+
   botBaseInfo.value.capital = null
   const account = getExchangeAccount(botBaseInfo.value.exchangeAccountId)
   if (!account?.apiKey || !account?.apiSecret) return
+
   liveBalanceLoading.value = true
   try {
     const { data } = await axios.post(`${API}/exchange/balance`, {
@@ -1409,6 +1419,11 @@ const loadLiveBalance = async () => {
       tradingMode: botBaseInfo.value.tradingMode,
     })
     liveAvailableBalance.value = Number(data.free || 0)
+
+    // ★ 优化：如果是新建草稿，拉到余额后自动填满最大资金
+    if (isDraft.value && liveAvailableBalance.value > 0) {
+      botBaseInfo.value.capital = liveAvailableBalance.value
+    }
   } catch (e) {
     liveAvailableBalance.value = null
     ElMessage.error(e?.response?.data?.detail || '获取交易所可用资金失败')
@@ -1420,10 +1435,15 @@ const loadLiveBalance = async () => {
 watch(
   [modeStore.mode, () => botBaseInfo.value.exchangeAccountId, () => botBaseInfo.value.tradingMode],
   async () => {
+    // ★ 核心修复 1：如果页面还没加载完，绝对不执行重置资金的逻辑
+    if (!isInitialLoaded.value) return
+
+    // ★ 核心修复 2：只有当它是「新建草稿」时，才需要重置资金并重新拉取
+    // 只要 !isDraft.value 说明是已保存的配置，坚决不动它的资金！
     if (!isDryRun.value && isDraft.value) {
       botBaseInfo.value.capital = null
+      await loadLiveBalance()
     }
-    await loadLiveBalance()
   }
 )
 
@@ -1495,6 +1515,7 @@ const startDownloadPolling = (id, jobId) => {
 }
 
 const loaded = ref(false)
+const isInitialLoaded = ref(false)
 
 /* ══════════════════════════════════════════════════════════════════
  * 8. 方向相关字段
@@ -2428,10 +2449,15 @@ onBeforeRouteLeave(async (to, from) => {
  * ══════════════════════════════════════════════════════════════════ */
 onMounted(async () => {
   await loadPairs()
-  await loadBotDetail()
-  await loadLiveBalance()
+  await loadBotDetail() // 这里面会赋值 capital
+
+  await loadLiveBalance() // 这里会判断：如果是编辑已保存的，会直接 return，不覆盖
+
   loaded.value = true
   inferPresetFromRange()
+
+  // ★ 核心修复 3：等一切准备就绪了，再打开 watch 的触发开关
+  isInitialLoaded.value = true
 })
 
 onUnmounted(() => {

@@ -252,6 +252,7 @@ class BotManager:
         bot["enableLong"] = bool(bot.get("enableLong"))
         bot["enableShort"] = bool(bot.get("enableShort"))
         bot["dryRun"] = bool(bot.get("dryRun", 1))
+        
         bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or BOT_DEFAULTS["maxOpenTrades"])
         bot["exchangeAccountJson"] = _parse_json_field(bot.get("exchangeAccountJson"))
         trading_mode = str(bot.get("tradingMode") or BOT_DEFAULTS["tradingMode"]).lower()
