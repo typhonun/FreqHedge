@@ -650,38 +650,66 @@ class DcaTpBotBase(IStrategy):
             logger.warning(f"[{pair}] 记录 last_fill_time 失败: {e}")
 
         side_text = self._side_str  # ★ 统一方向文本
+        record_base_marker = not self.__class__.__name__.startswith("GridBot")
+        is_manual_entry = reason.startswith("force_entry") or reason.startswith("forceenter")
+        is_manual_exit = reason.startswith("force_exit") or reason.startswith("forceexit")
 
-        if order.ft_order_side == self._entry_order_side:
+        if record_base_marker and order.ft_order_side == self._entry_order_side:
             # ---- 开仓 / 加仓 方向成交 ----
-            if reason.startswith("trend_add"):
+            if is_manual_entry:
+                successful_entries = int(getattr(trade, "nr_of_successful_entries", 1) or 1)
+                is_existing_trade = (
+                    self._get_bool(trade, "initialized", False)
+                    or successful_entries > 1
+                )
+                self._record_chart_marker(
+                    event_type="manual_add" if is_existing_trade else "manual_entry",
+                    pair=pair, trade_id=trade.id,
+                    side=side_text, price=entry_price, amount=order.amount,
+                    current_time=current_time,
+                    message="手动加仓" if is_existing_trade else "手动开仓",
+                    candle_time=candle_ts
+                )
+            elif reason.startswith("trend_add"):
                 self._record_chart_marker(
                     event_type="trend_add", pair=pair, trade_id=trade.id,
                     side=side_text, price=entry_price, amount=order.amount,
-                    current_time=current_time, message="趋势加仓成交",
+                    current_time=current_time, message="趋势加仓",
                     candle_time=candle_ts
                 )
             elif reason.startswith("grid_add"):
                 self._record_chart_marker(
                     event_type="grid_add", pair=pair, trade_id=trade.id,
                     side=side_text, price=entry_price, amount=order.amount,
-                    current_time=current_time, message="网格加仓成交",
+                    current_time=current_time, message="网格加仓",
                     candle_time=candle_ts
                 )
             elif reason.startswith("dca"):
                 self._record_chart_marker(
                     event_type="dca", pair=pair, trade_id=trade.id,
                     side=side_text, price=entry_price, amount=order.amount,
-                    current_time=current_time, message="DCA加仓成交",
+                    current_time=current_time, message="DCA加仓",
                     candle_time=candle_ts
                 )
 
-        elif order.ft_order_side == self._exit_order_side:
+        elif record_base_marker and order.ft_order_side == self._exit_order_side:
             # ---- 减仓 / 止盈 方向成交 ----
-            if reason == "kdj_reduce_by_trend_added":
+            if is_manual_exit:
+                trade_amount = float(getattr(trade, "amount", 0) or 0)
+                is_full_exit = trade_amount > 0 and float(order.amount or 0) >= trade_amount * 0.99
+                self._record_chart_marker(
+                    event_type="manual_exit" if is_full_exit else "manual_reduce",
+                    pair=pair, trade_id=trade.id,
+                    side=side_text, price=entry_price, amount=order.amount,
+                    current_time=current_time,
+                    message="手动平仓" if is_full_exit else "手动减仓",
+                    candle_time=candle_ts
+                )
+            elif reason == "kdj_reduce_by_trend_added":
                 self._record_chart_marker(
                     event_type="kdj_reduce", pair=pair, trade_id=trade.id,
                     side=side_text, price=entry_price, amount=order.amount,
-                    current_time=current_time, message="KDJ减仓成交",
+                    current_time=current_time, message="KDJ减仓",
                     candle_time=candle_ts
                 )
             elif reason.startswith("tp_afterDCA"):
@@ -702,7 +730,7 @@ class DcaTpBotBase(IStrategy):
                 self._record_chart_marker(
                     event_type="grid_sell", pair=pair, trade_id=trade.id,
                     side=side_text, price=entry_price, amount=order.amount,
-                    current_time=current_time, message="网格减仓成交",
+                    current_time=current_time, message="网格减仓",
                     candle_time=candle_ts
                 )
 

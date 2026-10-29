@@ -646,6 +646,8 @@ class GridBotBase(DcaTpBotBase):
                 lev = 1.0
             margin = (entry_price * qty) / lev if lev > 0 else 0.0
             candle_str = self._get_candle_str(current_time)
+            is_manual_entry = reason.startswith("force_entry") or reason.startswith("forceenter")
+            is_manual_exit = reason.startswith("force_exit") or reason.startswith("forceexit")
 
             # ---- A. 首仓成交 ----
             if not self._get_bool(trade, "grid_n_initialized", False) and order.ft_order_side == self._entry_order_side:
@@ -671,9 +673,11 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_allow_restart", False)
 
                 self._record_chart_marker(
-                    event_type="grid_entry", pair=pair, trade_id=trade.id,
+                    event_type="manual_entry" if is_manual_entry else "grid_entry",
+                    pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
-                    current_time=current_time, message=f"网格首仓 价格{entry_price:.4f}",
+                    current_time=current_time,
+                    message=("手动开仓" if is_manual_entry else f"网格首仓 价格{entry_price:.4f}"),
                     candle_time=current_time
                 )
                 logger.info(f"[STRATEGY] [ENTRY] {GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")
@@ -791,6 +795,12 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_pending_add", None)
                 self._set(trade, "grid_allow_restart", False)
                 logger.info(f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 清理残余实际仓位成交 | 价格={entry_price:.4f}")
+                self._record_chart_marker(
+                    event_type="exit_fill", pair=pair, trade_id=trade.id,
+                    side=self._side_str, price=entry_price, amount=margin,
+                    current_time=current_time, message="网格平仓",
+                    candle_time=current_time
+                )
 
             # ---- E. 整体止损 ----
             elif reason.startswith("grid_stop"):
@@ -805,6 +815,24 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_allow_restart", False)
                 self._pending_add.pop(trade.id, None)
                 self._pending_reduce.pop(trade.id, None)
+            elif is_manual_entry and order.ft_order_side == self._entry_order_side:
+                self._record_chart_marker(
+                    event_type="manual_add", pair=pair, trade_id=trade.id,
+                    side=self._side_str, price=entry_price, amount=margin,
+                    current_time=current_time, message="手动加仓",
+                    candle_time=current_time
+                )
+            elif is_manual_exit and order.ft_order_side == self._exit_order_side:
+                trade_amount = float(getattr(trade, "amount", 0) or 0)
+                is_full_exit = trade_amount > 0 and qty >= trade_amount * 0.99
+                self._record_chart_marker(
+                    event_type="manual_exit" if is_full_exit else "manual_reduce",
+                    pair=pair, trade_id=trade.id,
+                    side=self._side_str, price=entry_price, amount=margin,
+                    current_time=current_time,
+                    message="手动平仓" if is_full_exit else "手动减仓",
+                    candle_time=current_time
+                )
         except Exception:
             logger.exception(f"{GRID_TAG} order_filled 网格记录失败")
 

@@ -371,7 +371,8 @@ function buildMarkers(rawEvents, candleData) {
         // 1. 获取事件时间
         const isFillEvent = [
             'grid_entry', 'grid_add', 'grid_sell', 'grid_reduce',
-            'manual_entry', 'dca', 'trend_add', 'kdj_reduce'
+            'manual_entry', 'manual_add', 'manual_reduce', 'manual_exit',
+            'dca', 'trend_add', 'kdj_reduce'
         ].includes(e.event_type)
         // Fill callbacks carry the actual execution time in `time`. The
         // candle_time field is retained for legacy events only.
@@ -453,7 +454,7 @@ function buildMarkers(rawEvents, candleData) {
         }
     })
 
-    // ★ 新增：如果同一根 K 线既有首仓又有加仓，只保留首仓（首仓更关键）
+    // 同一根 K 线上的不同成交都保留，避免漏掉真实订单标记。
     const finalMarkers = []
     const timeMap = new Map()
 
@@ -466,12 +467,7 @@ function buildMarkers(rawEvents, candleData) {
     })
 
     timeMap.forEach((markers, time) => {
-        // 如果该 K 线有 grid_entry，把 grid_add 过滤掉
-        const hasEntry = markers.some(m => m.event_type === 'grid_entry' || (m.text && m.text.includes('网格首仓')))
         markers.forEach(m => {
-            if (hasEntry && m.event_type === 'grid_add' && !(m.text && m.text.includes('网格首仓'))) {
-                return // 丢弃同根 K 线的加仓
-            }
             finalMarkers.push(m)
         })
     })
@@ -479,7 +475,6 @@ function buildMarkers(rawEvents, candleData) {
     // 按时间排序返回
     return finalMarkers.sort((a, b) => a.time - b.time)
 
-    return normalMarkers
 }
 
 function buildMarkerConfig(e) {
@@ -490,21 +485,22 @@ function buildMarkerConfig(e) {
         case "signal":
             return { position: "belowBar", color: "#673ab7", shape: "arrowUp", text: `信号开仓 ${priceStr}`, size: 2 }
         case "manual_entry":
-            return { position: "belowBar", color: "#9c27b0", shape: "arrowUp", text: `手动开仓 ${priceStr}`, size: 2,
+        case "manual_add":
+            return { position: "belowBar", color: "#f44336", shape: "arrowUp", text: `${e.message || "手动开仓/加仓成交"} ${priceStr}`, size: 2,
                 title: `价格:${priceStr || '-'}\n数量:${e.amount ?? '-'}` }
         case "dca":
-            return { position: "belowBar", color: "#2196f3", shape: "arrowUp", text: `DCA加仓 ${priceStr}`, size: 1,
+            return { position: "belowBar", color: "#f44336", shape: "arrowUp", text: `DCA加仓 ${priceStr}`, size: 1,
                 title: `价格:${priceStr}\n数量:${e.amount}` }
         case "trend_add":
-            return { position: "belowBar", color: "#00bcd4", shape: "arrowUp", text: `趋势加仓 ${priceStr}`,
+            return { position: "belowBar", color: "#f44336", shape: "arrowUp", text: `趋势加仓 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}` }
         case "kdj_reduce":
-            return { position: "aboveBar", color: "#9c27b0", shape: "arrowDown", text: `KDJ减仓 ${priceStr}`,
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `KDJ减仓 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}` }
         case "grid_entry":  // ★ 首仓标记
             return {
                 position: "belowBar",
-                color: "#e91e63",  // 粉红色
+                color: "#f44336",
                 shape: "arrowUp",
                 text: e.message || `网格首仓 ${priceStr}`, // 显示“网格首仓”
                 size: 3, // 稍微放大一点
@@ -515,7 +511,7 @@ function buildMarkerConfig(e) {
                 position: "belowBar",
                 // 如果你想完全统一颜色，可以全用 "#2196f3"
                 // 如果首仓要突出，可以根据 e.message 里的关键字判断，但由于上面聚合了，建议统一用蓝色，带上 xN 后缀即可
-                color: "#2196f3",
+                color: "#f44336",
                 shape: "arrowUp",
                 text: `网格加仓 ${priceStr}`,
                 title: `均价:${priceStr}\n总量:${e.amount}`,
@@ -524,23 +520,34 @@ function buildMarkerConfig(e) {
         case "grid_reduce":
             return {
                 position: "aboveBar",
-                color: "#ff9800", // 减仓用橙色
+                color: "#00c853",
                 shape: "arrowDown",
                 text: `网格减仓 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}`
             }
+        case "grid_sell":
+        case "manual_reduce":
+        case "manual_exit":
+            return {
+                position: "aboveBar",
+                color: "#00c853",
+                shape: "arrowDown",
+                text: `${e.message || "手动减仓/平仓成交"} ${priceStr}`,
+                title: `价格:${priceStr}\n数量:${e.amount}`,
+                size: 2
+            }
         case "tp":
-            return { position: "aboveBar", color: "#ff9800", shape: "arrowDown", text: `${e.message || "TP"} ${priceStr}` }
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `${e.message || "TP"} ${priceStr}` }
         case "sl":
-            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `SL ${priceStr}` }
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `SL ${priceStr}` }
         case "stop_loss":
-            return { position: "aboveBar", color: "#f44336", shape: "arrowDown", text: `止损平仓 ${priceStr}`,
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `止损平仓 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}`, size: 2 }
         case "global_tp":
             return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `全局止盈 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
         case "global_sl":
-            return { position: "aboveBar", color: "#d50000", shape: "arrowDown", text: `全局止损 ${priceStr}`,
+            return { position: "aboveBar", color: "#00c853", shape: "arrowDown", text: `全局止损 ${priceStr}`,
                 title: `价格:${priceStr}\n数量:${e.amount}\n${e.message || ""}`, size: 3 }
         default:
             return null
