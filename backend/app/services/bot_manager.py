@@ -254,7 +254,18 @@ class BotManager:
         bot["dryRun"] = bool(bot.get("dryRun", 1))
         bot["maxOpenTrades"] = int(bot.get("maxOpenTrades") or BOT_DEFAULTS["maxOpenTrades"])
         bot["exchangeAccountJson"] = _parse_json_field(bot.get("exchangeAccountJson"))
-        bot["tradingMode"] = bot.get("tradingMode") or BOT_DEFAULTS["tradingMode"]
+        trading_mode = str(bot.get("tradingMode") or BOT_DEFAULTS["tradingMode"]).lower()
+        if trading_mode in ("future", "contract", "swap"):
+            trading_mode = "futures"
+        elif trading_mode not in ("futures", "spot"):
+            trading_mode = BOT_DEFAULTS["tradingMode"]
+        bot["tradingMode"] = trading_mode
+        try:
+            bot["leverage"] = min(100, max(1, int(round(float(
+                bot.get("leverage") or BOT_DEFAULTS["leverage"]
+            )))))
+        except (TypeError, ValueError):
+            bot["leverage"] = BOT_DEFAULTS["leverage"]
         bot["marginMode"] = bot.get("marginMode") or BOT_DEFAULTS["marginMode"]
 
         # ★ 风控字段

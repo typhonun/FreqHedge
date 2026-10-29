@@ -1,5 +1,7 @@
 # backend/app/api/exchange.py
 from fastapi import APIRouter, Query, Body, HTTPException
+from pydantic import BaseModel
+import ccxt
 from app.services.exchange_service import ExchangeService
 from app.services.bot_manager import BotManager
 from app.services.config_service import ConfigService
@@ -7,6 +9,63 @@ from app.services.freqtrade_client import FreqtradeClient
 from app.services.bot_runtime import list_running_bots, list_all_bots, get_bot_url
 
 router = APIRouter()
+
+
+class ExchangeConnectionRequest(BaseModel):
+    exchange: str
+    apiKey: str
+    apiSecret: str
+    passphrase: str = ""
+    tradingMode: str = "futures"
+
+
+@router.post("/balance")
+def account_balance(data: ExchangeConnectionRequest):
+    try:
+        return ExchangeService.get_account_balance(
+            data.exchange, data.apiKey.strip(), data.apiSecret.strip(),
+            data.passphrase.strip(), data.tradingMode
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"获取交易所余额失败：{str(exc)[:240]}")
+
+
+@router.post("/wallets")
+def account_wallets(data: ExchangeConnectionRequest):
+    try:
+        return ExchangeService.get_account_wallets(
+            data.exchange, data.apiKey.strip(), data.apiSecret.strip(), data.passphrase.strip()
+        )
+    except Exception as exc:
+        raise HTTPException(400, f"获取交易所钱包余额失败：{str(exc)[:240]}")
+
+
+@router.post("/test-connection")
+def test_connection(data: ExchangeConnectionRequest):
+    """Validate real exchange credentials without persisting them."""
+    exchange_name = {"gate": "gateio", "huobi": "htx"}.get(data.exchange, data.exchange)
+    exchange_class = getattr(ccxt, exchange_name, None)
+    if exchange_class is None:
+        raise HTTPException(400, "不支持的交易所")
+    if not data.apiKey.strip() or not data.apiSecret.strip():
+        raise HTTPException(400, "API Key 和 API Secret 不能为空")
+
+    config = {
+        "apiKey": data.apiKey.strip(),
+        "secret": data.apiSecret.strip(),
+        "enableRateLimit": True,
+        "timeout": 10000,
+    }
+    config["options"] = {"defaultType": "future"}
+    if data.passphrase.strip():
+        config["password"] = data.passphrase.strip()
+
+    try:
+        client = exchange_class(config)
+        client.fetch_balance({"type": "future"})
+        return {"success": True}
+    except Exception as exc:
+        raise HTTPException(400, f"交易所连接失败：{str(exc)[:240]}")
 
 @router.get("/pairs")
 def get_pairs(

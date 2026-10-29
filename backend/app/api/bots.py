@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
-from pydantic import model_validator
+from pydantic import model_validator, Field
 
 from app.services.bot_manager import BotManager
 from app.services.position_service import PositionService
@@ -20,7 +20,7 @@ class BotBaseInfo(BaseModel):
     pair: list[str]
     capital: float
     stakeAmount: float = BOT_DEFAULTS["stakeAmount"]
-    leverage: int = BOT_DEFAULTS["leverage"]
+    leverage: int = Field(default=BOT_DEFAULTS["leverage"], ge=1, le=100)
     maxOpenTrades: int = BOT_DEFAULTS["maxOpenTrades"]
     dryRun: bool = BOT_DEFAULTS["dryRun"]
     enableLong: bool = BOT_DEFAULTS["enableLong"]

@@ -7,7 +7,7 @@ import GridPanel from '@features/strategy/components/GridPanel.vue'
 export const STRATEGY_DEFS = {
   dca: {
     label: 'DCA 机器人',
-    desc: '经典马丁格尔加仓策略，支持 RSI/KDJ 过滤、动态止盈、网格等丰富配置',
+    desc: '经典马丁格尔加仓策略，支持 RSI/KDJ 过滤、动态止盈、等配置',
     icon: 'TrendCharts',
     color: '#409EFF',
     panel: StrategyPanel,

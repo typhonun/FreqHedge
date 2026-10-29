@@ -1,6 +1,7 @@
 # backend/app/services/exchange_service.py
 import time
 import requests
+import ccxt
 
 BINANCE_FAPI = "https://fapi.binance.com"
 
@@ -13,8 +14,62 @@ CACHE_SECONDS = 600  # 10 分钟缓存
 _pair_limits_cache = {}
 _pair_limits_cache_ts = 0
 _PAIR_LIMITS_TTL = 60
+_balance_cache = {}
+_BALANCE_CACHE_TTL = 10
 
 class ExchangeService:
+
+    @staticmethod
+    def get_account_balance(exchange: str, api_key: str, api_secret: str,
+                             passphrase: str = "", trading_mode: str = "futures"):
+        exchange_name = {"gate": "gateio", "huobi": "htx"}.get(exchange, exchange)
+        exchange_class = getattr(ccxt, exchange_name, None)
+        if exchange_class is None:
+            raise ValueError(f"不支持的交易所: {exchange}")
+        if not api_key or not api_secret:
+            raise ValueError("实盘账户缺少 API 凭证")
+
+        balance_type = "spot" if trading_mode == "spot" else "future"
+        cache_key = (exchange_name, api_key, api_secret, passphrase, balance_type)
+        now = time.time()
+        cached = _balance_cache.get(cache_key)
+        if cached and now - cached["time"] < _BALANCE_CACHE_TTL:
+            return cached["data"]
+
+        config = {
+            "apiKey": api_key,
+            "secret": api_secret,
+            "enableRateLimit": True,
+            "timeout": 10000,
+        }
+        config["options"] = {"defaultType": balance_type}
+        if passphrase:
+            config["password"] = passphrase
+        client = exchange_class(config)
+        data = client.fetch_balance({"type": balance_type})
+        result = {
+            "total": float((data.get("total") or {}).get("USDT") or 0),
+            "free": float((data.get("free") or {}).get("USDT") or 0),
+            "used": float((data.get("used") or {}).get("USDT") or 0),
+        }
+        _balance_cache[cache_key] = {"time": now, "data": result}
+        return result
+
+    @staticmethod
+    def get_account_wallets(exchange: str, api_key: str, api_secret: str,
+                            passphrase: str = ""):
+        wallets = {}
+        errors = []
+        for wallet_type in ("futures", "spot"):
+            try:
+                wallets[wallet_type] = ExchangeService.get_account_balance(
+                    exchange, api_key, api_secret, passphrase, wallet_type
+                )
+            except Exception as exc:
+                errors.append(f"{wallet_type}: {exc}")
+        if not wallets:
+            raise RuntimeError("; ".join(errors))
+        return wallets
 
     @staticmethod
     def get_binance_usdt_futures_pair_limits(pair: str):

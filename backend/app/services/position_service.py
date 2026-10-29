@@ -492,6 +492,14 @@ class PositionService:
         total_balance = long_total + short_total
         available_balance = total_balance - used_margin
 
+        if dry_run is False:
+            live_balance = PositionService._get_live_exchange_balance(bot_id)
+            if live_balance is not None:
+                total_balance = live_balance["total"]
+                available_balance = live_balance["free"] - used_margin
+                long_available = available_balance
+                short_available = 0.0
+
         return {
             "total_balance": round(total_balance, 2),
             "available_balance": round(available_balance, 2),
@@ -501,6 +509,41 @@ class PositionService:
             "long_available": round(long_available, 2),
             "short_available": round(short_available, 2),
         }
+
+    @staticmethod
+    def _get_live_exchange_balance(bot_id=None):
+        bots = list_all_bots(dry_run=False)
+        if bot_id is not None:
+            bots = [bot for bot in bots if bot.get("id") == bot_id]
+        accounts = {}
+        for bot in bots:
+            account = bot.get("exchangeAccountJson") or {}
+            if account.get("exchange") and account.get("apiKey") and account.get("apiSecret"):
+                key = (
+                    account["exchange"], account["apiKey"],
+                    account["apiSecret"], account.get("passphrase", "")
+                )
+                accounts[key] = account
+        if not accounts:
+            return None
+        total = free = used = 0.0
+        failed = False
+        for account in accounts.values():
+            try:
+                wallets = ExchangeService.get_account_wallets(
+                    account["exchange"], account["apiKey"],
+                    account["apiSecret"], account.get("passphrase", "")
+                )
+                for balance in wallets.values():
+                    total += balance["total"]
+                    free += balance["free"]
+                    used += balance["used"]
+            except Exception as exc:
+                failed = True
+                print(f"[position] live balance lookup failed: {exc}")
+        if failed:
+            return None
+        return {"total": total, "free": free, "used": used}
 
     @staticmethod
     def get_floating_profit(snapshot=None, long_positions=None, short_positions=None,

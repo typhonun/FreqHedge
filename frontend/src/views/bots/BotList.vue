@@ -363,13 +363,15 @@ const goDetail = async (bot) => {
 }
 
 // 查询机器人是否有未平仓持仓
-const hasOpenPositions = async (botId) => {
+const hasOpenPositions = async (bot) => {
   try {
-    const { data } = await axios.get(`${API}/chart/bot-positions/${botId}`)
+    const { data } = await axios.get(`${API}/chart/bot-positions/${bot.id}`, {
+      params: { dry_run: Boolean(bot.dryRun) },
+    })
     return Array.isArray(data) && data.length > 0
   } catch (e) {
     // 查询失败时保守处理：视为有持仓，禁止停止（避免误停）
-    console.warn(`[hasOpenPositions] 查询持仓失败 bot=${botId}`, e)
+    console.warn(`[hasOpenPositions] 查询持仓失败 bot=${bot.id}`, e)
     return null // null 表示查询失败
   }
 }
@@ -382,7 +384,7 @@ const handleToggle = async (bot) => {
     loadingIds.value.add(bot.id)
     let positions
     try {
-      positions = await hasOpenPositions(bot.id)
+      positions = await hasOpenPositions(bot)
     } finally {
       loadingIds.value.delete(bot.id)
     }
@@ -441,7 +443,7 @@ const handleDelete = async (bot) => {
     loadingIds.value.add(bot.id)
     let positions
     try {
-      positions = await hasOpenPositions(bot.id)
+      positions = await hasOpenPositions(bot)
     } finally {
       loadingIds.value.delete(bot.id)
     }

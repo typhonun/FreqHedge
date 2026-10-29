@@ -39,11 +39,11 @@
                   <div class="field-value">
                     <el-select
                       v-model="botBaseInfo.exchangeAccountId"
-                      placeholder="Demo"
+                      :placeholder="modeStore.isSimulation.value ? 'Demo' : '请选择真实交易所账户'"
                       style="width: 100%"
-                      clearable
+                      :clearable="modeStore.isSimulation.value"
                     >
-                      <el-option-group>
+                      <el-option-group v-if="modeStore.isSimulation.value">
                         <el-option
                           label="Demo"
                           :value="DRY_RUN_VALUE"
@@ -70,19 +70,6 @@
                         实盘模式，将使用所选账户的 API 密钥下单
                       </template>
                     </span>
-
-                    <el-text
-                      v-if="!exchangeAccounts.length"
-                      type="warning"
-                      size="small"
-                      style="margin-top: 4px"
-                    >
-                      还没有配置真实账户，去
-                      <el-link type="primary" @click="goExchangeSettings">
-                        设置 → 交易所 API
-                      </el-link>
-                      添加
-                    </el-text>
                   </div>
                 </div>
 
@@ -167,12 +154,15 @@
                     <div class="inline-group inline-group--inputs">
                       <div class="inline-field" style="position: relative;">
                         <span class="inline-field__label">机器人可用资金 (USDT)</span>
-                        <el-input-number
-                          v-model="botBaseInfo.capital"
-                          :min="1" :step="10"
-                          controls-position="right"
-                          style="width: 100%"
-                        />
+                          <el-input-number
+                            v-model="botBaseInfo.capital"
+                            :min="capitalMin" :max="capitalMax"
+                            :step="10"
+                            :placeholder="liveBalanceLoading ? '正在拉取余额...' : (isDryRun ? '请输入资金' : '请输入资金')"
+                            :disabled="!isDryRun && liveBalanceLoading"
+                            controls-position="right"
+                            style="width: 100%"
+                          />
                         <!-- ★ 新增：最低启动资金提示 -->
                         <span
                           v-if="strategyType === 'grid' && minGridCapital > 0"
@@ -217,7 +207,7 @@
                         <el-input-number
                           v-model="botBaseInfo.leverage"
                           :min="1"
-                          :max="botBaseInfo.tradingMode === 'spot' ? 1 : 125"
+                          :max="botBaseInfo.tradingMode === 'spot' ? 1 : 100"
                           :disabled="botBaseInfo.tradingMode === 'spot' || isLocked"
                           :step="1"
                           controls-position="right"
@@ -895,6 +885,7 @@ import {
   downloadData
 } from '@/api/backtest.js'
 import { useBotStore } from '@/stores/botStore.js'
+import { useModeStore } from '@/stores/modeStore'
 import axios from 'axios'
 
 /* ══════════════════════════════════════════════════════════════════
@@ -905,7 +896,13 @@ const API = 'http://localhost:9000'
 const route = useRoute()
 const router = useRouter()
 const { createBot, updateBot } = useBotStore()
-const { accounts: exchangeAccounts, defaultAccount, getById: getExchangeAccount } = useExchangeAccounts()
+const { accounts: allExchangeAccounts, defaultAccount, getById: getExchangeAccount } = useExchangeAccounts()
+const modeStore = useModeStore()
+const exchangeAccounts = computed(() =>
+  modeStore.isSimulation.value
+    ? []
+    : allExchangeAccounts.value.filter(acc => !acc.isSimulation)
+)
 const exchangeLabel = (v) => ({
   binance: 'Binance',
   okx: 'OKX',
@@ -919,6 +916,18 @@ const DRY_RUN_VALUE = '__dry_run__'
 
 const goExchangeSettings = () => {
   router.push('/settings/exchanges')
+}
+
+const normalizeTradingMode = (value) => {
+  const mode = String(value || '').toLowerCase()
+  return mode === 'spot' ? 'spot' : 'futures'
+}
+
+const normalizeLeverage = (value, tradingMode) => {
+  if (normalizeTradingMode(tradingMode) === 'spot') return 1
+  const leverage = Number(value)
+  if (!Number.isFinite(leverage)) return BOT_DEFAULTS.leverage
+  return Math.min(100, Math.max(1, Math.round(leverage)))
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1018,10 +1027,17 @@ const loadBotDetail = async () => {
       isDraft.value = data.status === 'draft'
     }
 
+    const isDryRunFromData = data.dryRun !== undefined
+      ? !!data.dryRun
+      : !data.exchangeAccountId
+    loadedDryRun.value = isDryRunFromData
+
     // ★ 2. 查询是否有持仓（仅在编辑且运行中时查询）
     if (isEdit.value && botStatus.value === 'running') {
       try {
-        const posRes = await axios.get(`${API}/chart/bot-positions/${sourceId}`)
+        const posRes = await axios.get(`${API}/chart/bot-positions/${sourceId}`, {
+          params: { dry_run: isDryRunFromData },
+        })
         const positions = posRes.data || []
         // 只要返回的数组长度大于 0，说明有持仓
         hasOpenPositions.value = positions.length > 0
@@ -1040,25 +1056,23 @@ const loadBotDetail = async () => {
 
     /* ★ 关键改动：Dry Run 时强制清空 exchangeAccountId，
        避免旧数据「dryRun=true 但有 accountId」的歧义 */
-    const isDryRunFromData = data.dryRun !== undefined
-      ? !!data.dryRun
-      : !data.exchangeAccountId
-
     const accountId = isDryRunFromData
       ? DRY_RUN_VALUE
-      : (data.exchangeAccountId ?? DRY_RUN_VALUE)
+      : (data.exchangeAccountId || exchangeAccounts.value[0]?.id || null)
 
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
       pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
-      capital: data.capital ?? BOT_DEFAULTS.capital,
+      capital: (!isDryRunFromData && (data.status === 'draft' || isCopy.value))
+        ? null
+        : (data.capital ?? BOT_DEFAULTS.capital),
       stakeAmount: data.stakeAmount ?? BOT_DEFAULTS.stakeAmount,
-      leverage: data.leverage ?? BOT_DEFAULTS.leverage,
+      leverage: normalizeLeverage(data.leverage, data.tradingMode),
       // ★ 如果是网格策略，强制 maxOpenTrades 为 1
       maxOpenTrades: strategyType.value === 'grid' ? 1 : (data.maxOpenTrades ?? BOT_DEFAULTS.maxOpenTrades),
       direction: dir,
       exchangeAccountId: accountId,
-      tradingMode: data.tradingMode ?? BOT_DEFAULTS.tradingMode,
+      tradingMode: normalizeTradingMode(data.tradingMode ?? BOT_DEFAULTS.tradingMode),
       marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
     }
 
@@ -1336,14 +1350,19 @@ const botBaseInfo = ref({
   name: '',
   pair: [],
   ...BOT_DEFAULTS,
+  capital: modeStore.isSimulation.value ? BOT_DEFAULTS.capital : null,
   direction: 'long',
-  exchangeAccountId: DRY_RUN_VALUE,
+  exchangeAccountId: modeStore.isSimulation.value ? DRY_RUN_VALUE : null,
 })
 
-/* ★ Dry Run 判定：显式字符串 or 空值（clearable 后）都算 Dry Run */
+const loadedDryRun = ref(null)
+
+/* ★ 编辑/复制时以机器人保存的 dryRun 为准，不能用空账户 ID 推断模式 */
 const isDryRun = computed(() => {
+  if (!isEdit.value && !isCopy.value) return modeStore.isSimulation.value
+  if (loadedDryRun.value !== null) return loadedDryRun.value
   const v = botBaseInfo.value.exchangeAccountId
-  return v === DRY_RUN_VALUE || v === null || v === undefined || v === ''
+  return v === DRY_RUN_VALUE
 })
 
 const isDraft = ref(false)
@@ -1361,6 +1380,52 @@ const currentStrategy = computed(() => strategyConfig)
 
 const pairOptions = ref([])
 const pairLoading = ref(false)
+const liveAvailableBalance = ref(null)
+const liveBalanceLoading = ref(false)
+const capitalMin = computed(() => {
+  if (isDryRun.value) return 1
+  const balance = Number(liveAvailableBalance.value)
+  return Number.isFinite(balance) && balance < 1 ? 0 : 1
+})
+const capitalMax = computed(() => {
+  if (isDryRun.value) return undefined
+  const balance = Number(liveAvailableBalance.value)
+  return Number.isFinite(balance) ? balance : undefined
+})
+
+const loadLiveBalance = async () => {
+  liveAvailableBalance.value = null
+  if (isDryRun.value || (isEdit.value && !isDraft.value)) return
+  botBaseInfo.value.capital = null
+  const account = getExchangeAccount(botBaseInfo.value.exchangeAccountId)
+  if (!account?.apiKey || !account?.apiSecret) return
+  liveBalanceLoading.value = true
+  try {
+    const { data } = await axios.post(`${API}/exchange/balance`, {
+      exchange: account.exchange,
+      apiKey: account.apiKey,
+      apiSecret: account.apiSecret,
+      passphrase: account.passphrase || '',
+      tradingMode: botBaseInfo.value.tradingMode,
+    })
+    liveAvailableBalance.value = Number(data.free || 0)
+  } catch (e) {
+    liveAvailableBalance.value = null
+    ElMessage.error(e?.response?.data?.detail || '获取交易所可用资金失败')
+  } finally {
+    liveBalanceLoading.value = false
+  }
+}
+
+watch(
+  [modeStore.mode, () => botBaseInfo.value.exchangeAccountId, () => botBaseInfo.value.tradingMode],
+  async () => {
+    if (!isDryRun.value && isDraft.value) {
+      botBaseInfo.value.capital = null
+    }
+    await loadLiveBalance()
+  }
+)
 
 const saving = ref(false)
 const saved = ref(false)
@@ -1561,7 +1626,7 @@ const buildPayload = () => {
     pair: botBaseInfo.value.pair,
     capital: botBaseInfo.value.capital,
     stakeAmount: stakeAmount,        // ★ 用算好的
-    leverage: botBaseInfo.value.leverage,
+    leverage: normalizeLeverage(botBaseInfo.value.leverage, botBaseInfo.value.tradingMode),
     maxOpenTrades: botBaseInfo.value.maxOpenTrades,
     dryRun,
     enableLong: dir === 'long',
@@ -1622,7 +1687,7 @@ const validate = () => {
     ElMessage.warning(`${strategyDef.value.label} 只能选择 1 个交易对`)
     return false
   }
-  if (!botBaseInfo.value.capital || botBaseInfo.value.capital <= 0) {
+  if (botBaseInfo.value.capital == null || botBaseInfo.value.capital <= 0) {
     ElMessage.warning('机器人可用资金必须大于 0')
     return false
   }
@@ -1646,6 +1711,10 @@ const validate = () => {
   }
   if (!botBaseInfo.value.leverage || botBaseInfo.value.leverage < 1) {
     ElMessage.warning('持仓杠杆至少为 1')
+    return false
+  }
+  if (botBaseInfo.value.tradingMode === 'futures' && botBaseInfo.value.leverage > 100) {
+    ElMessage.warning('合约模式杠杆不能超过 100x')
     return false
   }
   if (!botBaseInfo.value.maxOpenTrades || botBaseInfo.value.maxOpenTrades < 1) {
@@ -1787,6 +1856,8 @@ const configDirtyDuringBacktest = ref(false)
 const syncConfig = async () => {
   if (!botId.value) return
   if (!loaded.value) return   // ★ 新增：没加载完不准同步
+  if (botBaseInfo.value.capital == null || Number(botBaseInfo.value.capital) <= 0) return false
+  if (!isDryRun.value && !botBaseInfo.value.exchangeAccountId) return false
 
   // ★ 新增：如果是网格，确保 core 参数有效再提交
   if (strategyType.value === 'grid' && minGridCapital.value === 0) {
@@ -2243,14 +2314,28 @@ const discardDraftIfNeeded = async () => {
   }
 }
 
-const goBack = () => {
-  router.push({ name: 'BotList' })
+const skipLeaveGuard = ref(false)
+
+const goBack = async () => {
+  skipLeaveGuard.value = true
+  try {
+    await router.push({ name: 'BotList' })
+  } catch (e) {
+    skipLeaveGuard.value = false
+    console.warn('[goBack] 返回机器人列表失败', e)
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════
  * 17. 路由离开守卫
  * ══════════════════════════════════════════════════════════════════ */
 onBeforeRouteLeave(async (to, from) => {
+  if (skipLeaveGuard.value) {
+    skipLeaveGuard.value = false
+    await discardDraftIfNeeded()
+    return true
+  }
+
   if (downloading.value) {
     try {
       await ElMessageBox.confirm(
@@ -2344,6 +2429,7 @@ onBeforeRouteLeave(async (to, from) => {
 onMounted(async () => {
   await loadPairs()
   await loadBotDetail()
+  await loadLiveBalance()
   loaded.value = true
   inferPresetFromRange()
 })

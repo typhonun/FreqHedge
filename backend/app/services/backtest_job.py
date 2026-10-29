@@ -8,8 +8,11 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Dict
+from pathlib import Path
 
-FREQTRADE_DIR = Path(r"E:\code\python_code\DcaTp\freqtrade")
+BASE_DIR = Path(__file__).resolve().parents[2]
+
+FREQTRADE_DIR = BASE_DIR / "freqtrade"
 
 
 @dataclass

@@ -6,7 +6,9 @@
       <div>
         <h2 class="page-title">交易所 API</h2>
         <p class="page-desc">
-          配置交易所的 API Key 与 Secret，用于实盘下单、查询持仓和余额。
+              {{ isSimulation
+                ? '模拟盘只需选择交易所并设置账户别名，不需要填写任何 API 密钥。'
+                : '配置正确的交易所 API Key 与 Secret，用于实盘下单、查询持仓和余额。' }}
           所有密钥仅保存在本机后端，不会上传到任何第三方服务器。
           <br />
         </p>
@@ -17,7 +19,7 @@
     </div>
 
     <!-- ============ 模拟账户：置顶、独立、不可操作 ============ -->
-    <div class="account-list">
+    <div v-if="isSimulation" class="account-list">
       <div class="account-card account-card--dry-run">
         <div class="account-card__main">
           <div class="account-brand">
@@ -53,7 +55,7 @@
     <!-- ============ 真实账户列表 ============ -->
     <div v-if="accounts.length" class="account-list">
       <div
-        v-for="acc in accounts"
+        v-for="acc in visibleAccounts"
         :key="acc.id"
         class="account-card"
       >
@@ -127,14 +129,6 @@
       </div>
     </div>
 
-    <!-- 空状态：没有真实账户时的引导 -->
-    <el-empty
-      v-if="!accounts.length"
-      description="还没有配置真实交易所 API，点击右上角添加"
-    >
-      <el-button type="primary" @click="openCreate">添加交易所</el-button>
-    </el-empty>
-
     <!-- ============ 弹窗：新增 / 编辑 ============ -->
     <el-dialog
       v-model="dialogVisible"
@@ -173,7 +167,7 @@
           />
         </el-form-item>
 
-        <el-form-item label="API Key" prop="apiKey">
+        <el-form-item v-if="!isSimulation" label="API Key" prop="apiKey">
           <el-input
             v-model="form.apiKey"
             placeholder="从交易所 API 管理页面获取"
@@ -182,7 +176,7 @@
           />
         </el-form-item>
 
-        <el-form-item label="API Secret" prop="apiSecret">
+        <el-form-item v-if="!isSimulation" label="API Secret" prop="apiSecret">
           <el-input
             v-model="form.apiSecret"
             type="password"
@@ -193,7 +187,7 @@
         </el-form-item>
 
         <el-form-item
-          v-if="needPassphrase(form.exchange)"
+          v-if="!isSimulation && needPassphrase(form.exchange)"
           label="Passphrase"
           prop="passphrase"
         >
@@ -231,7 +225,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 import axios from 'axios'
+import { useModeStore } from '@/stores/modeStore'
 const API = 'http://localhost:9000'
+const modeStore = useModeStore()
+const isSimulation = computed(() => modeStore.isSimulation.value)
 
 /* ══════════════════════════════════════════════════════════════════
  * 常量 / 元数据
@@ -289,11 +286,12 @@ const form = reactive(emptyForm())
 
 const rules = computed(() => ({
   exchange: [{ required: true, message: '请选择交易所', trigger: 'change' }],
-  apiKey: [
+  alias: [{ required: true, message: '请输入账户别名', trigger: 'blur' }],
+  apiKey: isSimulation.value ? [] : [
     { required: true, message: '请输入 API Key', trigger: 'blur' },
     { min: 8, message: 'API Key 长度不正确', trigger: 'blur' },
   ],
-  apiSecret: [
+  apiSecret: isSimulation.value ? [] : [
     { required: true, message: '请输入 API Secret', trigger: 'blur' },
     { min: 8, message: 'API Secret 长度不正确', trigger: 'blur' },
   ],
@@ -309,6 +307,9 @@ const { accounts,
         reload,
         save: saveAccounts,
 } = useExchangeAccounts()
+const visibleAccounts = computed(() =>
+  accounts.value.filter(acc => Boolean(acc.isSimulation) === isSimulation.value)
+)
 
 /* ══════════════════════════════════════════════════════════════════
  * 工具
@@ -332,6 +333,9 @@ const formatNow = () => {
  * ══════════════════════════════════════════════════════════════════ */
 const openCreate = () => {
   Object.assign(form, emptyForm())
+  form.apiKey = ''
+  form.apiSecret = ''
+  form.passphrase = ''
   editing.value = false
   dialogVisible.value = true
 }
@@ -361,19 +365,32 @@ const handleSave = async () => {
   try {
     const isEditing = editing.value
 
+    if (!isSimulation.value) {
+      await axios.post(`${API}/exchange/test-connection`, {
+        exchange: form.exchange,
+        apiKey: form.apiKey,
+        apiSecret: form.apiSecret,
+        passphrase: form.passphrase || '',
+      })
+    }
+
     const payload = {
       ...form,
       id: isEditing ? form.id : uid(),
-      status: isEditing ? form.status : 'ok',
-      lastChecked: isEditing ? form.lastChecked : formatNow(),
+      isSimulation: isSimulation.value,
+      apiKey: isSimulation.value ? '' : form.apiKey,
+      apiSecret: isSimulation.value ? '' : form.apiSecret,
+      passphrase: isSimulation.value ? '' : form.passphrase,
+      status: 'ok',
+      lastChecked: formatNow(),
     }
 
     // 若设为默认，先清掉其他默认
     if (payload.isDefault) {
-      accounts.value.forEach((a) => { a.isDefault = false })
+      visibleAccounts.value.forEach((a) => { a.isDefault = false })
     }
 
-    if (isEditing) {
+    if (isEditing && !isSimulation.value) {
       const idx = accounts.value.findIndex((a) => a.id === payload.id)
       if (idx >= 0) accounts.value[idx] = payload
     } else {
@@ -406,7 +423,7 @@ const handleSave = async () => {
     dialogVisible.value = false
   } catch (e) {
     console.error(e)
-    ElMessage.error('保存失败')
+    ElMessage.error(e?.response?.data?.detail || e?.message || '保存失败')
   } finally {
     saving.value = false
   }
@@ -424,8 +441,8 @@ const handleDelete = async (acc) => {
   }
 
   accounts.value = accounts.value.filter((a) => a.id !== acc.id)
-  if (acc.isDefault && accounts.value.length > 0) {
-    accounts.value[0].isDefault = true
+  if (acc.isDefault && visibleAccounts.value.length > 0) {
+    visibleAccounts.value[0].isDefault = true
   }
   saveAccounts()
   ElMessage.success('已删除')
@@ -440,8 +457,17 @@ const handleSetDefault = (acc) => {
 const handleTest = async (acc) => {
   testingId.value = acc.id
   try {
-    await new Promise((r) => setTimeout(r, 800))
-    acc.status = 'ok'
+    if (isSimulation.value) {
+      acc.status = 'ok'
+    } else {
+      await axios.post(`${API}/exchange/test-connection`, {
+        exchange: acc.exchange,
+        apiKey: acc.apiKey,
+        apiSecret: acc.apiSecret,
+        passphrase: acc.passphrase || '',
+      })
+      acc.status = 'ok'
+    }
     acc.lastChecked = formatNow()
     saveAccounts()
     ElMessage.success('连接正常')
@@ -455,8 +481,28 @@ const handleTest = async (acc) => {
   }
 }
 
-onMounted(() => {
+const refreshRealAccountStatuses = async () => {
+  if (isSimulation.value) return
+  await Promise.all(visibleAccounts.value.map(async (acc) => {
+    try {
+      await axios.post(`${API}/exchange/test-connection`, {
+        exchange: acc.exchange,
+        apiKey: acc.apiKey,
+        apiSecret: acc.apiSecret,
+        passphrase: acc.passphrase || '',
+      })
+      acc.status = 'ok'
+    } catch {
+      acc.status = 'error'
+    }
+    acc.lastChecked = formatNow()
+  }))
+  saveAccounts()
+}
+
+onMounted(async () => {
   reload()
+  await refreshRealAccountStatuses()
 })
 </script>
 

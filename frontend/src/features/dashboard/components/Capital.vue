@@ -72,7 +72,7 @@
                                 v-model="longConfig.leverage"
                                 style="width:100%"
                                 :min="1"
-                                :max="125"
+                                :max="100"
                                 :step="1"
                                 :precision="0"
                             />
@@ -221,7 +221,7 @@
                                 v-model="shortConfig.leverage"
                                 style="width:100%"
                                 :min="1"
-                                :max="125"
+                                :max="100"
                                 :step="1"
                                 :precision="0"
                             />

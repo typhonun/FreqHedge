@@ -167,14 +167,19 @@ class ConfigService:
         else:
             cfg["stake_amount"] = base.get("stakeAmount", BOT_DEFAULTS["stakeAmount"])
 
-        trading_mode = base.get("tradingMode", BOT_DEFAULTS["tradingMode"])
+        trading_mode = str(base.get("tradingMode", BOT_DEFAULTS["tradingMode"])).lower()
+        if trading_mode in ("future", "contract", "swap"):
+            trading_mode = "futures"
+        elif trading_mode != "futures":
+            trading_mode = "spot"
         margin_mode = base.get("marginMode", BOT_DEFAULTS["marginMode"])
 
         cfg["trading_mode"] = trading_mode
 
         if trading_mode == "futures":
             cfg["margin_mode"] = margin_mode
-            cfg["leverage"] = base.get("leverage", BOT_DEFAULTS["leverage"])
+            leverage = float(base.get("leverage", BOT_DEFAULTS["leverage"]) or BOT_DEFAULTS["leverage"])
+            cfg["leverage"] = min(100.0, max(1.0, leverage))
         else:
             cfg.pop("margin_mode", None)
             cfg["leverage"] = 1
