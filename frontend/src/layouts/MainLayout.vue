@@ -41,6 +41,17 @@
           <el-icon :size="30"><Document /></el-icon>
           <span>系统日志</span>
         </el-menu-item>
+        <div class="mode-switcher">
+          <el-button
+            class="mode-switcher__button"
+            :type="modeStore.isSimulation ? 'primary' : 'warning'"
+            plain
+            @click="modeStore.toggleMode"
+          >
+            <span class="mode-dot" />
+            {{ modeStore.label }}
+          </el-button>
+        </div>
       </el-menu>
     </el-aside>
 
@@ -66,8 +77,10 @@ import {
   Odometer, Monitor, SetUp, TrendCharts, Document, Setting, List
 } from '@element-plus/icons-vue'
 import UserMenu from '@components/layout/UserMenu.vue'
+import { useModeStore } from '@/stores/modeStore'
 
 const route = useRoute()
+const modeStore = useModeStore()
 const pageTitle = computed(() => route.meta?.title || '仪表盘')
 </script>
 
@@ -150,6 +163,22 @@ const pageTitle = computed(() => route.meta?.title || '仪表盘')
   width: 3px;
   background: var(--primary-color);
   border-radius: 0 4px 4px 0;
+}
+.mode-switcher {
+  padding: 18px 12px 10px;
+  border-top: 1px solid var(--border-color);
+}
+.mode-switcher__button {
+  width: 100%;
+  height: 42px;
+  font-size: 15px;
+}
+.mode-dot {
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .side-menu .el-menu-item {
   position: relative;

@@ -1,5 +1,5 @@
 # backend/app/api/bots.py
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import Optional
 from concurrent.futures import ThreadPoolExecutor
@@ -147,15 +147,20 @@ def _validate_grid_capital(data: dict):
 # =========================================================
 
 @router.get("")
-async def list_bots():
+async def list_bots(dry_run: bool | None = Query(None)):
     bots = BotManager.list_all()
+    if dry_run is not None:
+        bots = [bot for bot in bots if bool(bot.get("dryRun")) == dry_run]
     return _attach_profit_batch(bots)
 
 
 @router.post("/draft")
-async def create_draft_bot(strategyType: str = "dca"):
-    """新建草稿 bot，返回完整 bot 记录（含 id）"""
-    bot = BotManager.create_draft(strategy_type=strategyType)
+async def create_draft_bot(
+    strategyType: str = "dca",
+    dry_run: bool | None = Query(None),
+):
+    """新建草稿 bot，模式由当前前端交易模式明确传入。"""
+    bot = BotManager.create_draft(strategy_type=strategyType, dry_run=dry_run)
     try:
         ConfigService.generate_configs(bot["id"], {
             "base": {

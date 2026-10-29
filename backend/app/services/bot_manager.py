@@ -494,9 +494,11 @@ class BotManager:
 
         # ★ 清 position_service 缓存
         from app.services import position_service
-        position_service._snapshot_cache.pop(bot_id, None)
-        position_service._snapshot_all_cache["data"] = None
-        position_service._snapshot_all_cache["time"] = 0
+        position_service._snapshot_cache = {
+            key: value for key, value in position_service._snapshot_cache.items()
+            if key[0] != bot_id
+        }
+        position_service._snapshot_all_cache.clear()
         for key in list(position_service._last_good_data.keys()):
             if key[0] == bot_id:
                 position_service._last_good_data.pop(key, None)
@@ -536,9 +538,11 @@ class BotManager:
         # 2. 清缓存（和 delete 一致）
         try:
             from app.services import position_service
-            position_service._snapshot_cache.pop(bot_id, None)
-            position_service._snapshot_all_cache["data"] = None
-            position_service._snapshot_all_cache["time"] = 0
+            position_service._snapshot_cache = {
+                key: value for key, value in position_service._snapshot_cache.items()
+                if key[0] != bot_id
+            }
+            position_service._snapshot_all_cache.clear()
             for key in list(position_service._last_good_data.keys()):
                 if key[0] == bot_id:
                     position_service._last_good_data.pop(key, None)
@@ -680,7 +684,7 @@ class BotManager:
         return ProcessService.status_bot(bot)
 
     @staticmethod
-    def create_draft(strategy_type: str = "dca"):
+    def create_draft(strategy_type: str = "dca", dry_run: bool | None = None):
         """创建一个草稿 bot：status='draft'，参数用默认值，允许 pair 为空"""
         default_payload = {
             "base": {
@@ -694,6 +698,8 @@ class BotManager:
         }
 
         base = default_payload["base"]
+        if dry_run is not None:
+            base["dryRun"] = dry_run
 
         # ★ 先算端口（事务外）
         port = _alloc_port()

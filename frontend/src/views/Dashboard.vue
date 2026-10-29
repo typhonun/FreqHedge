@@ -53,7 +53,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, onActivated, onDeactivated, ref } from 'vue'
+import { computed, onMounted, onUnmounted, onActivated, onDeactivated, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ArrowRight } from '@element-plus/icons-vue'
 
@@ -63,10 +63,12 @@ import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 
 import { useTradeStore } from '@/stores/tradeStore'
 import axios from 'axios'
+import { useModeStore } from '@/stores/modeStore'
 
 const API = 'http://localhost:9000'
 const router = useRouter()
 const store = useTradeStore()
+const modeStore = useModeStore()
 
 // 两个独立的下拉框
 const accountSelected = ref('__total__')
@@ -97,7 +99,7 @@ let historyTimer = null
 // 1. 单独封装请求曲线的函数（直接调用 API）
 const fetchBalanceCurve = async (botId, period) => {
   try {
-    let url = `${API}/position/balance_curve?period=${period}`
+    let url = `${API}/position/balance_curve?period=${period}&dry_run=${modeStore.isSimulation.value}`
     if (botId) {
       url += `&bot_id=${botId}`
     }
@@ -117,12 +119,11 @@ const onPeriodChange = async (newPeriod) => {
 
 // 3. 刷新账户数据（保留你原有的 refreshAccount）
 const refreshAccount = () =>
-  store.refreshAccount(toBotId(accountSelected.value))
+  store.refreshAccount(toBotId(accountSelected.value), currentPeriod.value)
 
-// 4. 完整刷新账户（包括拉取曲线）
+// 4. 完整刷新账户；refreshAccount 已同时更新余额曲线
 const refreshAccountAll = async () => {
   await refreshAccount()
-  await fetchBalanceCurve(toBotId(accountSelected.value), currentPeriod.value)
 }
 
 const refreshProfitCurve = () =>
@@ -154,7 +155,7 @@ const stopTimers = () => {
 
 const loadBotList = async () => {
   try {
-    const { data } = await axios.get(`${API}/bots`)
+    const { data } = await axios.get(`${API}/bots?dry_run=${modeStore.isSimulation.value}`)
     botList.value = data.map(b => ({ id: b.id, name: b.name }))
   } catch (e) {
     console.error('load bot list failed', e)
@@ -190,6 +191,16 @@ onActivated(async () => {
   await store.refresh(null)
   await store.refreshHistory(null)
   startTimers()
+})
+
+watch(modeStore.mode, async () => {
+  accountSelected.value = '__total__'
+  profitSelected.value = '__total__'
+  await loadBotList()
+  await refreshAccountAll()
+  await refreshProfitCurve()
+  await store.refresh(null)
+  await store.refreshHistory(null)
 })
 </script>
 

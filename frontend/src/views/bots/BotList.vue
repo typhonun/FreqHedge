@@ -292,13 +292,14 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   Plus, MoreFilled, VideoPlay, VideoPause, Setting, Delete
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useBotStore } from '@/stores/botStore.js'
+import { useModeStore } from '@/stores/modeStore'
 import StrategySelectDialog from '@/components/common/StrategySelectDialog.vue'
 import axios from 'axios'
 const API = 'http://localhost:9000'
@@ -312,13 +313,15 @@ const filterStatus = ref('all')
 const showStrategyDialog = ref(false)
 
 const { state, fetchBots, toggleBot, deleteBot, createDraft } = useBotStore()
+const modeStore = useModeStore()
 const bots = computed(() => state.bots)
 
 const loadingIds = ref(new Set())
 
 const filteredBots = computed(() => {
-  if (filterStatus.value === 'all') return bots.value
-  return bots.value.filter(b => b.status === filterStatus.value)
+  const modeBots = bots.value.filter(b => Boolean(b.dryRun) === modeStore.isSimulation.value)
+  if (filterStatus.value === 'all') return modeBots
+  return modeBots.filter(b => b.status === filterStatus.value)
 })
 
 const goCreate = () => {
@@ -645,6 +648,11 @@ onMounted(async () => {
 })
 
 onUnmounted(stopTimer)
+
+watch(modeStore.mode, async () => {
+  filterStatus.value = 'all'
+  await fetchBots()
+})
 </script>
 
 <style scoped>

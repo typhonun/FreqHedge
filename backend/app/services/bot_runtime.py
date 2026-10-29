@@ -61,10 +61,17 @@ def get_enabled_sides(bot: dict) -> list[str]:
     return sides
 
 
-def list_running_bots() -> list[dict]:
+def list_running_bots(dry_run: bool | None = None) -> list[dict]:
     """返回所有 status=running 的 bot"""
-    return [b for b in BotManager.list_all() if b.get("status") == "running"]
+    return [
+        b for b in BotManager.list_all()
+        if b.get("status") == "running"
+        and (dry_run is None or bool(b.get("dryRun")) == dry_run)
+    ]
 
 
-def list_all_bots() -> list[dict]:
-    return BotManager.list_all()
+def list_all_bots(dry_run: bool | None = None) -> list[dict]:
+    bots = BotManager.list_all()
+    if dry_run is None:
+        return bots
+    return [b for b in bots if bool(b.get("dryRun")) == dry_run]

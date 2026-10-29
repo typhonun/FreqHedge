@@ -1,6 +1,7 @@
 from pathlib import Path
 import re
 from datetime import datetime
+from app.services.bot_manager import BotManager
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
 
@@ -90,9 +91,13 @@ class LogService:
         return result
 
     @classmethod
-    def read(cls, source: str, limit: int = 200, bot_id: int = None) -> list:
+    def read(cls, source: str, limit: int = 200, bot_id: int = None,
+             dry_run: bool | None = None) -> list:
         if source == "strategy":
             if bot_id is None:
+                return []
+            bot = BotManager.get(bot_id)
+            if not bot or (dry_run is not None and bool(bot.get("dryRun")) != dry_run):
                 return []
             result = []
             for p in _bot_log_paths(bot_id):
@@ -106,7 +111,7 @@ class LogService:
         return cls._read_file(path, source, limit)
 
     @classmethod
-    def all(cls) -> list:
+    def all(cls, dry_run: bool | None = None) -> list:
         result = []
 
         # backend / frontend
@@ -114,8 +119,13 @@ class LogService:
             result.extend(cls.read(source, limit=200))
 
         # strategy：每个 bot 取最近 100 行
-        for path in _discover_strategy_logs():
-            result.extend(cls._read_file(path, "strategy", limit=100))
+        allowed = {
+            b["id"] for b in BotManager.list_all()
+            if dry_run is None or bool(b.get("dryRun")) == dry_run
+        }
+        for bot_id in allowed:
+            for path in _bot_log_paths(bot_id):
+                result.extend(cls._read_file(path, "strategy", limit=100))
 
         result.sort(key=lambda x: (x.get("time", 0), x.get("index", 0)))
         return result[-500:]

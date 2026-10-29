@@ -1,5 +1,6 @@
 import { defineStore } from "pinia"
 import axios from "axios"
+import { useModeStore } from './modeStore'
 
 const API = "http://localhost:9000"
 let isRefreshingAccount = false
@@ -8,6 +9,7 @@ let isRefreshingGeneral = false
 const _q = (botId) => {
   const parts = []
   if (botId != null) parts.push(`bot_id=${botId}`)
+  parts.push(`dry_run=${useModeStore().isSimulation.value}`)
   parts.push(`_t=${Date.now()}`)
   return `?${parts.join('&')}`
 }
@@ -33,7 +35,7 @@ export const useTradeStore = defineStore("trade", {
 
   actions: {
     // 账户总览：summary / floating / balanceCurve
-    async refreshAccount(botId = null) {
+    async refreshAccount(botId = null, period = "1D") {
       if (isRefreshingAccount) return
       isRefreshingAccount = true
 
@@ -43,7 +45,7 @@ export const useTradeStore = defineStore("trade", {
         const [summary, floating, curve] = await Promise.all([
           axios.get(`${API}/position/summary${q}`),
           axios.get(`${API}/position/floating${q}`),
-          axios.get(`${API}/position/balance_curve${q}`),
+          axios.get(`${API}/position/balance_curve${q}&period=${period}`),
         ])
         this.summary = summary.data
         this.floating = floating.data

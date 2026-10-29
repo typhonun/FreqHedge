@@ -65,14 +65,16 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, watch } from 'vue'
 import { useTradeStore } from '@/stores/tradeStore'
+import { useModeStore } from '@/stores/modeStore'
 import { useBotStore } from '@/stores/botStore'
 import GroupedPositionTable from '@features/dashboard/components/GroupedPositionTable.vue'
 import GroupedClosedTradeTable from '@features/dashboard/components/GroupedClosedTradeTable.vue'
 
 const store = useTradeStore()
 const botStore = useBotStore()
+const modeStore = useModeStore()
 
-const bots = computed(() => botStore.state.bots)
+const bots = computed(() => botStore.state.bots.filter(b => Boolean(b.dryRun) === modeStore.isSimulation.value))
 
 const filterBotId = ref(null)
 const viewMode = ref('grouped')
@@ -104,6 +106,12 @@ const reload = async () => {
 }
 
 watch(filterBotId, async () => {
+  await reload()
+})
+
+watch(modeStore.mode, async () => {
+  filterBotId.value = null
+  await loadBots()
   await reload()
 })
 

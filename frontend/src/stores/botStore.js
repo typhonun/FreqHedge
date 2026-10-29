@@ -1,6 +1,7 @@
 // src/stores/botStore.js
 import { reactive } from 'vue'
 import axios from 'axios'
+import { useModeStore } from './modeStore'
 
 const API = 'http://localhost:9000'
 
@@ -42,8 +43,12 @@ export function useBotStore() {
     await fetchBots()
   }
   const createDraft = async (strategyType = 'dca') => {
+    const modeStore = useModeStore()
     const { data } = await axios.post(`${API}/bots/draft`, null, {
-      params: { strategyType }
+      params: {
+        strategyType,
+        dry_run: modeStore.isSimulation.value,
+      }
     })
     return data
   }

@@ -17,64 +17,66 @@ class PositionAction(BaseModel):
 
 
 @router.get("/open")
-def open_positions(bot_id: int | None = Query(None)):
-    return PositionService.get_open_positions(bot_id=bot_id)
+def open_positions(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_open_positions(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/closed")
-def closed_positions(bot_id: int | None = Query(None)):
-    return PositionService.get_closed_positions(bot_id=bot_id)
+def closed_positions(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_closed_positions(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/count")
-def count(bot_id: int | None = Query(None)):
-    return PositionService.get_position_count(bot_id=bot_id)
+def count(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_position_count(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/summary")
-def summary(bot_id: int | None = Query(None)):
-    return PositionService.get_account_summary(bot_id=bot_id)
+def summary(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_account_summary(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/profit")
-def profit(bot_id: int | None = Query(None)):
-    return PositionService.get_profit_summary(bot_id=bot_id)
+def profit(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_profit_summary(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/profit_all")
-def profit_all(bot_id: int | None = Query(None)):
-    return PositionService.get_closed_profit_summary(bot_id=bot_id)
+def profit_all(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_closed_profit_summary(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/closed_profit")
-def closed_profit(bot_id: int | None = Query(None)):
-    return PositionService.get_closed_profit_summary(bot_id=bot_id)
+def closed_profit(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_closed_profit_summary(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/total_profit")
-def total_profit(bot_id: int | None = Query(None)):
-    return PositionService.get_total_profit_summary(bot_id=bot_id)
+def total_profit(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_total_profit_summary(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/balance_curve")
 def get_balance_curve(
     period: str = Query("1D"),
     bot_id: int | None = Query(None),
+    dry_run: bool | None = Query(None),
 ):
-    return PositionService.get_balance_curve(period, bot_id=bot_id)
+    return PositionService.get_balance_curve(period, bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/profit_curve")
 def get_profit_curve(
     period: str = Query("1D"),
     bot_id: int | None = Query(None),
+    dry_run: bool | None = Query(None),
 ):
-    return PositionService.get_profit_curve(period, bot_id=bot_id)
+    return PositionService.get_profit_curve(period, bot_id=bot_id, dry_run=dry_run)
 
 
 @router.get("/floating")
-def floating(bot_id: int | None = Query(None)):
-    return PositionService.get_floating_profit(bot_id=bot_id)
+def floating(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
+    return PositionService.get_floating_profit(bot_id=bot_id, dry_run=dry_run)
 
 
 @router.post("/action")

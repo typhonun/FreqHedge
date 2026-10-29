@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 import ccxt
 import json
 import time
@@ -54,9 +54,9 @@ def get_strategies():
 
 
 @router.get("/pairs/{bot_id}")
-def get_pairs(bot_id: int):
+def get_pairs(bot_id: int, dry_run: bool | None = Query(None)):
     bot = BotManager.get(bot_id)
-    if not bot:
+    if not bot or (dry_run is not None and bool(bot.get("dryRun")) != dry_run):
         return []
     return bot.get("pair") or []
 
@@ -97,8 +97,11 @@ def latest_candle(pair: str, timeframe: str = "30m"):
 
 
 @router.get("/bot-positions/{bot_id}")
-def get_bot_positions(bot_id: int):
-    positions = PositionService.get_open_positions(bot_id=bot_id)
+def get_bot_positions(bot_id: int, dry_run: bool | None = Query(None)):
+    bot = BotManager.get(bot_id)
+    if not bot or (dry_run is not None and bool(bot.get("dryRun")) != dry_run):
+        return []
+    positions = PositionService.get_open_positions(bot_id=bot_id, dry_run=dry_run)
     result = []
     for p in positions["long"]:
         result.append({**p, "side": "LONG"})
@@ -193,12 +196,16 @@ def get_events(
         bot_id: int | None = None,
         strategy: str | None = None,
         pair: str = None,
+        dry_run: bool | None = None,
         db: Session = Depends(get_db),
 ):
     pairs = [pair, pair.replace(":USDT", ""), pair.replace("/", "")]
     q = db.query(TradeEvent).filter(TradeEvent.pair.in_(pairs))
     if bot_id is not None:
         q = q.filter(TradeEvent.bot_id == bot_id)
+    elif dry_run is not None:
+        ids = [b["id"] for b in BotManager.list_all() if bool(b.get("dryRun")) == dry_run]
+        q = q.filter(TradeEvent.bot_id.in_(ids)) if ids else q.filter(False)
     if strategy:
         q = q.filter(TradeEvent.strategy == strategy)
     return q.order_by(TradeEvent.time).all()

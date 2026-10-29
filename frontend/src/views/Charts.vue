@@ -103,12 +103,14 @@ import {
 import PositionActions from '@features/dashboard/components/PositionActions.vue'
 import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
 import { useBotStore } from '@/stores/botStore.js'
+import { useModeStore } from '@/stores/modeStore'
 
 const API = "http://localhost:9000"
 const route = useRoute()
 
 const botStore = useBotStore()
-const botList = computed(() => botStore.state.bots)
+const modeStore = useModeStore()
+const botList = computed(() => botStore.state.bots.filter(b => Boolean(b.dryRun) === modeStore.isSimulation.value))
 
 const chartRef = ref(null)
 
@@ -179,7 +181,9 @@ const loadPairs = async () => {
 
     await loadBotPositions()
 
-    const res = await axios.get(`${API}/chart/pairs/${botId.value}`)
+    const res = await axios.get(`${API}/chart/pairs/${botId.value}`, {
+        params: { dry_run: modeStore.isSimulation.value }
+    })
     pairs.value = res.data || []
 
     if (pairs.value.length) {
@@ -200,7 +204,9 @@ const loadPairs = async () => {
 const loadBotPositions = async () => {
     if (!botId.value) return
     try {
-        const res = await axios.get(`${API}/chart/bot-positions/${botId.value}`)
+        const res = await axios.get(`${API}/chart/bot-positions/${botId.value}`, {
+            params: { dry_run: modeStore.isSimulation.value }
+        })
         strategyPositions.value = res.data || []
     } catch (e) {
         console.error("loadBotPositions failed", e)
@@ -297,7 +303,8 @@ const loadChart = async () => {
     const eventRes = await axios.get(`${API}/chart/events`, {
         params: {
             bot_id: botId.value,
-            pair: pair.value
+            pair: pair.value,
+            dry_run: modeStore.isSimulation.value
         }
     })
 
@@ -306,6 +313,14 @@ const loadChart = async () => {
 
     startAutoRefresh()
 }
+
+watch(modeStore.mode, async () => {
+    botId.value = null
+    pairs.value = []
+    pair.value = ""
+    strategyPositions.value = []
+    await loadBots()
+})
 
 // =========================================================
 // 事件 → marker

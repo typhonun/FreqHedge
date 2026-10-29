@@ -26,19 +26,20 @@ from app.services.exchange_service import ExchangeService
 # 缓存与锁
 # =========================================================
 
-_snapshot_cache = {}  # {bot_id: {"time": ts, "data": snapshot}}
-_snapshot_all_cache = {"time": 0, "data": None}
+_snapshot_cache = {}  # {(bot_id, dry_run): {"time": ts, "data": snapshot}}
+_snapshot_all_cache = {}  # {dry_run: {"time": ts, "data": snapshot}}
 
 _last_good_data = {}  # {(bot_id, side, kind): data}
 _custom_data_cache = {}  # {(bot_id, side): {"time": ts, "data": {}}}
 
 CUSTOM_DATA_CACHE_SECONDS = 3
 SNAPSHOT_CACHE_SECONDS = 5
+MAX_CURVE_POINTS = 500
 _offline_bots_cache = {}
 
 # ★ 新增：线程锁与正在执行的字典（防止并发击穿）
-_snapshot_locks = {}  # {bot_id: threading.Lock()}
-_snapshot_all_lock = threading.Lock()
+_snapshot_locks = {}  # {(bot_id, dry_run): threading.Lock()}
+_snapshot_all_locks = {}  # {dry_run: threading.Lock()}
 
 
 def _empty_snapshot():
@@ -141,51 +142,56 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_snapshot(bot_id: int | None = None, cache_seconds: int = SNAPSHOT_CACHE_SECONDS):
+    def get_snapshot(bot_id: int | None = None, cache_seconds: int = SNAPSHOT_CACHE_SECONDS,
+                     dry_run: bool | None = None):
         now = time.time()
 
         # 强制最低 1 秒微缓存，防止高频轮询
         cache_seconds = max(cache_seconds, 1)
 
         if bot_id is not None:
+            cache_key = (bot_id, dry_run)
             # 1. 快速路径：检查缓存
-            cached = _snapshot_cache.get(bot_id)
+            cached = _snapshot_cache.get(cache_key)
             if cached and now - cached["time"] < cache_seconds:
                 return cached["data"]
 
             # 2. 慢速路径：加锁获取
-            if bot_id not in _snapshot_locks:
-                _snapshot_locks[bot_id] = threading.Lock()
+            if cache_key not in _snapshot_locks:
+                _snapshot_locks[cache_key] = threading.Lock()
 
-            with _snapshot_locks[bot_id]:
+            with _snapshot_locks[cache_key]:
                 # 双重检查（Double-Check）：等锁的期间可能别人已经拉取完了
-                cached = _snapshot_cache.get(bot_id)
+                cached = _snapshot_cache.get(cache_key)
                 now = time.time()
                 if cached and now - cached["time"] < cache_seconds:
                     return cached["data"]
 
                 # 真正去请求 Freqtrade
                 snap = PositionService._build_snapshot_single(bot_id)
-                _snapshot_cache[bot_id] = {"time": now, "data": snap}
+                _snapshot_cache[cache_key] = {"time": now, "data": snap}
                 return snap
 
         # 聚合模式
-        cached_all = _snapshot_all_cache["data"]
-        if cached_all and now - _snapshot_all_cache["time"] < cache_seconds:
-            return cached_all
+        cache_key = dry_run
+        cached_all = _snapshot_all_cache.get(cache_key)
+        if cached_all and now - cached_all["time"] < cache_seconds:
+            return cached_all["data"]
 
-        with _snapshot_all_lock:
-            # 双重检查
-            cached_all = _snapshot_all_cache["data"]
+        if cache_key not in _snapshot_all_locks:
+            _snapshot_all_locks[cache_key] = threading.Lock()
+        with _snapshot_all_locks[cache_key]:
+            cached_all = _snapshot_all_cache.get(cache_key)
             now = time.time()
-            if cached_all and now - _snapshot_all_cache["time"] < cache_seconds:
-                return cached_all
+            if cached_all and now - cached_all["time"] < cache_seconds:
+                return cached_all["data"]
 
             agg = _empty_snapshot()
-            bots = list_running_bots()
+            bots = list_running_bots(dry_run=dry_run)
             for bot in bots:
-                # 递归调用自身（这里用的是带锁保护的 _get_snapshot，复用单 bot 缓存）
-                snap = PositionService.get_snapshot(bot_id=bot["id"], cache_seconds=cache_seconds)
+                snap = PositionService.get_snapshot(
+                    bot_id=bot["id"], cache_seconds=cache_seconds, dry_run=dry_run
+                )
 
                 for side in ("long", "short"):
                     status_list = PositionService._extract_trades(snap.get(f"{side}_status"))
@@ -203,9 +209,9 @@ class PositionService:
                     agg[f"{side}_status"].extend(status_list)
                     agg[f"{side}_trades"].extend(trades_list)
 
-            _snapshot_all_cache["time"] = now
-            _snapshot_all_cache["data"] = agg
+            _snapshot_all_cache[cache_key] = {"time": now, "data": agg}
             return agg
+
 
     @staticmethod
     def _merge_balance(acc: dict, incoming: dict) -> dict:
@@ -294,14 +300,14 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_open_positions(bot_id: int | None = None):
+    def get_open_positions(bot_id: int | None = None, dry_run: bool | None = None):
         if bot_id is None:
             # 聚合
             all_long, all_short = [], []
-            for bot in list_all_bots():
+            for bot in list_all_bots(dry_run=dry_run):
                 if bot.get("status") == "draft":
                     continue
-                pos = PositionService.get_open_positions(bot_id=bot["id"])
+                pos = PositionService.get_open_positions(bot_id=bot["id"], dry_run=dry_run)
                 for t in pos["long"]:
                     t.setdefault("bot_id", bot["id"])
                 for t in pos["short"]:
@@ -310,7 +316,7 @@ class PositionService:
                 all_short.extend(pos["short"])
             return {"long": all_long, "short": all_short}
 
-        snapshot = PositionService.get_snapshot(bot_id=bot_id)
+        snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
 
         long_roi_levels = PositionService._get_roi_levels(bot_id, "long")
         short_roi_levels = PositionService._get_roi_levels(bot_id, "short")
@@ -439,14 +445,14 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_position_count(bot_id: int | None = None):
+    def get_position_count(bot_id: int | None = None, dry_run: bool | None = None):
         if bot_id is None:
-            all_positions = PositionService.get_all_positions()
+            all_positions = PositionService.get_all_positions(dry_run=dry_run)
             long_cnt = sum(1 for p in all_positions if p.get("side") == "LONG")
             short_cnt = sum(1 for p in all_positions if p.get("side") == "SHORT")
             return {"long": long_cnt, "short": short_cnt, "total": long_cnt + short_cnt}
 
-        snapshot = PositionService.get_snapshot(bot_id=bot_id)
+        snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
         long_positions = PositionService._extract_trades(snapshot["long_status"])
         short_positions = PositionService._extract_trades(snapshot["short_status"])
         return {
@@ -456,9 +462,9 @@ class PositionService:
         }
 
     @staticmethod
-    def get_account_summary(snapshot=None, bot_id: int | None = None):
+    def get_account_summary(snapshot=None, bot_id: int | None = None, dry_run: bool | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
 
         long_balance = snapshot["long_balance"]
         short_balance = snapshot["short_balance"]
@@ -497,9 +503,10 @@ class PositionService:
         }
 
     @staticmethod
-    def get_floating_profit(snapshot=None, long_positions=None, short_positions=None, bot_id: int | None = None):
+    def get_floating_profit(snapshot=None, long_positions=None, short_positions=None,
+                            bot_id: int | None = None, dry_run: bool | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
         if long_positions is None:
             long_positions = PositionService._extract_trades(snapshot["long_status"])
         if short_positions is None:
@@ -535,9 +542,10 @@ class PositionService:
 
     @staticmethod
     def get_closed_profit_summary(snapshot=None, long_trades=None, short_trades=None,
-                                  long_status=None, short_status=None, bot_id: int | None = None):
+                                  long_status=None, short_status=None, bot_id: int | None = None,
+                                  dry_run: bool | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
         if long_trades is None:
             long_trades = PositionService._extract_trades(snapshot["long_trades"])
         if short_trades is None:
@@ -571,12 +579,12 @@ class PositionService:
         return PositionService.get_closed_profit_summary(bot_id=bot_id)["total_closed_profit"]
 
     @staticmethod
-    def get_total_profit_summary(snapshot=None, bot_id: int | None = None):
+    def get_total_profit_summary(snapshot=None, bot_id: int | None = None, dry_run: bool | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
 
-        current = PositionService.get_profit_summary(snapshot, bot_id=bot_id)
-        closed = PositionService.get_closed_profit_summary(snapshot, bot_id=bot_id)
+        current = PositionService.get_profit_summary(snapshot, bot_id=bot_id, dry_run=dry_run)
+        closed = PositionService.get_closed_profit_summary(snapshot, bot_id=bot_id, dry_run=dry_run)
 
         long_total = current["long_float"] + closed["long_closed_profit"]
         short_total = current["short_float"] + closed["short_closed_profit"]
@@ -592,9 +600,9 @@ class PositionService:
         }
 
     @staticmethod
-    def get_profit_summary(snapshot=None, bot_id: int | None = None):
+    def get_profit_summary(snapshot=None, bot_id: int | None = None, dry_run: bool | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
 
         long_positions = PositionService._extract_trades(snapshot["long_status"])
         short_positions = PositionService._extract_trades(snapshot["short_status"])
@@ -610,6 +618,7 @@ class PositionService:
             short_trades=short_trades,
             long_status=long_positions,
             short_status=short_positions,
+            dry_run=dry_run,
         )
 
         if bot_id is not None:
@@ -670,13 +679,13 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_closed_positions(bot_id: int | None = None):
+    def get_closed_positions(bot_id: int | None = None, dry_run: bool | None = None):
         if bot_id is None:
             all_long, all_short = [], []
-            for bot in list_all_bots():
+            for bot in list_all_bots(dry_run=dry_run):
                 if bot.get("status") == "draft":
                     continue
-                pos = PositionService.get_closed_positions(bot_id=bot["id"])
+                pos = PositionService.get_closed_positions(bot_id=bot["id"], dry_run=dry_run)
                 for t in pos["long"]:
                     t.setdefault("bot_id", bot["id"])
                 for t in pos["short"]:
@@ -685,7 +694,7 @@ class PositionService:
                 all_short.extend(pos["short"])
             return {"long": all_long, "short": all_short}
 
-        snapshot = PositionService.get_snapshot(bot_id=bot_id)
+        snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
         long_trades = PositionService._extract_trades(snapshot["long_trades"])
         short_trades = PositionService._extract_trades(snapshot["short_trades"])
 
@@ -708,8 +717,8 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_all_positions(bot_id: int | None = None):
-        positions = PositionService.get_open_positions(bot_id=bot_id)
+    def get_all_positions(bot_id: int | None = None, dry_run: bool | None = None):
+        positions = PositionService.get_open_positions(bot_id=bot_id, dry_run=dry_run)
         result = []
         for t in positions["long"]:
             result.append({**t, "side": "LONG"})
@@ -1004,21 +1013,23 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def get_balance_curve(period="1D", bot_id: int | None = None):
+    def get_balance_curve(period="1D", bot_id: int | None = None, dry_run: bool | None = None):
         db = SessionLocal()
         try:
             now = int(time.time())
             start_time = now - PositionService._period_seconds(period)
             q = db.query(EquityHistory).filter(EquityHistory.timestamp >= start_time)
 
-            if bot_id is None:
-                q = q.filter(EquityHistory.bot_id.is_(None))  # 全局
+            if bot_id is None and dry_run is None:
+                q = q.filter(EquityHistory.bot_id.is_(None))
+            elif bot_id is None:
+                ids = [b["id"] for b in list_all_bots(dry_run=dry_run)]
+                q = q.filter(EquityHistory.bot_id.in_(ids)) if ids else q.filter(False)
             else:
                 q = q.filter(EquityHistory.bot_id == bot_id)
 
             records = q.order_by(EquityHistory.timestamp.asc()).all()
-            step = PositionService._sampling_step(period)
-            records = records[::step]
+            records = PositionService._limit_curve_records(records)
             return [
                 {"time": r.timestamp, "balance": r.equity,
                  "wallet": r.wallet, "profit": r.profit}
@@ -1028,21 +1039,23 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def get_profit_curve(period="1D", bot_id: int | None = None):
+    def get_profit_curve(period="1D", bot_id: int | None = None, dry_run: bool | None = None):
         db = SessionLocal()
         try:
             now = int(time.time())
             start_time = now - PositionService._period_seconds(period)
             q = db.query(ProfitHistory).filter(ProfitHistory.timestamp >= start_time)
 
-            if bot_id is None:
+            if bot_id is None and dry_run is None:
                 q = q.filter(ProfitHistory.bot_id.is_(None))
+            elif bot_id is None:
+                ids = [b["id"] for b in list_all_bots(dry_run=dry_run)]
+                q = q.filter(ProfitHistory.bot_id.in_(ids)) if ids else q.filter(False)
             else:
                 q = q.filter(ProfitHistory.bot_id == bot_id)
 
             records = q.order_by(ProfitHistory.timestamp.asc()).all()
-            step = PositionService._sampling_step(period)
-            records = records[::step]
+            records = PositionService._limit_curve_records(records)
             return [
                 {"time": r.timestamp, "total_profit": r.total_profit,
                  "long_profit": r.long_profit, "short_profit": r.short_profit}
@@ -1054,6 +1067,16 @@ class PositionService:
     @staticmethod
     def _sampling_step(period):
         return {"1D": 1, "7D": 5, "30D": 15, "90D": 60}.get(period, 1)
+
+    @staticmethod
+    def _limit_curve_records(records, max_points=MAX_CURVE_POINTS):
+        if len(records) <= max_points:
+            return records
+        step = max(1, (len(records) - 1) // (max_points - 1))
+        sampled = records[::step]
+        if sampled[-1] is not records[-1]:
+            sampled.append(records[-1])
+        return sampled[:max_points]
 
     @staticmethod
     def _period_seconds(period: str):

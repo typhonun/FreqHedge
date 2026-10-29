@@ -106,8 +106,10 @@
 <script setup>
 import { ref, nextTick, computed, onMounted, onUnmounted, watch } from "vue"
 import axios from "axios"
+import { useModeStore } from '@/stores/modeStore'
 
 const API = "http://localhost:9000"
+const modeStore = useModeStore()
 
 // ★ 不再写死，动态拉取
 const botList = ref([])
@@ -136,7 +138,7 @@ const services = [
 const botLoading = ref(false)
 const loadBots = async () => {
   try {
-    const res = await axios.get(`${API}/bots`)
+    const res = await axios.get(`${API}/bots?dry_run=${modeStore.isSimulation.value}`)
     const list = res.data ?? []
     botList.value = list.map(b => ({
       id: b.id,
@@ -144,6 +146,7 @@ const loadBots = async () => {
       status: b.status,
       enableLong: b.enableLong,
       enableShort: b.enableShort,
+      dryRun: b.dryRun,
     }))
 
     // ★ 首次加载：如果 botId 为空，默认选第一个
@@ -168,15 +171,15 @@ const load = async () => {
   try {
     let url
     if (source.value === "all") {
-      url = `${API}/logs/all/list`
+      url = `${API}/logs/all/list?dry_run=${modeStore.isSimulation.value}`
     } else if (source.value === "strategy") {
       if (!botId.value) {
         logs.value = []
         return
       }
-      url = `${API}/logs/strategy?bot_id=${botId.value}`
+      url = `${API}/logs/strategy?bot_id=${botId.value}&dry_run=${modeStore.isSimulation.value}`
     } else {
-      url = `${API}/logs/${source.value}`
+      url = `${API}/logs/${source.value}?dry_run=${modeStore.isSimulation.value}`
     }
 
     const res = await axios.get(url)
@@ -231,6 +234,12 @@ function scrollToMatch() {
 watch([source, botId], () => {
   matchIndex.value = 0
   load()
+})
+
+watch(modeStore.mode, async () => {
+  botId.value = null
+  await loadBots()
+  await load()
 })
 
 watch(keyword, () => {
