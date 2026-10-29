@@ -51,6 +51,7 @@ class GridBotBase(DcaTpBotBase):
         self._last_candle_str = {}
         self._pending_reduce = {}  # {trade_id: set([idx1, idx2])}
         self._pending_add = {}  # {trade_id: {"idx": list, "timestamp": float}}
+        self._full_reduce_retry_after = {}  # {trade_id: unix timestamp}
 
     def bot_start(self, **kwargs) -> None:
         ft_cfg = self.config or {}
@@ -273,6 +274,19 @@ class GridBotBase(DcaTpBotBase):
             candle_str = self._get_candle_str(current_time)
             if self._last_candle_str.get(trade.pair) == candle_str: return None
 
+            # A full fragment close can be rejected before an order exists
+            # when the exchange rounds the exit quantity to zero. Back off
+            # before trying again instead of requesting the same exit every
+            # position-adjustment cycle.
+            retry_until = self._full_reduce_retry_after.get(trade.id)
+            if retry_until is None:
+                retry_until = self._get_float(trade, "grid_full_reduce_retry_until", 0.0)
+            if retry_until > current_time.timestamp():
+                return None
+            if retry_until > 0:
+                self._full_reduce_retry_after.pop(trade.id, None)
+                self._set(trade, "grid_full_reduce_retry_until", None)
+
             df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
             if df is None or df.empty: return None
             close_price = float(df.iloc[-1]['close'])
@@ -421,32 +435,92 @@ class GridBotBase(DcaTpBotBase):
                 if total_margin <= 0 or not np.isfinite(total_margin):
                     return None
 
-                # ★★★ 核心修复：检查本次减仓是否满足交易所最小下单量 ★★★
+                # Freqtrade converts the returned stake amount back to a position
+                # quantity before applying exchange precision. Check that result,
+                # not only the quantity stored in each grid slot.
                 requested_qty = sum(item[2] for item in closed)
                 min_qty = 0.001
+                amount_step = min_qty
                 try:
                     market = self.dp.market(trade.pair)
                     if market and market.get("limits", {}).get("amount", {}).get("min"):
                         min_qty = float(market["limits"]["amount"]["min"])
+                    precision = (market or {}).get("precision", {}).get("amount")
+                    if precision is not None:
+                        precision = float(precision)
+                        # CCXT uses decimal places for DECIMAL_PLACES and a
+                        # step size for TICK_SIZE markets.
+                        amount_step = (
+                            10.0 ** (-precision)
+                            if precision >= 1 or precision == 0
+                            else precision
+                        )
                 except Exception:
                     pass
+                if not np.isfinite(amount_step) or amount_step <= 0:
+                    amount_step = min_qty
 
-                if requested_qty < min_qty:
+                try:
+                    actual_amount = float(getattr(trade, "amount", 0) or 0)
+                    trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
+                except (TypeError, ValueError):
+                    actual_amount = 0.0
+                    trade_stake = 0.0
+
+                # This is the same conversion used by Freqtrade when it handles
+                # a negative adjustment. A tiny grid leg can otherwise become 0
+                # after precision conversion and never create an exit order.
+                converted_qty = (
+                    total_margin * actual_amount / trade_stake
+                    if trade_stake > 0 else 0.0
+                )
+                executable_qty = (
+                    np.floor((converted_qty + amount_step * 1e-9) / amount_step)
+                    * amount_step
+                )
+                min_exit_stake = kwargs.get("min_exit_stake", 0.0) or 0.0
+                try:
+                    min_exit_stake = float(min_exit_stake)
+                except (TypeError, ValueError):
+                    min_exit_stake = 0.0
+                remaining_stake = max(trade_stake - total_margin, 0.0)
+                would_leave_unexitable_remainder = (
+                    remaining_stake > 0
+                    and min_exit_stake > 0
+                    and remaining_stake < min_exit_stake
+                )
+
+                if (
+                    requested_qty < min_qty
+                    or executable_qty < min_qty
+                    or would_leave_unexitable_remainder
+                ):
                     logger.warning(
-                        f"{GRID_TAG} 减仓数量 {requested_qty:.6f} 低于交易所最小限制 {min_qty:.6f}，"
-                        f"将强制全平所有剩余网格，防止尾仓残留在交易所！"
+                        f"{GRID_TAG} 减仓无法形成可成交数量 | "
+                        f"网格数量={requested_qty:.6f} | 换算数量={converted_qty:.6f} | "
+                        f"可成交数量={executable_qty:.6f} | 最小数量={min_qty:.6f} | "
+                        f"剩余保证金={remaining_stake:.6f}，"
+                        f"将整笔平掉剩余仓位，防止碎片订单锁死！"
                     )
-                    # 清空所有本地仓位记录
-                    self._set_grid_positions(trade, {})
-                    self._pending_reduce.pop(trade.id, None)
-                    self._set(trade, "grid_pending_reduce", [])
-
-                    # 返回全平指令（使用当前 trade 的 stake_amount 作为金额）
-                    full_close_stake = float(getattr(trade, "stake_amount", 0) or total_margin)
+                    # Do not clear local positions before the exchange confirms
+                    # the close. order_filled() is the source of truth.
+                    full_close_stake = trade_stake
                     if full_close_stake <= 0 or not np.isfinite(full_close_stake):
                         return None
 
-                    return -full_close_stake, f"grid_reduce_multi_{len(positions)}"
+                    retry_seconds = min(
+                        60,
+                        max(
+                            30,
+                            self._cfg_int(self._grid_cfg(), "full_reduce_retry_seconds", 45),
+                        ),
+                    )
+                    retry_until = current_time.timestamp() + retry_seconds
+                    self._full_reduce_retry_after[trade.id] = retry_until
+                    self._set(trade, "grid_full_reduce_retry_until", retry_until)
+                    self._pending_reduce.pop(trade.id, None)
+                    self._set(trade, "grid_pending_reduce", [])
+                    return -full_close_stake, "grid_reduce_full"
 
                 # 正常流程
                 pending_reduce_set.update([idx for idx, _, _, _, _ in closed])
@@ -645,7 +719,33 @@ class GridBotBase(DcaTpBotBase):
                 )
 
             # ---- C. 减仓成交 ----
+            elif reason.startswith("grid_reduce_full"):
+                filled_price = entry_price
+                self._full_reduce_retry_after.pop(trade.id, None)
+                self._set(trade, "grid_full_reduce_retry_until", None)
+                self._pending_reduce.pop(trade.id, None)
+                self._set(trade, "grid_pending_reduce", [])
+                self._set_grid_positions(trade, {})
+                self._set(trade, "grid_allow_restart", True)
+                logger.info(
+                    f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 碎片尾仓整笔平仓成交 | "
+                    f"价格={filled_price:.4f} | 金额={margin:.2f}"
+                )
+                self._record_chart_marker(
+                    event_type="grid_reduce",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side=self._side_str,
+                    price=filled_price,
+                    amount=margin,
+                    current_time=current_time,
+                    message=f"碎片尾仓整笔平仓 价格{filled_price:.2f}",
+                    candle_time=current_time,
+                )
+
             elif reason.startswith("grid_reduce_multi"):
+                self._full_reduce_retry_after.pop(trade.id, None)
+                self._set(trade, "grid_full_reduce_retry_until", None)
                 pending_reduce_set = self._pending_reduce.pop(trade.id, set())
                 filled_price = entry_price
 
@@ -682,6 +782,8 @@ class GridBotBase(DcaTpBotBase):
 
             # ---- D. 网格状态已清空后的实际数量清理 ----
             elif reason.startswith("grid_reduce_cleanup"):
+                self._full_reduce_retry_after.pop(trade.id, None)
+                self._set(trade, "grid_full_reduce_retry_until", None)
                 self._pending_reduce.pop(trade.id, None)
                 self._pending_add.pop(trade.id, None)
                 self._set(trade, "grid_positions", "{}")
@@ -717,6 +819,8 @@ class GridBotBase(DcaTpBotBase):
         if trade.id in self._pending_reduce:
             self._pending_reduce.pop(trade.id, None)
             self._set(trade, "grid_pending_reduce", [])
+        self._full_reduce_retry_after.pop(trade.id, None)
+        self._set(trade, "grid_full_reduce_retry_until", None)
         if trade.id in self._pending_add:
             self._pending_add.pop(trade.id, None)
             self._set(trade, "grid_pending_add", None)
@@ -729,6 +833,8 @@ class GridBotBase(DcaTpBotBase):
         if trade.id in self._pending_reduce:
             self._pending_reduce.pop(trade.id, None)
             self._set(trade, "grid_pending_reduce", [])
+        self._full_reduce_retry_after.pop(trade.id, None)
+        self._set(trade, "grid_full_reduce_retry_until", None)
         if trade.id in self._pending_add:
             self._pending_add.pop(trade.id, None)
             self._set(trade, "grid_pending_add", None)

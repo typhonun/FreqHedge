@@ -359,11 +359,61 @@ const goDetail = async (bot) => {
   })
 }
 
+// 查询机器人是否有未平仓持仓
+const hasOpenPositions = async (botId) => {
+  try {
+    const { data } = await axios.get(`${API}/chart/bot-positions/${botId}`)
+    return Array.isArray(data) && data.length > 0
+  } catch (e) {
+    // 查询失败时保守处理：视为有持仓，禁止停止（避免误停）
+    console.warn(`[hasOpenPositions] 查询持仓失败 bot=${botId}`, e)
+    return null // null 表示查询失败
+  }
+}
+
 const handleToggle = async (bot) => {
+  const isStopping = bot.status === 'running'
+
+  // ── 停止前：校验是否有持仓 ──
+  if (isStopping) {
+    loadingIds.value.add(bot.id)
+    let positions
+    try {
+      positions = await hasOpenPositions(bot.id)
+    } finally {
+      loadingIds.value.delete(bot.id)
+    }
+
+    if (positions === null) {
+      ElMessage.error('无法确认持仓状态，请稍后重试')
+      return
+    }
+
+    if (positions) {
+      try {
+        await ElMessageBox.confirm(
+          `机器人「${bot.name}」当前仍有未平仓持仓。\n\n` +
+          `直接停止可能导致持仓失去自动管理。\n` +
+          `建议先平仓或等待策略自行平仓后再停止。\n\n是否仍要强制停止？`,
+          '存在未平仓持仓',
+          {
+            type: 'warning',
+            confirmButtonText: '强制停止',
+            cancelButtonText: '取消',
+            distinguishCancelAndClose: true,
+          }
+        )
+      } catch {
+        return // 用户取消
+      }
+    }
+  }
+
+  // ── 执行启停 ──
   loadingIds.value.add(bot.id)
   try {
     await toggleBot(bot.id, bot.status)
-    ElMessage.success(bot.status === 'running' ? '已停止' : '已启动')
+    ElMessage.success(isStopping ? '已停止' : '已启动')
     await fetchBots()
   } catch (e) {
     ElMessage.error(e?.response?.data?.error || '操作失败')
@@ -381,6 +431,33 @@ const handleDelete = async (bot) => {
     )
   } catch {
     return
+  }
+
+  // ★ 新增：运行中且可能有持仓时二次确认
+  if (bot.status === 'running') {
+    loadingIds.value.add(bot.id)
+    let positions
+    try {
+      positions = await hasOpenPositions(bot.id)
+    } finally {
+      loadingIds.value.delete(bot.id)
+    }
+
+    if (positions === null) {
+      ElMessage.error('无法确认持仓状态，请稍后重试')
+      return
+    }
+    if (positions) {
+      try {
+        await ElMessageBox.confirm(
+          `机器人「${bot.name}」仍有未平仓持仓，删除前会先强制停止。\n确定继续？`,
+          '存在未平仓持仓',
+          { type: 'warning', confirmButtonText: '强制停止并删除', cancelButtonText: '取消' }
+        )
+      } catch {
+        return
+      }
+    }
   }
 
   loadingIds.value.add(bot.id)
