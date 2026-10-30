@@ -42,6 +42,12 @@ RISK_API_URL = "http://127.0.0.1:9000/api/risk/direction"
 class DcaTpBotBase(IStrategy):
     """多空共用基类：所有逻辑都在这里，用 self._is_short 判方向"""
 
+    # DCA uses limit orders so simulated fees use the exchange maker tier.
+    strategy_order_types = {
+        "entry": "limit",
+        "exit": "limit",
+    }
+
     timeframe = '30m'
     # ⚠️ can_short 必须由子类覆盖，不要在这里写 True
     can_short = False

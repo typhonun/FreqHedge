@@ -32,6 +32,13 @@ GRID_TAG = f"{CYAN}[Grid]{RESET}"
 
 
 class GridBotBase(DcaTpBotBase):
+    # Grid entries, adjustments, and exits are market orders and therefore
+    # use the exchange taker tier in simulation.
+    strategy_order_types = {
+        "entry": "market",
+        "exit": "market",
+    }
+
     can_short = False
     use_exit_signal = True
     trailing_stop = False
