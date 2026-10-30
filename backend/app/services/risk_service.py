@@ -396,7 +396,7 @@ class RiskService:
                 except Exception as e:
                     logger.warning(f"[Combo] 获取 bot={bid} 收益失败: {e}")
 
-            if total_profit >= group.get("target_profit", 100):
+            if total_profit >= group.get("target_profit", 5):
                 logger.info(f"[Combo] 🎯 触发组合【{group.get('name')}】联合止盈！当前利润={total_profit:.2f}")
 
                 for bid in group.get("bot_ids"):

@@ -2,7 +2,7 @@
   <el-container class="layout">
     <el-aside width="280px" class="sidebar">
       <div class="logo">
-        <span class="logo-text">NexusBot</span>
+        <span class="logo-text">FreqHedge</span>
       </div>
 
       <el-menu

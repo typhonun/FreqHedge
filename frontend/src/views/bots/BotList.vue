@@ -105,8 +105,8 @@
                     <el-form-item label="目标总盈利 (USDT)">
                       <el-input-number
                         v-model="group.target_profit"
-                        :min="1"
-                        :step="10"
+                        :min="0"
+                        :step="5"
                         style="width: 100%"
                       />
                     </el-form-item>
@@ -520,7 +520,7 @@ const createEmptyGroup = () => ({
   name: '新组合',
   enabled: false,
   bot_ids: [],
-  target_profit: 100,
+  target_profit: 5,
   auto_stop: false
 })
 
@@ -562,7 +562,7 @@ const saveComboConfig = async () => {
         id: String(g.id),
         name: g.name || '未命名组合',
         bot_ids: g.bot_ids || [],
-        target_profit: Number(g.target_profit) || 100,
+        target_profit: Number(g.target_profit) || 5,
         auto_stop: Boolean(g.auto_stop),
         enabled: Boolean(g.enabled)
       }))

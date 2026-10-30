@@ -3,8 +3,8 @@
   <div class="auth-page">
     <div class="auth-card">
       <div class="brand">
-        <div class="brand-logo">N</div>
-        <h1 class="brand-title">NexusBot</h1>
+        <div class="brand-logo">FH</div>
+        <h1 class="brand-title">FreqHedge</h1>
         <p class="brand-sub">登录你的量化账户</p>
       </div>
 
