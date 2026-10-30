@@ -62,37 +62,57 @@ def get_pairs(bot_id: int, dry_run: bool | None = Query(None)):
 
 
 @router.get("/candles")
-def get_candles(pair: str, timeframe: str = "5m"):
-    key = f"{pair}_{timeframe}"
-    now = time.time()
+def get_candles(
+        pair: str,
+        timeframe: str = "5m",
+        end_time: int | None = None,
+        limit: int = 1500
+):
+    since = None
+    if end_time:
+        end_time_sec = end_time // 1000
+        tf_sec = {
+            "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
+            "1h": 3600, "4h": 14400, "1d": 86400
+        }.get(timeframe, 60)
+        # 往前多拉 10 根作为重叠
+        since = int(end_time_sec - (limit + 10) * tf_sec) * 1000
+    else:
+        key = f"{pair}_{timeframe}_{limit}"
+        now = time.time()
+        if key in kline_cache:
+            cache_time, data = kline_cache[key]
+            if now - cache_time < 300:
+                return data
 
-    # 缓存 300 秒有效
-    if key in kline_cache:
-        cache_time, data = kline_cache[key]
-        if now - cache_time < 300:
-            return data
+    fetch_kwargs = {"timeframe": timeframe, "limit": limit}
+    if since and since > 0: # ★ 防止 since 算出来是 0 或者负数
+        fetch_kwargs["since"] = since
 
-    ohlcv = exchange.fetch_ohlcv(pair, timeframe=timeframe, limit=2000)
+    ohlcv = exchange.fetch_ohlcv(pair, **fetch_kwargs)
+
     data = [
         {"time": c[0], "open": c[1], "high": c[2], "low": c[3],
          "close": c[4], "volume": c[5]}
         for c in ohlcv
     ]
-    kline_cache[key] = (now, data)
+
+    if not end_time:
+        kline_cache[key] = (time.time(), data)
+
     return data
 
 
 @router.get("/latest")
 def latest_candle(pair: str, timeframe: str = "30m"):
-    key = f"{pair}_{timeframe}"
+    # ★ 必须和 get_candles 里面首次缓存的 key 保持完全一致（默认 limit 是 1500）
+    key = f"{pair}_{timeframe}_1500"
 
-    # ★ 核心优化 1：只允许读缓存，绝不允许穿透请求交易所
     if key in kline_cache:
         data = kline_cache[key][1]
         if data:
             return data[-1]
 
-    # 如果缓存未命中，直接返回 None，由前端逻辑处理
     return None
 
 

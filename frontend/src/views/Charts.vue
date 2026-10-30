@@ -130,6 +130,9 @@ let chart = null
 let candleSeries = null
 let markerApi = null
 let refreshTimer = null
+let loadingHistory = false // ★ 防止并发请求
+let hasMoreHistory = true  // ★ 是否还有更早的数据
+let allCandleData = []     // ★ 存储当前图表的所有数据
 
 // =========================================================
 // 机器人列表
@@ -168,6 +171,11 @@ const onBotChange = async () => {
     strategyPositions.value = []
     if (candleSeries) candleSeries.setData([])
     if (markerApi) markerApi.setMarkers([])
+
+    // ★ 新增：解绑滚动监听
+    if (chart) {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll)
+    }
 
     await loadPairs()
 }
@@ -279,14 +287,17 @@ const updateLastCandle = async () => {
 
 const loadChart = async () => {
     if (!pair.value) return
-
     if (markerApi) markerApi.setMarkers([])
+
+    // 重置状态
+    loadingHistory = false
+    hasMoreHistory = true
+    allCandleData = []
 
     const res = await axios.get(`${API}/chart/candles`, {
         params: { pair: pair.value, timeframe: timeframe.value }
     })
 
-    // 强制类型转换，防止图表卡死
     const data = res.data.map(c => ({
         time: Number(Math.floor(c.time / 1000)),
         open: Number(c.open),
@@ -295,11 +306,10 @@ const loadChart = async () => {
         close: Number(c.close)
     }))
 
-    candleSeries.setData(data)
-    // ★ 重置去重记录
-    lastCandleData = data[data.length - 1] || null;
+    allCandleData = [...data] // ★ 核心修复：赋值给全局变量
+    candleSeries.setData(allCandleData)
+    lastCandleData = allCandleData[allCandleData.length - 1] || null;
 
-    // 加载交易事件
     const eventRes = await axios.get(`${API}/chart/events`, {
         params: {
             bot_id: botId.value,
@@ -308,10 +318,90 @@ const loadChart = async () => {
         }
     })
 
-    const eventMarkers = buildMarkers(eventRes.data || [], data)
+    const eventMarkers = buildMarkers(eventRes.data || [], allCandleData)
     markerApi.setMarkers(eventMarkers)
 
     startAutoRefresh()
+
+    // ★ 必须先解绑，再绑定，防止切周期时重复触发
+    chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleScroll)
+}
+
+const handleScroll = async (logicalRange) => {
+    if (!logicalRange || loadingHistory || !hasMoreHistory) return
+
+    if (logicalRange.from < 5) {
+        loadingHistory = true
+
+        try {
+            const oldestCandle = allCandleData[0]
+            if (!oldestCandle) return
+
+            const res = await axios.get(`${API}/chart/candles`, {
+                params: {
+                    pair: pair.value,
+                    timeframe: timeframe.value,
+                    end_time: oldestCandle.time * 1000
+                }
+            })
+
+            if (!res.data || res.data.length === 0) {
+                hasMoreHistory = false
+                return
+            }
+
+            const olderData = res.data.map(c => ({
+                time: Number(Math.floor(c.time / 1000)),
+                open: Number(c.open),
+                high: Number(c.high),
+                low: Number(c.low),
+                close: Number(c.close)
+            }))
+
+            // 过滤掉重叠的数据，只保留全新的老数据
+            const newData = olderData.filter(od =>
+                !allCandleData.some(ad => ad.time === od.time)
+            )
+
+            if (newData.length > 0) {
+                // 记录当前可视范围，防止 setData 后图表跳回最右边
+                const currentRange = chart.timeScale().getVisibleLogicalRange()
+
+                allCandleData = [...newData, ...allCandleData]
+                candleSeries.setData(allCandleData)
+
+                // 补全参数并重绘事件
+                const eventRes = await axios.get(`${API}/chart/events`, {
+                    params: {
+                        bot_id: botId.value,
+                        pair: pair.value,
+                        dry_run: modeStore.isSimulation.value
+                    }
+                })
+                const eventMarkers = buildMarkers(eventRes.data || [], allCandleData)
+                markerApi.setMarkers(eventMarkers)
+
+                // ★ 恢复视口位置（加上新加载的 K 线数量，让它停留在刚才看的地方）
+                if (currentRange) {
+                    // 加上 try-catch 防止设置越界导致的图表崩溃
+                    try {
+                        chart.timeScale().setVisibleLogicalRange({
+                            from: Math.max(0, currentRange.from + newData.length),
+                            to: currentRange.to + newData.length
+                        })
+                    } catch (e) {
+                        console.warn("恢复视口失败:", e)
+                    }
+                }
+            }
+
+        } catch (e) {
+            console.error("加载历史数据失败", e)
+        } finally {
+            loadingHistory = false
+        }
+    }
 }
 
 watch(modeStore.mode, async () => {
@@ -608,6 +698,11 @@ onMounted(async () => {
 
 onUnmounted(() => {
     if (refreshTimer) clearInterval(refreshTimer)
+    // ★ 新增：解绑
+    if (chart) {
+        chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll)
+        chart.remove()
+    }
 })
 
 // 支持 ?botId=1&pair=BTC/USDT:USDT 这种深链

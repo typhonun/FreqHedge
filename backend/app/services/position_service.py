@@ -1072,6 +1072,8 @@ class PositionService:
                 q = q.filter(EquityHistory.bot_id == bot_id)
 
             records = q.order_by(EquityHistory.timestamp.asc()).all()
+            if bot_id is None and dry_run is not None:
+                records = PositionService._aggregate_equity_records(records)
             records = PositionService._limit_curve_records(records)
             return [
                 {"time": r.timestamp, "balance": r.equity,
@@ -1098,6 +1100,8 @@ class PositionService:
                 q = q.filter(ProfitHistory.bot_id == bot_id)
 
             records = q.order_by(ProfitHistory.timestamp.asc()).all()
+            if bot_id is None and dry_run is not None:
+                records = PositionService._aggregate_profit_records(records)
             records = PositionService._limit_curve_records(records)
             return [
                 {"time": r.timestamp, "total_profit": r.total_profit,
@@ -1106,6 +1110,52 @@ class PositionService:
             ]
         finally:
             db.close()
+
+    @staticmethod
+    def _aggregate_equity_records(records):
+        """Combine per-bot curve points into one account-level point per tick."""
+        grouped = {}
+        for record in records:
+            item = grouped.setdefault(
+                record.timestamp,
+                {"equity": 0.0, "wallet": 0.0, "profit": 0.0},
+            )
+            item["equity"] += float(record.equity or 0.0)
+            item["wallet"] += float(record.wallet or 0.0)
+            item["profit"] += float(record.profit or 0.0)
+
+        return [
+            EquityHistory(
+                timestamp=timestamp,
+                equity=round(values["equity"], 2),
+                wallet=round(values["wallet"], 2),
+                profit=round(values["profit"], 2),
+            )
+            for timestamp, values in sorted(grouped.items())
+        ]
+
+    @staticmethod
+    def _aggregate_profit_records(records):
+        """Combine per-bot profit points into one account-level point per tick."""
+        grouped = {}
+        for record in records:
+            item = grouped.setdefault(
+                record.timestamp,
+                {"total_profit": 0.0, "long_profit": 0.0, "short_profit": 0.0},
+            )
+            item["total_profit"] += float(record.total_profit or 0.0)
+            item["long_profit"] += float(record.long_profit or 0.0)
+            item["short_profit"] += float(record.short_profit or 0.0)
+
+        return [
+            ProfitHistory(
+                timestamp=timestamp,
+                total_profit=round(values["total_profit"], 2),
+                long_profit=round(values["long_profit"], 2),
+                short_profit=round(values["short_profit"], 2),
+            )
+            for timestamp, values in sorted(grouped.items())
+        ]
 
     @staticmethod
     def _sampling_step(period):
