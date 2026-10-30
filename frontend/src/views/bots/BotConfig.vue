@@ -1825,9 +1825,18 @@ const loadPairs = async () => {
   pairLoading.value = true
   try {
     const { data } = await axios.get(`${API}/exchange/pairs`, {
-      params: { exchange: 'binance', market: 'futures' },
+      params: {
+        exchange: 'binance',
+        // ★ 核心修改：根据当前选择的模式传 spot 或 futures
+        market: botBaseInfo.value.tradingMode === 'spot' ? 'spot' : 'futures'
+      },
     })
-    pairOptions.value = data || []
+    // 针对现货和合约的数据结构可能不同，这里做个兼容处理
+    pairOptions.value = (data || []).map(item => ({
+      name: item.name || item.symbol,
+      // 保留其他属性
+      ...item
+    }))
   } catch (e) {
     console.error('load pairs failed', e)
     ElMessage.error('加载交易对失败')
@@ -1964,7 +1973,13 @@ watch(
 
 watch(
   () => botBaseInfo.value.tradingMode,
-  (mode) => {
+  async (mode, oldMode) => {
+    if (mode === oldMode) return;
+
+    // 1. 清空当前已选交易对（防止现货选中的拿到合约去跑报错）
+    botBaseInfo.value.pair = []
+
+    // 2. 切换杠杆和方向逻辑（保留你原有的）
     if (mode === 'spot') {
       if (botBaseInfo.value.direction === 'short') {
         botBaseInfo.value.direction = 'long'
@@ -1977,6 +1992,9 @@ watch(
         botBaseInfo.value.leverage = 5
       }
     }
+
+    // ★ 核心新增：重新请求对应市场的交易对列表
+    await loadPairs()
   }
 )
 

@@ -67,13 +67,20 @@ def test_connection(data: ExchangeConnectionRequest):
     except Exception as exc:
         raise HTTPException(400, f"交易所连接失败：{str(exc)[:240]}")
 
+
 @router.get("/pairs")
 def get_pairs(
-    exchange: str = Query("binance"),
-    market: str = Query("futures"),
+        exchange: str = Query("binance"),
+        market: str = Query("futures"),  # 接收 market 参数
 ):
-    if exchange == "binance" and market == "futures":
-        return ExchangeService.get_binance_usdt_futures_pairs()
+    if exchange == "binance":
+        if market == "futures":
+            return ExchangeService.get_binance_usdt_futures_pairs()
+        elif market == "spot":
+            # ★ 调用刚才新增的现货方法
+            return ExchangeService.get_binance_usdt_spot_pairs()
+
+    # 其他交易所或模式可以留空或以后扩展
     return []
 
 

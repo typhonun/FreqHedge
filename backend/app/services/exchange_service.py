@@ -4,8 +4,13 @@ import requests
 import ccxt
 
 BINANCE_FAPI = "https://fapi.binance.com"
-
+BINANCE_SPOT_API = "https://api.binance.com"
 _cache = {
+    "pairs": None,
+    "limits": {},
+    "time": 0,
+}
+_spot_cache = {
     "pairs": None,
     "limits": {},
     "time": 0,
@@ -240,4 +245,50 @@ class ExchangeService:
                 print("[ExchangeService] 正在使用缓存的旧数据进行兜底")
                 return _cache["pairs"]
 
+            raise e
+
+    # ★ 新增：获取币安现货交易对
+    @staticmethod
+    def get_binance_usdt_spot_pairs(force=False):
+        now = time.time()
+        if not force and _spot_cache["pairs"] and now - _spot_cache["time"] < CACHE_SECONDS:
+            return _spot_cache["pairs"]
+
+        url = f"{BINANCE_SPOT_API}/api/v3/exchangeInfo"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+
+        try:
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+
+            pairs = []
+            for s in data.get("symbols", []):
+                # 只保留 USDT 本位、状态 TRADING 的现货
+                if s.get("quoteAsset") != "USDT":
+                    continue
+                if s.get("status") != "TRADING":
+                    continue
+
+                symbol = s.get("symbol")  # BTCUSDT
+                # 现货不需要加后缀
+                ft_pair = f"{s['baseAsset']}/USDT"
+
+                pairs.append({
+                    "symbol": symbol,
+                    "name": ft_pair,  # BTC/USDT
+                    "base": s["baseAsset"],
+                })
+
+            pairs.sort(key=lambda x: x["name"])
+            _spot_cache["pairs"] = pairs
+            _spot_cache["time"] = now
+            return pairs
+
+        except Exception as e:
+            print(f"[ExchangeService] 获取现货交易对失败: {e}")
+            if _spot_cache["pairs"]:
+                return _spot_cache["pairs"]
             raise e
