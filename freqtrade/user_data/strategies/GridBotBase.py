@@ -323,11 +323,15 @@ class GridBotBase(DcaTpBotBase):
                 lev = 1.0
 
             if not positions:
-                cleanup_stake = (actual_amount * close_price) / lev if lev > 0 else 0.0
-                if cleanup_stake > 0 and np.isfinite(cleanup_stake):
+                trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
+                if trade_stake > 0 and np.isfinite(trade_stake):
                     self._last_candle_str[trade.pair] = candle_str
                     self._set(trade, "grid_pending_reduce", [])
-                    return -float(cleanup_stake), "grid_reduce_cleanup"
+                    self._set(trade, "grid_cleanup_pending", True)
+                    # A negative stake is converted to an exit quantity by
+                    # Freqtrade. Using the complete stake here makes that
+                    # conversion target the complete current trade amount.
+                    return -trade_stake, "grid_reduce_cleanup"
 
                 restart = bool(g.get("restart_after_all_tp", False))
                 if restart:
@@ -489,16 +493,33 @@ class GridBotBase(DcaTpBotBase):
                     and min_exit_stake > 0
                     and remaining_stake < min_exit_stake
                 )
+                remaining_qty = max(actual_amount - executable_qty, 0.0)
+                remaining_stake_after_precision = (
+                    remaining_qty * close_price / lev if lev > 0 else 0.0
+                )
+                would_leave_precision_remainder = (
+                    remaining_qty > 0
+                    and (
+                        remaining_qty < min_qty
+                        or (
+                            min_exit_stake > 0
+                            and remaining_stake_after_precision < min_exit_stake
+                        )
+                    )
+                )
 
                 if (
                     requested_qty < min_qty
                     or executable_qty < min_qty
                     or would_leave_unexitable_remainder
+                    or would_leave_precision_remainder
                 ):
                     logger.warning(
                         f"{GRID_TAG} 减仓无法形成可成交数量 | "
                         f"网格数量={requested_qty:.6f} | 换算数量={converted_qty:.6f} | "
                         f"可成交数量={executable_qty:.6f} | 最小数量={min_qty:.6f} | "
+                        f"精度后剩余数量={remaining_qty:.6f} | "
+                        f"精度后剩余保证金={remaining_stake_after_precision:.6f} | "
                         f"剩余保证金={remaining_stake:.6f}，"
                         f"将整笔平掉剩余仓位，防止碎片订单锁死！"
                     )
@@ -518,6 +539,7 @@ class GridBotBase(DcaTpBotBase):
                     retry_until = current_time.timestamp() + retry_seconds
                     self._full_reduce_retry_after[trade.id] = retry_until
                     self._set(trade, "grid_full_reduce_retry_until", retry_until)
+                    self._set(trade, "grid_cleanup_pending", True)
                     self._pending_reduce.pop(trade.id, None)
                     self._set(trade, "grid_pending_reduce", [])
                     return -full_close_stake, "grid_reduce_full"
@@ -730,10 +752,14 @@ class GridBotBase(DcaTpBotBase):
                 self._pending_reduce.pop(trade.id, None)
                 self._set(trade, "grid_pending_reduce", [])
                 self._set_grid_positions(trade, {})
-                self._set(trade, "grid_allow_restart", True)
+                actual_amount = float(getattr(trade, "amount", 0) or 0)
+                is_flat = actual_amount <= 0
+                self._set(trade, "grid_allow_restart", is_flat)
+                self._set(trade, "grid_cleanup_pending", not is_flat)
                 logger.info(
                     f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 碎片尾仓整笔平仓成交 | "
-                    f"价格={filled_price:.4f} | 金额={margin:.2f}"
+                    f"价格={filled_price:.4f} | 金额={margin:.2f} | "
+                    f"剩余数量={actual_amount:.8f}"
                 )
                 self._record_chart_marker(
                     event_type="grid_reduce",
@@ -761,8 +787,18 @@ class GridBotBase(DcaTpBotBase):
                 self._pending_reduce.pop(trade.id, None)
 
                 if not positions:
-                    logger.info(f"{GRID_TAG} 🏁 当前所有网格已平仓，等待后续 K 线继续操作。")
-                    self._set(trade, "grid_allow_restart", True)
+                    actual_amount = float(getattr(trade, "amount", 0) or 0)
+                    if actual_amount <= 0:
+                        logger.info(f"{GRID_TAG} 🏁 当前所有网格已平仓，等待后续 K 线继续操作。")
+                        self._set(trade, "grid_allow_restart", True)
+                        self._set(trade, "grid_cleanup_pending", False)
+                    else:
+                        logger.warning(
+                            f"{GRID_TAG} 网格记录已空，但交易实际剩余数量="
+                            f"{actual_amount:.8f}，等待清理实际仓位。"
+                        )
+                        self._set(trade, "grid_allow_restart", False)
+                        self._set(trade, "grid_cleanup_pending", True)
                 else:
                     self._set(trade, "grid_allow_restart", False)
 
@@ -793,8 +829,14 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_positions", "{}")
                 self._set(trade, "grid_pending_reduce", [])
                 self._set(trade, "grid_pending_add", None)
-                self._set(trade, "grid_allow_restart", False)
-                logger.info(f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 清理残余实际仓位成交 | 价格={entry_price:.4f}")
+                actual_amount = float(getattr(trade, "amount", 0) or 0)
+                is_flat = actual_amount <= 0
+                self._set(trade, "grid_allow_restart", is_flat)
+                self._set(trade, "grid_cleanup_pending", not is_flat)
+                logger.info(
+                    f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 清理残余实际仓位成交 | "
+                    f"价格={entry_price:.4f} | 剩余数量={actual_amount:.8f}"
+                )
                 self._record_chart_marker(
                     event_type="exit_fill", pair=pair, trade_id=trade.id,
                     side=self._side_str, price=entry_price, amount=margin,
