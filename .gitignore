@@ -82,6 +82,3 @@ desktop.ini
 .mypy_cache/
 .coverage
 htmlcov/
-
-# ========== 其他 ==========
-工作.txt
