@@ -5,6 +5,7 @@ import { useModeStore } from './modeStore'
 const API = "http://localhost:9000"
 let isRefreshingAccount = false
 let isRefreshingGeneral = false
+let profitCurveSeq = 0
 
 const _q = (botId) => {
   const parts = []
@@ -59,12 +60,18 @@ export const useTradeStore = defineStore("trade", {
     },
 
     // 收益曲线：profitCurve
-    async refreshProfitCurve(botId = null) {
+    async refreshProfitCurve(botId = null, period = 'ALL') {
+      const seq = ++profitCurveSeq
       this.profitBotId = botId
       const q = _q(botId)
       try {
-        const { data } = await axios.get(`${API}/position/profit_curve${q}`)
-        this.profitCurve = data
+        const { data } = await axios.get(
+          `${API}/position/profit_curve${q}&period=${period}`
+        )
+        // 只有最新一次请求的结果才写入，避免旧响应覆盖新数据
+        if (seq === profitCurveSeq) {
+          this.profitCurve = data
+        }
       } catch (e) {
         console.error("refreshProfitCurve error", e.response?.data || e)
       }

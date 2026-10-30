@@ -1159,7 +1159,7 @@ class PositionService:
 
     @staticmethod
     def _sampling_step(period):
-        return {"1D": 1, "7D": 5, "30D": 15, "90D": 60}.get(period, 1)
+        return {"1D": 1, "7D": 5, "30D": 15, "90D": 60, "ALL": 300}.get(period, 1)
 
     @staticmethod
     def _limit_curve_records(records, max_points=MAX_CURVE_POINTS):
@@ -1173,7 +1173,13 @@ class PositionService:
 
     @staticmethod
     def _period_seconds(period: str):
-        return {"1D": 86400, "7D": 86400 * 7, "30D": 86400 * 30, "90D": 86400 * 90}.get(period, 86400)
+        return {
+            "1D": 86400,
+            "7D": 86400 * 7,
+            "30D": 86400 * 30,
+            "90D": 86400 * 90,
+            "ALL": 86400 * 365 * 100,
+        }.get(period, 86400)
 
     @staticmethod
     def collect_account_snapshot(bot_id: int | None = None):

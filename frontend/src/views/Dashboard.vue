@@ -21,7 +21,9 @@
       v-model="profitSelected"
       :data="store.profitCurve"
       :botList="botList"
+      :model-period="profitPeriod"
       @change="onProfitChange"
+      @periodChange="onProfitPeriodChange"
     />
 
     <!-- ★ 快速跳转卡片 -->
@@ -76,6 +78,7 @@ const profitSelected = ref('__total__')
 
 // 新增：记录当前曲线选择的周期
 const currentPeriod = ref('1D')
+const profitPeriod = ref('ALL')
 
 const botList = ref([])
 
@@ -126,8 +129,15 @@ const refreshAccountAll = async () => {
   await refreshAccount()
 }
 
+// 收益曲线：带 period 刷新
 const refreshProfitCurve = () =>
-  store.refreshProfitCurve(toBotId(profitSelected.value))
+  store.refreshProfitCurve(toBotId(profitSelected.value), profitPeriod.value)
+
+// 收益曲线周期切换
+const onProfitPeriodChange = async (p) => {
+  profitPeriod.value = p
+  await refreshProfitCurve()
+}
 
 // =========================================================
 // 定时器优化：降低轮询频率
@@ -135,10 +145,13 @@ const refreshProfitCurve = () =>
 const startTimers = () => {
   stopTimers()
 
-  // 1) 账户盈亏、收益曲线、权益曲线：改为 15 秒刷新一次
+  // 定时器里只刷新 1D 的曲线；ALL 不参与轮询
   timer = setInterval(async () => {
-    await refreshAccountAll() // 包含曲线刷新
-    await refreshProfitCurve()
+    await refreshAccountAll()
+    // 仅当用户停留在非 ALL 档位时才轮询刷新
+    if (profitPeriod.value !== 'ALL') {
+      await refreshProfitCurve()
+    }
   }, 15000)
 
   // 2) 持仓数量、平仓数量：这些数据不需要高频看，改为 5 分钟刷新一次
@@ -156,7 +169,11 @@ const stopTimers = () => {
 const loadBotList = async () => {
   try {
     const { data } = await axios.get(`${API}/bots?dry_run=${modeStore.isSimulation.value}`)
-    botList.value = data.map(b => ({ id: b.id, name: b.name }))
+    const newList = data.map(b => ({ id: b.id, name: b.name }))
+    // 只有列表真的变化才替换，避免 el-select 重新校验
+    if (JSON.stringify(newList) !== JSON.stringify(botList.value)) {
+      botList.value = newList
+    }
   } catch (e) {
     console.error('load bot list failed', e)
   }
@@ -194,9 +211,16 @@ onActivated(async () => {
 })
 
 watch(modeStore.mode, async () => {
-  accountSelected.value = '__total__'
-  profitSelected.value = '__total__'
   await loadBotList()
+  // 如果当前选中的 bot 在新列表里不存在了，才重置
+  const isValidAccount = accountSelected.value === '__total__'
+    || botList.value.some(b => b.id === accountSelected.value)
+  if (!isValidAccount) accountSelected.value = '__total__'
+
+  const isValidProfit = profitSelected.value === '__total__'
+    || botList.value.some(b => b.id === profitSelected.value)
+  if (!isValidProfit) profitSelected.value = '__total__'
+
   await refreshAccountAll()
   await refreshProfitCurve()
   await store.refresh(null)
