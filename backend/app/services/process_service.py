@@ -2,6 +2,8 @@
 import subprocess
 import sys
 import time
+import shutil
+import importlib.util
 
 from config.settings import FREQTRADE_DIR
 from app.services.freqtrade_client import FreqtradeClient
@@ -9,6 +11,22 @@ from pathlib import Path
 
 
 class ProcessService:
+
+    @staticmethod
+    def _freqtrade_command() -> list[str]:
+        """Use the project interpreter when Freqtrade is installed there;
+        otherwise use a globally available installation such as pipx."""
+        if importlib.util.find_spec("freqtrade") is not None:
+            return [sys.executable, "-m", "freqtrade"]
+
+        executable = shutil.which("freqtrade")
+        if executable:
+            return [executable]
+
+        raise FileNotFoundError(
+            "找不到 freqtrade。请先按 README 安装 Freqtrade，并确认 "
+            "`freqtrade --version` 可以执行。"
+        )
 
     # =========================================================
     # ★ 新增：统一从 config 里读策略类名
@@ -65,7 +83,7 @@ class ProcessService:
 
             proc = subprocess.Popen(
                 [
-                    sys.executable, "-m", "freqtrade", "trade",
+                    *cls._freqtrade_command(), "trade",
                     "--config", str(cfg),
                     "--strategy", strategy,
                     "--strategy-path", str(base_dir / "user_data/strategies"),
@@ -134,7 +152,7 @@ class ProcessService:
 
         subprocess.Popen(
             [
-                sys.executable, "-m", "freqtrade", "trade",
+                *cls._freqtrade_command(), "trade",
                 "--config", str(cfg),
                 "--strategy", strategy,
                 "--strategy-path", str(base_dir / "user_data/strategies"),
