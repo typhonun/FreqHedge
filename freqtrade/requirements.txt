@@ -1,40 +1,48 @@
 # ============================================================
-# DcaTpManager 依赖
-# Python 3.10 ~ 3.12
-# 安装：pip install -r requirements.txt
+# FreqHedge 依赖清单
+# 适用 Python 3.11 - 3.12（强烈推荐 3.12；3.13 部分平台可能缺
+# TA-Lib/numpy 预编译 wheel，3.14 不支持）
+#
+# 说明：
+# - `-e ./freqtrade` 以 editable 方式安装仓库内的 Freqtrade 源码，
+#   其 NumPy、pandas-ta、ccxt 等依赖由 freqtrade/pyproject.toml
+#   统一解析。不能改为安装 PyPI 上的 freqtrade==2024.10，
+#   该版本依赖已与当前 NumPy/pandas-ta 生态冲突。
+# - 后端依赖使用 `>=x,<y` 范围约束，而不是 `==` 硬钉，
+#   避免与 Freqtrade 自身依赖互相打架导致 pip 回溯上百个版本。
 # ============================================================
 
-# ============ 策略框架 ============
-# 会自动带上 numpy/pandas/ccxt/telegram-bot 等所有依赖
-freqtrade==2024.10
+# ============ 策略框架（本地源码，editable 安装） ============
+-e ./freqtrade
 
 # ============ Web 后端 ============
-fastapi==0.115.0
-uvicorn[standard]==0.32.0
-python-multipart==0.0.12
+fastapi>=0.115,<0.116
+uvicorn[standard]>=0.32,<0.33
+python-multipart>=0.0.12,<0.1
 
 # ============ 数据库 ============
-sqlalchemy==2.0.36
+sqlalchemy>=2.0.36,<2.1
 
 # ============ 认证 ============
-passlib==1.7.4
-bcrypt==4.0.1
-python-jose[cryptography]==3.3.0
+passlib>=1.7.4,<1.8
+bcrypt>=4.0.1,<4.1
+python-jose[cryptography]>=3.3,<4
 
 # ============ 邮件 ============
-fastapi-mail==1.4.1
+fastapi-mail>=1.4.1,<1.5
 
 # ============ 配置 ============
-pydantic==2.9.2
-pydantic-settings==2.6.0
-python-dotenv==1.0.1
+pydantic>=2.9,<3
+pydantic-settings>=2.6,<3
+python-dotenv>=1.0,<2
 
 # ============ HTTP ============
-requests==2.32.3
-aiohttp==3.10.10
+requests>=2.32,<3
+# aiohttp 由本地 Freqtrade 的 pyproject.toml 声明，这里不再重复，
+# 避免锁定没有对应 Python 版本 wheel 的旧版本触发源码编译。
 
 # ============ 日志 ============
-loguru==0.7.2
+loguru>=0.7.2,<0.8
 
 # ============ 定时任务 ============
-APScheduler==3.10.4
+APScheduler>=3.10,<4

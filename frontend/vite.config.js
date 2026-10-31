@@ -11,5 +11,14 @@ export default defineConfig({
       '@features': fileURLToPath(new URL('./src/features', import.meta.url)),
       '@components': fileURLToPath(new URL('./src/components', import.meta.url)),
     }
+  },
+  server: {
+    port: 5173,
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:9000',
+        changeOrigin: true,
+      }
+    }
   }
 })

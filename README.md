@@ -224,10 +224,10 @@ FreqHedge 使用 Vue 3、FastAPI、SQLite、SQLAlchemy、APScheduler 和 Freqtra
 
 请按照以下步骤在本地运行 FreqHedge。
 
-###  环境准备
-请确保您的系统已安装以下软件：
-- [Python 3.10+](https://www.python.org/downloads/)（安装时请勾选 "Add Python to PATH"）
-- [Node.js 18+](https://nodejs.org/) 与 [pnpm](https://pnpm.io/installation)（前端包管理器）
+### 环境准备
+请先安装以下软件：
+- [Python 3.12.x](https://www.python.org/downloads/)（支持 3.11 - 3.13；不建议使用 3.14。安装时请勾选 `Add Python to PATH`）
+- [Node.js 20 LTS](https://nodejs.org/)（支持 18+）与 [pnpm 10](https://pnpm.io/installation)
 - [Git](https://git-scm.com/)
 
 ###  创建虚拟环境
@@ -237,44 +237,44 @@ git clone https://github.com/typhonun/FreqHedge
 cd FreqHedge
 
 # 创建 Python 虚拟环境
-python -m venv venv
+py -3.12 -m venv venv
 
 # 激活虚拟环境 (Windows)
 venv\Scripts\activate
 ```
 ### 安装 Python 依赖
-```powershell
-# 安装 Freqtrade 相关依赖
-cd freqtrade
-pip install -r requirements.txt
-# 将 Freqtrade 作为包安装到当前虚拟环境
-pip install -e .
-cd ..
 
-# 安装 FreqHedge 后端依赖
-cd backend
-pip install -r requirements.txt
+```powershell
+# 在仓库根目录执行
+python -m ensurepip --upgrade
+python -m pip install --upgrade pip
+python -m pip install -r freqtrade\requirements.txt
 ```
 
 ### 安装前端依赖
 
 ```powershell
+# 在仓库根目录执行
 cd frontend
 pnpm install
 ```
 
 ### 启动后端
 
+请新开一个 PowerShell 窗口（或先回到仓库根目录），不要在
+`frontend` 目录直接执行下面的 `cd backend`：
+
 ```powershell
-# 如果虚拟环境未激活，请先运行 venv\Scripts\activate
+# 在仓库根目录执行
 venv\Scripts\activate
 cd backend
-uvicorn app.main:app --reload --port 9000
+python -m uvicorn app.main:app --reload --port 9000
 ```
 
 ### 启动前端
 
 ```powershell
+# 在仓库根目录新开 PowerShell 窗口中执行
 cd frontend
 pnpm dev
 ```
