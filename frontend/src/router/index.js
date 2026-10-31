@@ -48,7 +48,7 @@ const routes = [
                 redirect: "/settings/profile",
                 meta: { title: "设置" },
                 children: [
-                    { path: "profile",     name: "SettingsProfile",     component: SettingsProfile,     meta: { title: "账户" } },
+                    { path: "profile",     name: "SettingsProfile",     component: SettingsProfile,     meta: { title: "设置" } },
                     { path: "preferences", name: "SettingsPreferences", component: SettingsPreferences, meta: { title: "偏好" } },
                     { path: "exchanges",   name: "SettingsExchanges",   component: SettingsExchanges,   meta: { title: "交易所 API" } },
                 ]

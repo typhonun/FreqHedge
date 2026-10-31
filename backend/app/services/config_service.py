@@ -53,7 +53,7 @@ class ConfigService:
                 template=BASE_TEMPLATE,
             )
             long_path.write_text(
-                json.dumps(cfg, indent=4, ensure_ascii=False),
+                json.dumps(cfg, indent=4, ensure_ascii=True),
                 encoding="utf-8",
             )
 
@@ -72,7 +72,7 @@ class ConfigService:
                 template=BASE_TEMPLATE,
             )
             short_path.write_text(
-                json.dumps(cfg, indent=4, ensure_ascii=False),
+                json.dumps(cfg, indent=4, ensure_ascii=True),
                 encoding="utf-8",
             )
 

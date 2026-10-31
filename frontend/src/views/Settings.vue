@@ -3,8 +3,6 @@
   <div class="settings-page">
     <!-- 二级菜单 -->
     <aside class="settings-nav">
-      <div class="nav-title">设置</div>
-
       <ul class="nav-list">
         <li
           v-for="item in menu"
