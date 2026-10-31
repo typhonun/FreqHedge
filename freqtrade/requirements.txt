@@ -1,19 +1,14 @@
 # ============================================================
 # FreqHedge 依赖清单
-# 适用 Python 3.11 - 3.12（强烈推荐 3.12；3.13 部分平台可能缺
-# TA-Lib/numpy 预编译 wheel，3.14 不支持）
+# 适用 Python 3.11 - 3.12（推荐 3.12）
 #
-# 说明：
-# - `-e ./freqtrade` 以 editable 方式安装仓库内的 Freqtrade 源码，
-#   其 NumPy、pandas-ta、ccxt 等依赖由 freqtrade/pyproject.toml
-#   统一解析。不能改为安装 PyPI 上的 freqtrade==2024.10，
-#   该版本依赖已与当前 NumPy/pandas-ta 生态冲突。
-# - 后端依赖使用 `>=x,<y` 范围约束，而不是 `==` 硬钉，
-#   避免与 Freqtrade 自身依赖互相打架导致 pip 回溯上百个版本。
+# 从仓库根目录执行：
+#   python -m pip install -r freqtrade/requirements.txt
+#
+# 注意：Freqtrade 本身不在此安装。请按 README「安装 Freqtrade CLI」
+# 一节，用 pipx 单独安装 freqtrade 命令，避免其 NumPy/pandas-ta
+# 依赖与后端冲突。
 # ============================================================
-
-# ============ 策略框架（本地源码，editable 安装） ============
--e ./freqtrade
 
 # ============ Web 后端 ============
 fastapi>=0.115,<0.116
@@ -38,8 +33,7 @@ python-dotenv>=1.0,<2
 
 # ============ HTTP ============
 requests>=2.32,<3
-# aiohttp 由本地 Freqtrade 的 pyproject.toml 声明，这里不再重复，
-# 避免锁定没有对应 Python 版本 wheel 的旧版本触发源码编译。
+aiohttp>=3.10,<4
 
 # ============ 日志 ============
 loguru>=0.7.2,<0.8

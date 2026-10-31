@@ -242,13 +242,20 @@ py -3.12 -m venv venv
 # 激活虚拟环境 (Windows)
 venv\Scripts\activate
 ```
-### 安装 Python 依赖
+### 安装 Freqtrade CLI
 
 ```powershell
 # 在仓库根目录执行
-python -m ensurepip --upgrade
+python -m pip install --user pipx
+python -m pipx ensurepath
+
+# 重开终端后：
+pipx install "freqtrade==2024.10"
+freqtrade --version
+
+### 安装后端依赖
 python -m pip install --upgrade pip
-python -m pip install -r freqtrade\requirements.txt
+python -m pip install -r freqtrade/requirements.txt
 ```
 
 ### 安装前端依赖
