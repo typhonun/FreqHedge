@@ -84,7 +84,7 @@
         "ws_token": "somethingRandomSomethingRandom123",
         "CORS_origins": ["*"],
         "username": "freqtrader",
-        "password": "zy147258"
+        "password": "password"
     },
     "bot_name": "",
     "initial_state": "running",

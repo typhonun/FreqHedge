@@ -11,7 +11,7 @@ PORT_START = 8100
 PORT_END   = 8900
 
 AUTH_USER = "freqtrader"
-AUTH_PASSWORD = "zy147258"
+AUTH_PASSWORD = "password"
 
 DATA_DIR = BASE_DIR / "backend" / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
