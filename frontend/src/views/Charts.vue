@@ -110,7 +110,7 @@ const route = useRoute()
 
 const botStore = useBotStore()
 const modeStore = useModeStore()
-const botList = computed(() => botStore.state.bots.filter(b => Boolean(b.dryRun) === modeStore.isSimulation.value))
+const botList = computed(() => botStore.state.bots)
 
 const chartRef = ref(null)
 
@@ -138,8 +138,8 @@ let allCandleData = []     // ★ 存储当前图表的所有数据
 // 机器人列表
 // =========================================================
 
-const loadBots = async () => {
-    await botStore.fetchBots()
+const loadBots = async (force = false) => {
+    await botStore.fetchBots({ force })
 
     if (!botList.value.length) {
         botId.value = null
@@ -190,7 +190,8 @@ const loadPairs = async () => {
     await loadBotPositions()
 
     const res = await axios.get(`${API}/chart/pairs/${botId.value}`, {
-        params: { dry_run: modeStore.isSimulation.value }
+        params: { dry_run: modeStore.isSimulation.value },
+        ...modeStore.getRequestConfig()
     })
     pairs.value = res.data || []
 
@@ -213,7 +214,8 @@ const loadBotPositions = async () => {
     if (!botId.value) return
     try {
         const res = await axios.get(`${API}/chart/bot-positions/${botId.value}`, {
-            params: { dry_run: modeStore.isSimulation.value }
+            params: { dry_run: modeStore.isSimulation.value },
+            ...modeStore.getRequestConfig()
         })
         strategyPositions.value = res.data || []
     } catch (e) {
@@ -250,7 +252,8 @@ const updateLastCandle = async () => {
     if (!pair.value || !candleSeries) return
     try {
         const res = await axios.get(`${API}/chart/latest`, {
-            params: { pair: pair.value, timeframe: timeframe.value }
+            params: { pair: pair.value, timeframe: timeframe.value },
+            ...modeStore.getRequestConfig()
         })
 
         // ★ 核心优化 1：如果后端返回空（无缓存），直接忽略本次刷新，防止报错
@@ -295,7 +298,8 @@ const loadChart = async () => {
     allCandleData = []
 
     const res = await axios.get(`${API}/chart/candles`, {
-        params: { pair: pair.value, timeframe: timeframe.value }
+        params: { pair: pair.value, timeframe: timeframe.value },
+        ...modeStore.getRequestConfig()
     })
 
     const data = res.data.map(c => ({
@@ -315,7 +319,8 @@ const loadChart = async () => {
             bot_id: botId.value,
             pair: pair.value,
             dry_run: modeStore.isSimulation.value
-        }
+        },
+        ...modeStore.getRequestConfig()
     })
 
     const eventMarkers = buildMarkers(eventRes.data || [], allCandleData)
@@ -343,7 +348,8 @@ const handleScroll = async (logicalRange) => {
                     pair: pair.value,
                     timeframe: timeframe.value,
                     end_time: oldestCandle.time * 1000
-                }
+                },
+                ...modeStore.getRequestConfig()
             })
 
             if (!res.data || res.data.length === 0) {
@@ -377,7 +383,8 @@ const handleScroll = async (logicalRange) => {
                         bot_id: botId.value,
                         pair: pair.value,
                         dry_run: modeStore.isSimulation.value
-                    }
+                    },
+                    ...modeStore.getRequestConfig()
                 })
                 const eventMarkers = buildMarkers(eventRes.data || [], allCandleData)
                 markerApi.setMarkers(eventMarkers)
@@ -409,7 +416,11 @@ watch(modeStore.mode, async () => {
     pairs.value = []
     pair.value = ""
     strategyPositions.value = []
-    await loadBots()
+    try {
+        await loadBots(true)
+    } catch (e) {
+        if (!axios.isCancel(e)) console.error("切换模式加载 K 线失败", e)
+    }
 })
 
 // =========================================================

@@ -66,11 +66,13 @@ import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 import { useTradeStore } from '@/stores/tradeStore'
 import axios from 'axios'
 import { useModeStore } from '@/stores/modeStore'
+import { useBotStore } from '@/stores/botStore'
 
 const API = 'http://localhost:9000'
 const router = useRouter()
 const store = useTradeStore()
 const modeStore = useModeStore()
+const botStore = useBotStore()
 
 // 两个独立的下拉框
 const accountSelected = ref('__total__')
@@ -80,7 +82,7 @@ const profitSelected = ref('__total__')
 const currentPeriod = ref('1D')
 const profitPeriod = ref('ALL')
 
-const botList = ref([])
+const botList = computed(() => botStore.state.bots.map(b => ({ id: b.id, name: b.name })))
 
 const toBotId = (v) => (v === '__total__' ? null : v)
 
@@ -106,7 +108,7 @@ const fetchBalanceCurve = async (botId, period) => {
     if (botId) {
       url += `&bot_id=${botId}`
     }
-    const { data } = await axios.get(url)
+    const { data } = await axios.get(url, modeStore.getRequestConfig())
     // 将数据存入 store
     store.balanceCurve = data
   } catch (e) {
@@ -166,17 +168,8 @@ const stopTimers = () => {
   if (historyTimer) { clearInterval(historyTimer); historyTimer = null }
 }
 
-const loadBotList = async () => {
-  try {
-    const { data } = await axios.get(`${API}/bots?dry_run=${modeStore.isSimulation.value}`)
-    const newList = data.map(b => ({ id: b.id, name: b.name }))
-    // 只有列表真的变化才替换，避免 el-select 重新校验
-    if (JSON.stringify(newList) !== JSON.stringify(botList.value)) {
-      botList.value = newList
-    }
-  } catch (e) {
-    console.error('load bot list failed', e)
-  }
+const loadBotList = async (force = false) => {
+  await botStore.fetchBots({ force })
 }
 
 // 两个下拉框各自的 change 回调
@@ -211,7 +204,7 @@ onActivated(async () => {
 })
 
 watch(modeStore.mode, async () => {
-  await loadBotList()
+  await loadBotList(true)
   // 如果当前选中的 bot 在新列表里不存在了，才重置
   const isValidAccount = accountSelected.value === '__total__'
     || botList.value.some(b => b.id === accountSelected.value)
@@ -221,10 +214,12 @@ watch(modeStore.mode, async () => {
     || botList.value.some(b => b.id === profitSelected.value)
   if (!isValidProfit) profitSelected.value = '__total__'
 
-  await refreshAccountAll()
-  await refreshProfitCurve()
-  await store.refresh(null)
-  await store.refreshHistory(null)
+  await Promise.all([
+    refreshAccountAll(),
+    refreshProfitCurve(),
+    store.refresh(null),
+    store.refreshHistory(null),
+  ])
 })
 </script>
 

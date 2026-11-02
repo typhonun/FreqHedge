@@ -74,7 +74,7 @@ const store = useTradeStore()
 const botStore = useBotStore()
 const modeStore = useModeStore()
 
-const bots = computed(() => botStore.state.bots.filter(b => Boolean(b.dryRun) === modeStore.isSimulation.value))
+const bots = computed(() => botStore.state.bots)
 
 const filterBotId = ref(null)
 const viewMode = ref('grouped')
@@ -92,17 +92,19 @@ const closedCount = computed(() => {
   return (p.long?.length || 0) + (p.short?.length || 0)
 })
 
-const loadBots = async () => {
+const loadBots = async (force = false) => {
   try {
-    await botStore.fetchBots()
+    await botStore.fetchBots({ force })
   } catch (e) {
     console.error('[Positions] loadBots failed', e)
   }
 }
 
 const reload = async () => {
-  await store.refresh(filterBotId.value)
-  await store.refreshHistory(filterBotId.value)
+  await Promise.all([
+    store.refresh(filterBotId.value),
+    store.refreshHistory(filterBotId.value),
+  ])
 }
 
 watch(filterBotId, async () => {
@@ -111,7 +113,7 @@ watch(filterBotId, async () => {
 
 watch(modeStore.mode, async () => {
   filterBotId.value = null
-  await loadBots()
+  await loadBots(true)
   await reload()
 })
 

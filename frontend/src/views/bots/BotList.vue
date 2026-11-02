@@ -419,7 +419,6 @@ const handleToggle = async (bot) => {
   try {
     await toggleBot(bot.id, bot.status)
     ElMessage.success(isStopping ? '已停止' : '已启动')
-    await fetchBots()
   } catch (e) {
     ElMessage.error(e?.response?.data?.error || '操作失败')
   } finally {
@@ -473,7 +472,6 @@ const handleDelete = async (bot) => {
     }
     await deleteBot(bot.id)
     ElMessage.success('已删除')
-    await fetchBots()
   } catch (e) {
     ElMessage.error(e?.response?.data?.error || '删除失败')
   } finally {
@@ -633,7 +631,7 @@ let refreshTimer = null
 const startTimer = () => {
   stopTimer()
   refreshTimer = setInterval(() => {
-    fetchBots()
+    fetchBots({ force: true })
   }, 10000)
 }
 
@@ -653,7 +651,7 @@ onUnmounted(stopTimer)
 
 watch(modeStore.mode, async () => {
   filterStatus.value = 'all'
-  await fetchBots()
+  await fetchBots({ force: true })
 })
 </script>
 
