@@ -77,6 +77,7 @@ const props = defineProps({
 })
 
 const expandedIds = ref([])
+const knownGroupIds = new Set()
 
 const flat = computed(() => {
   let result = []
@@ -136,10 +137,13 @@ watch(
     const next = [...expandedIds.value]
     let changed = false
     for (const g of arr) {
-      if (!existing.has(g.botId)) {
+      // Only expand newly appeared groups. A refresh must not reopen groups
+      // that the user has explicitly collapsed.
+      if (!knownGroupIds.has(g.botId) && !existing.has(g.botId)) {
         next.push(g.botId)
         changed = true
       }
+      knownGroupIds.add(g.botId)
     }
     if (changed) expandedIds.value = next
   },
