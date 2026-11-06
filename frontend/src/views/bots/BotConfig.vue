@@ -39,11 +39,11 @@
                   <div class="field-value">
                     <el-select
                       v-model="botBaseInfo.exchangeAccountId"
-                      :placeholder="modeStore.isSimulation.value ? 'Demo' : '请选择真实交易所账户'"
+                      :placeholder="modeStore.isSimulation.value ? '请选择模拟交易所账户' : '请选择真实交易所账户'"
                       style="width: 100%"
                       :clearable="modeStore.isSimulation.value"
                     >
-                      <el-option-group v-if="modeStore.isSimulation.value">
+                      <el-option-group v-if="modeStore.isSimulation.value && !exchangeAccounts.length">
                         <el-option
                           label="Demo"
                           :value="DRY_RUN_VALUE"
@@ -896,11 +896,16 @@ const API = 'http://localhost:9000'
 const route = useRoute()
 const router = useRouter()
 const { createBot, updateBot } = useBotStore()
-const { accounts: allExchangeAccounts, defaultAccount, getById: getExchangeAccount } = useExchangeAccounts()
+const {
+  accounts: allExchangeAccounts,
+  defaultAccount,
+  getById: getExchangeAccount,
+  reload: reloadExchangeAccounts,
+} = useExchangeAccounts()
 const modeStore = useModeStore()
 const exchangeAccounts = computed(() =>
   modeStore.isSimulation.value
-    ? []
+    ? allExchangeAccounts.value.filter(acc => acc.isSimulation)
     : allExchangeAccounts.value.filter(acc => !acc.isSimulation)
 )
 const exchangeLabel = (v) => ({
@@ -1054,11 +1059,14 @@ const loadBotDetail = async () => {
       return 'long'
     })()
 
-    /* ★ 关键改动：Dry Run 时强制清空 exchangeAccountId，
-       避免旧数据「dryRun=true 但有 accountId」的歧义 */
+    const modeAccounts = exchangeAccounts.value
     const accountId = isDryRunFromData
-      ? DRY_RUN_VALUE
-      : (data.exchangeAccountId || exchangeAccounts.value[0]?.id || null)
+      ? (
+        modeAccounts.some(account => account.id === data.exchangeAccountId)
+          ? data.exchangeAccountId
+          : (modeAccounts[0]?.id || DRY_RUN_VALUE)
+      )
+      : (data.exchangeAccountId || modeAccounts[0]?.id || null)
 
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
@@ -1629,7 +1637,7 @@ const exitReasonLabel = (reason) => {
  * ══════════════════════════════════════════════════════════════════ */
 const buildPayload = () => {
   const dir = botBaseInfo.value.direction
-  const acct = isDryRun.value ? null : getExchangeAccount(botBaseInfo.value.exchangeAccountId)
+  const acct = getExchangeAccount(botBaseInfo.value.exchangeAccountId)
   const dryRun = isDryRun.value
 
   // ★ 计算 stakeAmount
@@ -1653,12 +1661,12 @@ const buildPayload = () => {
     enableLong: dir === 'long',
     enableShort: dir === 'short',
     exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
-    exchangeAccount: dryRun ? null : (acct ? {
+    exchangeAccount: acct ? {
       exchange: acct.exchange,
-      apiKey: acct.apiKey,
-      apiSecret: acct.apiSecret,
-      passphrase: acct.passphrase || '',
-    } : null),
+      apiKey: dryRun ? '' : acct.apiKey,
+      apiSecret: dryRun ? '' : acct.apiSecret,
+      passphrase: dryRun ? '' : (acct.passphrase || ''),
+    } : null,
     tradingMode: botBaseInfo.value.tradingMode,
     marginMode: botBaseInfo.value.marginMode,
     strategyType: strategyType.value,
@@ -2466,6 +2474,14 @@ onBeforeRouteLeave(async (to, from) => {
  * 18. 生命周期
  * ══════════════════════════════════════════════════════════════════ */
 onMounted(async () => {
+  reloadExchangeAccounts()
+  if (!isEdit.value && !isCopy.value) {
+    const account = exchangeAccounts.value.find(item => item.isDefault)
+      || exchangeAccounts.value[0]
+    if (account) {
+      botBaseInfo.value.exchangeAccountId = account.id
+    }
+  }
   await loadPairs()
   await loadBotDetail() // 这里面会赋值 capital
 

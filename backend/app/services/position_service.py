@@ -1066,8 +1066,9 @@ class PositionService:
             if bot_id is None and dry_run is None:
                 q = q.filter(EquityHistory.bot_id.is_(None))
             elif bot_id is None:
-                ids = [b["id"] for b in list_all_bots(dry_run=dry_run)]
-                q = q.filter(EquityHistory.bot_id.in_(ids)) if ids else q.filter(False)
+                # The dashboard total is an account-level curve.  Do not
+                # rebuild it by adding each bot's wallet curve.
+                q = q.filter(EquityHistory.bot_id.is_(None))
             else:
                 q = q.filter(EquityHistory.bot_id == bot_id)
 

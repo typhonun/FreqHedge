@@ -18,42 +18,8 @@
       </el-button>
     </div>
 
-    <!-- ============ 模拟账户：置顶、独立、不可操作 ============ -->
-    <div v-if="isSimulation" class="account-list">
-      <div class="account-card account-card--dry-run">
-        <div class="account-card__main">
-          <div class="account-brand">
-            <div
-              class="brand-logo"
-              :style="{ background: brandColor(DRY_RUN_EXCHANGE) }"
-            >
-              {{ brandInitial(DRY_RUN_EXCHANGE) }}
-            </div>
-            <div class="brand-info">
-              <div class="brand-name">
-                {{ exchangeLabel(DRY_RUN_EXCHANGE) }}
-                <el-tag size="small" type="info" effect="plain">
-                  内置
-                </el-tag>
-              </div>
-              <div class="brand-alias">
-                模拟运行
-              </div>
-            </div>
-          </div>
-
-          <div class="account-field">
-            <div class="field-label">下单模式</div>
-            <div class="field-value">
-              模拟撮合，不产生真实订单
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <!-- ============ 真实账户列表 ============ -->
-    <div v-if="accounts.length" class="account-list">
+    <div v-if="visibleAccounts.length" class="account-list">
       <div
         v-for="acc in visibleAccounts"
         :key="acc.id"
@@ -91,6 +57,11 @@
 
           <!-- 连接状态 -->
           <div class="account-field">
+            <div class="field-label">账户总资金</div>
+            <div class="field-value">{{ formatCapital(acc.totalCapital) }} USDT</div>
+          </div>
+
+          <div class="account-field">
             <div class="field-label">状态</div>
             <div class="field-value">
               <span
@@ -121,6 +92,7 @@
             size="small"
             type="danger"
             plain
+            :disabled="Boolean(acc.isProtected)"
             @click="handleDelete(acc)"
           >
             删除
@@ -149,6 +121,7 @@
             v-model="form.exchange"
             placeholder="请选择交易所"
             style="width: 100%"
+            :disabled="isProtectedSimulationForm"
           >
             <el-option
               v-for="ex in supportedExchanges"
@@ -157,6 +130,23 @@
               :value="ex.value"
             />
           </el-select>
+        </el-form-item>
+
+        <el-form-item
+          v-if="isSimulation || !editing"
+          label="账户总资金"
+          prop="totalCapital"
+        >
+          <el-input-number
+            v-model="form.totalCapital"
+            :min="1"
+            :step="100"
+            :precision="2"
+            style="width: 100%"
+          />
+          <div class="form-tip">
+            模拟盘为该账户的初始资金；实盘保存后自动更新为交易所真实资产。
+          </div>
         </el-form-item>
 
         <el-form-item label="账户别名" prop="alias">
@@ -239,8 +229,6 @@ const isSimulation = computed(() => modeStore.isSimulation.value)
  * 后端在 dry_run=true 时，会把 config.exchange.name 写死为此值。
  * 如需切换（如 OKX Dry Run），改这一处即可。
  */
-const DRY_RUN_EXCHANGE = 'binance'
-
 const supportedExchanges = [
   { value: 'binance',  label: 'Binance 币安',      color: '#F0B90B', initial: 'B'  },
   { value: 'okx',      label: 'OKX 欧易',          color: '#000000', initial: 'OK' },
@@ -278,6 +266,7 @@ const emptyForm = () => ({
   passphrase: '',
   permissions: ['read', 'trade'],
   isDefault: false,
+  totalCapital: isSimulation.value ? 10000 : 0,
   status: 'ok',
   lastChecked: '',
 })
@@ -310,6 +299,9 @@ const { accounts,
 const visibleAccounts = computed(() =>
   accounts.value.filter(acc => Boolean(acc.isSimulation) === isSimulation.value)
 )
+const isProtectedSimulationForm = computed(() =>
+  isSimulation.value && editing.value && Boolean(form.isProtected)
+)
 
 /* ══════════════════════════════════════════════════════════════════
  * 工具
@@ -319,6 +311,7 @@ const maskKey = (k) => {
   if (k.length <= 10) return k
   return `${k.slice(0, 6)}****${k.slice(-4)}`
 }
+const formatCapital = (value) => Number(value || 0).toFixed(2)
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 
@@ -366,18 +359,23 @@ const handleSave = async () => {
     const isEditing = editing.value
 
     if (!isSimulation.value) {
-      await axios.post(`${API}/exchange/test-connection`, {
+      const request = {
         exchange: form.exchange,
         apiKey: form.apiKey,
         apiSecret: form.apiSecret,
         passphrase: form.passphrase || '',
-      })
+      }
+      await axios.post(`${API}/exchange/test-connection`, request)
+      const { data } = await axios.post(`${API}/exchange/wallets`, request)
+      form.totalCapital = Object.values(data)
+        .reduce((sum, wallet) => sum + Number(wallet.total || 0), 0)
     }
 
     const payload = {
       ...form,
       id: isEditing ? form.id : uid(),
       isSimulation: isSimulation.value,
+      isProtected: isSimulation.value ? Boolean(form.isProtected) : false,
       apiKey: isSimulation.value ? '' : form.apiKey,
       apiSecret: isSimulation.value ? '' : form.apiSecret,
       passphrase: isSimulation.value ? '' : form.passphrase,
@@ -390,11 +388,15 @@ const handleSave = async () => {
       visibleAccounts.value.forEach((a) => { a.isDefault = false })
     }
 
-    if (isEditing && !isSimulation.value) {
+    if (isEditing) {
       const idx = accounts.value.findIndex((a) => a.id === payload.id)
-      if (idx >= 0) accounts.value[idx] = payload
+      if (idx >= 0) {
+        accounts.value[idx] = payload
+      } else {
+        accounts.value.push(payload)
+      }
     } else {
-      if (accounts.value.length === 0) payload.isDefault = true
+      if (visibleAccounts.value.length === 0) payload.isDefault = true
       accounts.value.push(payload)
     }
     saveAccounts()
@@ -430,6 +432,10 @@ const handleSave = async () => {
 }
 
 const handleDelete = async (acc) => {
+  if (acc.isSimulation && acc.isProtected) {
+    ElMessage.warning('默认模拟账户不能删除，可直接编辑')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `确认删除「${exchangeLabel(acc.exchange)} · ${acc.alias || '未命名'}」的 API 配置？`,
@@ -511,6 +517,12 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.form-tip {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* ============ 顶部 ============ */

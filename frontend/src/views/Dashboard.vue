@@ -64,11 +64,9 @@ import ExposureCard from '@features/dashboard/components/ExposureCard.vue'
 import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 
 import { useTradeStore } from '@/stores/tradeStore'
-import axios from 'axios'
 import { useModeStore } from '@/stores/modeStore'
 import { useBotStore } from '@/stores/botStore'
 
-const API = 'http://localhost:9000'
 const router = useRouter()
 const store = useTradeStore()
 const modeStore = useModeStore()
@@ -101,19 +99,9 @@ const goPositions = () => router.push({ name: 'Positions' })
 let timer = null
 let historyTimer = null
 
-// 1. 单独封装请求曲线的函数（直接调用 API）
+// 1. 账户汇总和曲线统一走同一套权益口径
 const fetchBalanceCurve = async (botId, period) => {
-  try {
-    let url = `${API}/position/balance_curve?period=${period}&dry_run=${modeStore.isSimulation.value}`
-    if (botId) {
-      url += `&bot_id=${botId}`
-    }
-    const { data } = await axios.get(url, modeStore.getRequestConfig())
-    // 将数据存入 store
-    store.balanceCurve = data
-  } catch (e) {
-    console.error('获取曲线失败', e)
-  }
+  await store.refreshAccount(botId, period)
 }
 
 // 2. 周期切换事件（由 AccountCard -> BalanceCurve 触发）

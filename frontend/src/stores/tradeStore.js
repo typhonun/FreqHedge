@@ -1,12 +1,32 @@
 import { defineStore } from "pinia"
 import axios from "axios"
 import { useModeStore } from './modeStore'
+import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 
 const API = "http://localhost:9000"
 let profitCurveSeq = 0
 const accountRequests = new Map()
 const generalRequests = new Map()
 const historyRequests = new Map()
+
+const applyExchangeEquity = (curve, baseCapital, closedProfit, floatingProfit) => {
+  const totalEquity = baseCapital + closedProfit + floatingProfit
+  const rawCurve = Array.isArray(curve) ? curve : []
+  if (!rawCurve.length) return rawCurve
+
+  const latestRawEquity = Number(rawCurve[rawCurve.length - 1].balance || 0)
+  const offset = totalEquity - latestRawEquity
+  return rawCurve.map((point) => {
+    const profit = Number(point.profit || 0)
+    const balance = Number((Number(point.balance || 0) + offset).toFixed(2))
+    return {
+      ...point,
+      balance,
+      // wallet = equity - floating PnL，按每个时间点动态展示
+      wallet: Number((balance - profit).toFixed(2)),
+    }
+  })
+}
 
 const _q = (botId, dryRun) => {
   const parts = []
@@ -50,15 +70,37 @@ export const useTradeStore = defineStore("trade", {
         const q = _q(botId, dryRun)
         try {
           const config = modeStore.getRequestConfig()
-          const [summary, floating, curve] = await Promise.all([
+          const [summary, floating, curve, closedProfit] = await Promise.all([
             axios.get(`${API}/position/summary${q}`, config),
             axios.get(`${API}/position/floating${q}`, config),
             axios.get(`${API}/position/balance_curve${q}&period=${period}`, config),
+            axios.get(`${API}/position/closed_profit${q}`, config),
           ])
           if (modeStore.isCurrent(modeKey, version)) {
-            this.summary = summary.data
+            const accountStore = useExchangeAccounts()
+            if (botId == null) {
+              if (!dryRun) await accountStore.refreshLiveBalances()
+              if (!modeStore.isCurrent(modeKey, version)) return
+              const totalCapital = accountStore.totalCapital(dryRun)
+              const usedMargin = Number(summary.data.used_margin || 0)
+              const closed = Number(closedProfit.data.total_closed_profit || 0)
+              const floatingValue = Number(floating.data.total_float || 0)
+              this.summary = {
+                ...summary.data,
+                total_balance: Number((totalCapital + closed).toFixed(2)),
+                available_balance: Number((totalCapital + closed - usedMargin).toFixed(2)),
+              }
+              this.balanceCurve = applyExchangeEquity(
+                curve.data,
+                totalCapital,
+                closed,
+                floatingValue,
+              )
+            } else {
+              this.summary = summary.data
+              this.balanceCurve = curve.data
+            }
             this.floating = floating.data
-            this.balanceCurve = curve.data
           }
         } catch (e) {
           if (!axios.isCancel(e)) console.error("refreshAccount error", e.response?.data || e)
@@ -106,16 +148,32 @@ export const useTradeStore = defineStore("trade", {
         const q = _q(botId, dryRun)
         try {
           const config = modeStore.getRequestConfig()
-          const [profit, positions, summary, floating] = await Promise.all([
+          const [profit, positions, summary, floating, closedProfit] = await Promise.all([
             axios.get(`${API}/position/profit${q}`, config),
             axios.get(`${API}/position/open${q}`, config),
             axios.get(`${API}/position/summary${q}`, config),
             axios.get(`${API}/position/floating${q}`, config),
+            axios.get(`${API}/position/closed_profit${q}`, config),
           ])
           if (modeStore.isCurrent(modeKey, version)) {
             this.profit = profit.data
             this.positions = positions.data
-            this.summary = summary.data
+            const accountStore = useExchangeAccounts()
+            if (botId == null) {
+              if (!dryRun) await accountStore.refreshLiveBalances()
+              if (!modeStore.isCurrent(modeKey, version)) return
+              const totalCapital = accountStore.totalCapital(dryRun)
+              const usedMargin = Number(summary.data.used_margin || 0)
+              const closed = Number(closedProfit.data.total_closed_profit || 0)
+              const floatingValue = Number(floating.data.total_float || 0)
+              this.summary = {
+                ...summary.data,
+                total_balance: Number((totalCapital + closed).toFixed(2)),
+                available_balance: Number((totalCapital + closed - usedMargin).toFixed(2)),
+              }
+            } else {
+              this.summary = summary.data
+            }
             this.floating = floating.data
           }
         } catch (e) {
