@@ -5,6 +5,7 @@ import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 
 const API = "http://localhost:9000"
 let profitCurveSeq = 0
+let accountCurveSeq = 0
 const accountRequests = new Map()
 const generalRequests = new Map()
 const historyRequests = new Map()
@@ -28,9 +29,10 @@ const applyExchangeEquity = (curve, baseCapital, closedProfit, floatingProfit) =
   })
 }
 
-const _q = (botId, dryRun) => {
+const _q = (botId, dryRun, accountId = null) => {
   const parts = []
   if (botId != null) parts.push(`bot_id=${botId}`)
+  if (accountId != null) parts.push(`account_id=${encodeURIComponent(accountId)}`)
   parts.push(`dry_run=${dryRun}`)
   parts.push(`_t=${Date.now()}`)
   return `?${parts.join('&')}`
@@ -57,31 +59,36 @@ export const useTradeStore = defineStore("trade", {
 
   actions: {
     // 账户总览：summary / floating / balanceCurve
-    async refreshAccount(botId = null, period = "1D") {
+    async refreshAccount(botId = null, period = "1D", accountId = null) {
       const modeStore = useModeStore()
       const dryRun = modeStore.isSimulation.value
       const modeKey = dryRun ? 'simulation' : 'live'
       const version = modeStore.requestVersion.value
-      const key = `${modeKey}:${botId ?? 'all'}:${period}`
+      const requestSeq = ++accountCurveSeq
+      const key = `${modeKey}:${botId ?? 'all'}:${accountId ?? 'all'}:${period}`
       if (accountRequests.has(key)) return accountRequests.get(key)
 
       const request = (async () => {
         this.accountBotId = botId
-        const q = _q(botId, dryRun)
+        const q = _q(botId, dryRun, accountId)
         try {
           const config = modeStore.getRequestConfig()
+          const accountStore = useExchangeAccounts()
+          const liveBalanceRequest = botId == null && !dryRun
+            ? accountStore.refreshLiveBalances(accountId)
+            : null
           const [summary, floating, curve, closedProfit] = await Promise.all([
             axios.get(`${API}/position/summary${q}`, config),
             axios.get(`${API}/position/floating${q}`, config),
             axios.get(`${API}/position/balance_curve${q}&period=${period}`, config),
             axios.get(`${API}/position/closed_profit${q}`, config),
           ])
-          if (modeStore.isCurrent(modeKey, version)) {
-            const accountStore = useExchangeAccounts()
+          if (requestSeq === accountCurveSeq && modeStore.isCurrent(modeKey, version)) {
             if (botId == null) {
-              if (!dryRun) await accountStore.refreshLiveBalances()
+              if (liveBalanceRequest) await liveBalanceRequest
+              if (requestSeq !== accountCurveSeq) return
               if (!modeStore.isCurrent(modeKey, version)) return
-              const totalCapital = accountStore.totalCapital(dryRun)
+              const totalCapital = accountStore.totalCapital(dryRun, accountId)
               const usedMargin = Number(summary.data.used_margin || 0)
               const closed = Number(closedProfit.data.total_closed_profit || 0)
               const floatingValue = Number(floating.data.total_float || 0)

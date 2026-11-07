@@ -61,6 +61,15 @@ def _default_for(kind):
 
 class PositionService:
 
+    @staticmethod
+    def _account_bot_ids(account_id, dry_run=None):
+        if not account_id:
+            return None
+        return [
+            bot["id"] for bot in list_all_bots(dry_run=dry_run)
+            if str(bot.get("exchangeAccountId") or "") == str(account_id)
+        ]
+
     # =========================================================
     # 底层：单 bot 拉数据（带缓存 + 兜底）
     # =========================================================
@@ -143,7 +152,7 @@ class PositionService:
 
     @staticmethod
     def get_snapshot(bot_id: int | None = None, cache_seconds: int = SNAPSHOT_CACHE_SECONDS,
-                     dry_run: bool | None = None):
+                     dry_run: bool | None = None, account_id: str | None = None):
         now = time.time()
 
         # 强制最低 1 秒微缓存，防止高频轮询
@@ -173,7 +182,7 @@ class PositionService:
                 return snap
 
         # 聚合模式
-        cache_key = dry_run
+        cache_key = (dry_run, account_id)
         cached_all = _snapshot_all_cache.get(cache_key)
         if cached_all and now - cached_all["time"] < cache_seconds:
             return cached_all["data"]
@@ -188,6 +197,11 @@ class PositionService:
 
             agg = _empty_snapshot()
             bots = list_running_bots(dry_run=dry_run)
+            if account_id:
+                bots = [
+                    bot for bot in bots
+                    if str(bot.get("exchangeAccountId") or "") == str(account_id)
+                ]
             for bot in bots:
                 snap = PositionService.get_snapshot(
                     bot_id=bot["id"], cache_seconds=cache_seconds, dry_run=dry_run
@@ -462,9 +476,10 @@ class PositionService:
         }
 
     @staticmethod
-    def get_account_summary(snapshot=None, bot_id: int | None = None, dry_run: bool | None = None):
+    def get_account_summary(snapshot=None, bot_id: int | None = None, dry_run: bool | None = None,
+                            account_id: str | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run, account_id=account_id)
 
         long_balance = snapshot["long_balance"]
         short_balance = snapshot["short_balance"]
@@ -493,7 +508,10 @@ class PositionService:
         available_balance = total_balance - used_margin
 
         if dry_run is False:
-            live_balance = PositionService._get_live_exchange_balance(bot_id)
+            live_balance = PositionService._get_live_exchange_balance(
+                bot_id=bot_id,
+                account_id=account_id,
+            )
             if live_balance is not None:
                 total_balance = live_balance["total"]
                 available_balance = live_balance["free"] - used_margin
@@ -511,14 +529,19 @@ class PositionService:
         }
 
     @staticmethod
-    def _get_live_exchange_balance(bot_id=None):
+    def _get_live_exchange_balance(bot_id=None, account_id=None):
         bots = list_all_bots(dry_run=False)
         if bot_id is not None:
             bots = [bot for bot in bots if bot.get("id") == bot_id]
         accounts = {}
         for bot in bots:
             account = bot.get("exchangeAccountJson") or {}
-            if account.get("exchange") and account.get("apiKey") and account.get("apiSecret"):
+            if (
+                account.get("exchange")
+                and (account_id is None or str(bot.get("exchangeAccountId") or "") == str(account_id))
+                and account.get("apiKey")
+                and account.get("apiSecret")
+            ):
                 key = (
                     account["exchange"], account["apiKey"],
                     account["apiSecret"], account.get("passphrase", "")
@@ -547,9 +570,10 @@ class PositionService:
 
     @staticmethod
     def get_floating_profit(snapshot=None, long_positions=None, short_positions=None,
-                            bot_id: int | None = None, dry_run: bool | None = None):
+                            bot_id: int | None = None, dry_run: bool | None = None,
+                            account_id: str | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run, account_id=account_id)
         if long_positions is None:
             long_positions = PositionService._extract_trades(snapshot["long_status"])
         if short_positions is None:
@@ -586,9 +610,9 @@ class PositionService:
     @staticmethod
     def get_closed_profit_summary(snapshot=None, long_trades=None, short_trades=None,
                                   long_status=None, short_status=None, bot_id: int | None = None,
-                                  dry_run: bool | None = None):
+                                  dry_run: bool | None = None, account_id: str | None = None):
         if snapshot is None:
-            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run, account_id=account_id)
         if long_trades is None:
             long_trades = PositionService._extract_trades(snapshot["long_trades"])
         if short_trades is None:
@@ -1056,14 +1080,18 @@ class PositionService:
             db.close()
 
     @staticmethod
-    def get_balance_curve(period="1D", bot_id: int | None = None, dry_run: bool | None = None):
+    def get_balance_curve(period="1D", bot_id: int | None = None, dry_run: bool | None = None,
+                          account_id: str | None = None):
         db = SessionLocal()
         try:
             now = int(time.time())
             start_time = now - PositionService._period_seconds(period)
             q = db.query(EquityHistory).filter(EquityHistory.timestamp >= start_time)
 
-            if bot_id is None and dry_run is None:
+            if bot_id is None and account_id:
+                ids = PositionService._account_bot_ids(account_id, dry_run)
+                q = q.filter(EquityHistory.bot_id.in_(ids)) if ids else q.filter(False)
+            elif bot_id is None and dry_run is None:
                 q = q.filter(EquityHistory.bot_id.is_(None))
             elif bot_id is None:
                 # The dashboard total is an account-level curve.  Do not
@@ -1073,7 +1101,7 @@ class PositionService:
                 q = q.filter(EquityHistory.bot_id == bot_id)
 
             records = q.order_by(EquityHistory.timestamp.asc()).all()
-            if bot_id is None and dry_run is not None:
+            if bot_id is None and (dry_run is not None or account_id):
                 records = PositionService._aggregate_equity_records(records)
             records = PositionService._limit_curve_records(records)
             return [

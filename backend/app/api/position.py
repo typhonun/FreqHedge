@@ -32,8 +32,8 @@ def count(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
 
 
 @router.get("/summary")
-def summary(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
-    return PositionService.get_account_summary(bot_id=bot_id, dry_run=dry_run)
+def summary(bot_id: int | None = Query(None), dry_run: bool | None = Query(None), account_id: str | None = Query(None)):
+    return PositionService.get_account_summary(bot_id=bot_id, dry_run=dry_run, account_id=account_id)
 
 
 @router.get("/profit")
@@ -47,8 +47,8 @@ def profit_all(bot_id: int | None = Query(None), dry_run: bool | None = Query(No
 
 
 @router.get("/closed_profit")
-def closed_profit(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
-    return PositionService.get_closed_profit_summary(bot_id=bot_id, dry_run=dry_run)
+def closed_profit(bot_id: int | None = Query(None), dry_run: bool | None = Query(None), account_id: str | None = Query(None)):
+    return PositionService.get_closed_profit_summary(bot_id=bot_id, dry_run=dry_run, account_id=account_id)
 
 
 @router.get("/total_profit")
@@ -61,8 +61,9 @@ def get_balance_curve(
     period: str = Query("1D"),
     bot_id: int | None = Query(None),
     dry_run: bool | None = Query(None),
+    account_id: str | None = Query(None),
 ):
-    return PositionService.get_balance_curve(period, bot_id=bot_id, dry_run=dry_run)
+    return PositionService.get_balance_curve(period, bot_id=bot_id, dry_run=dry_run, account_id=account_id)
 
 
 @router.get("/profit_curve")
@@ -75,8 +76,8 @@ def get_profit_curve(
 
 
 @router.get("/floating")
-def floating(bot_id: int | None = Query(None), dry_run: bool | None = Query(None)):
-    return PositionService.get_floating_profit(bot_id=bot_id, dry_run=dry_run)
+def floating(bot_id: int | None = Query(None), dry_run: bool | None = Query(None), account_id: str | None = Query(None)):
+    return PositionService.get_floating_profit(bot_id=bot_id, dry_run=dry_run, account_id=account_id)
 
 
 @router.post("/action")

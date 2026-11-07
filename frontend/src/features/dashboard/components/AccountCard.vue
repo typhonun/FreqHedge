@@ -13,10 +13,10 @@
         >
           <el-option label="总资金" value="__total__" />
           <el-option
-            v-for="bot in botList"
-            :key="bot.id"
-            :label="bot.name"
-            :value="bot.id"
+            v-for="exchange in exchanges"
+            :key="exchange.value"
+            :label="exchange.label"
+            :value="exchange.value"
           />
         </el-select>
       </div>
@@ -87,8 +87,7 @@ const props = defineProps({
     default: () => ({})
   },
   balanceCurve: { type: Array, default: () => [] },
-  // 新增：机器人列表
-  botList: { type: Array, default: () => [] },
+  exchanges: { type: Array, default: () => [] },
   // 新增：当前选中值（受控，可选）
   modelValue: { type: [String, Number], default: '__total__' }
 })

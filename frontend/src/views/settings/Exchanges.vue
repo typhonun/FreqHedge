@@ -144,9 +144,6 @@
             :precision="2"
             style="width: 100%"
           />
-          <div class="form-tip">
-            模拟盘为该账户的初始资金；实盘保存后自动更新为交易所真实资产。
-          </div>
         </el-form-item>
 
         <el-form-item label="账户别名" prop="alias">

@@ -7,7 +7,7 @@
           :summary="store.summary"
           :floating="store.floating"
           :balanceCurve="store.balanceCurve"
-          :botList="botList"
+          :exchanges="exchanges"
           @change="onAccountChange"
           @periodChange="onPeriodChange"
         />
@@ -66,11 +66,13 @@ import ProfitCurve from '@features/dashboard/components/ProfitCurve.vue'
 import { useTradeStore } from '@/stores/tradeStore'
 import { useModeStore } from '@/stores/modeStore'
 import { useBotStore } from '@/stores/botStore'
+import { useExchangeAccounts } from '@/composables/useExchangeAccounts'
 
 const router = useRouter()
 const store = useTradeStore()
 const modeStore = useModeStore()
 const botStore = useBotStore()
+const exchangeStore = useExchangeAccounts()
 
 // 两个独立的下拉框
 const accountSelected = ref('__total__')
@@ -81,6 +83,16 @@ const currentPeriod = ref('1D')
 const profitPeriod = ref('ALL')
 
 const botList = computed(() => botStore.state.bots.map(b => ({ id: b.id, name: b.name })))
+const exchangeLabels = {
+  binance: 'Binance 币安', okx: 'OKX 欧易', bybit: 'Bybit',
+  kucoin: 'KuCoin', gate: 'Gate.io 芝麻开门', huobi: 'HTX 火币',
+}
+const exchanges = computed(() => exchangeStore.accounts.value
+  .filter(account => Boolean(account.isSimulation) === modeStore.isSimulation.value)
+  .map(account => ({
+    value: account.id,
+    label: `${exchangeLabels[account.exchange] || account.exchange} · ${account.alias || '未命名账户'}`,
+  })))
 
 const toBotId = (v) => (v === '__total__' ? null : v)
 
@@ -100,19 +112,23 @@ let timer = null
 let historyTimer = null
 
 // 1. 账户汇总和曲线统一走同一套权益口径
-const fetchBalanceCurve = async (botId, period) => {
-  await store.refreshAccount(botId, period)
+const fetchBalanceCurve = async (accountId, period) => {
+  await store.refreshAccount(null, period, accountId)
 }
 
 // 2. 周期切换事件（由 AccountCard -> BalanceCurve 触发）
 const onPeriodChange = async (newPeriod) => {
   currentPeriod.value = newPeriod
-  await fetchBalanceCurve(toBotId(accountSelected.value), newPeriod)
+  await fetchBalanceCurve(accountSelected.value === '__total__' ? null : accountSelected.value, newPeriod)
 }
 
 // 3. 刷新账户数据（保留你原有的 refreshAccount）
 const refreshAccount = () =>
-  store.refreshAccount(toBotId(accountSelected.value), currentPeriod.value)
+  store.refreshAccount(
+    null,
+    currentPeriod.value,
+    accountSelected.value === '__total__' ? null : accountSelected.value,
+  )
 
 // 4. 完整刷新账户；refreshAccount 已同时更新余额曲线
 const refreshAccountAll = async () => {
@@ -162,7 +178,7 @@ const loadBotList = async (force = false) => {
 
 // 两个下拉框各自的 change 回调
 const onAccountChange = async () => {
-  // 切换机器人时，重新拉取数据（使用当前选中的周期）
+  // 切换交易所账户时，重新拉取数据（使用当前选中的周期）
   await refreshAccountAll()
 }
 
@@ -193,9 +209,9 @@ onActivated(async () => {
 
 watch(modeStore.mode, async () => {
   await loadBotList(true)
-  // 如果当前选中的 bot 在新列表里不存在了，才重置
+  // 如果当前选中的交易所账户在新列表里不存在了，才重置
   const isValidAccount = accountSelected.value === '__total__'
-    || botList.value.some(b => b.id === accountSelected.value)
+    || exchanges.value.some(account => account.value === accountSelected.value)
   if (!isValidAccount) accountSelected.value = '__total__'
 
   const isValidProfit = profitSelected.value === '__total__'

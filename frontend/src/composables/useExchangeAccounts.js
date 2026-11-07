@@ -92,15 +92,18 @@ const save = () => {
 const reload = () => load()
 const defaultAccount = computed(() => accounts.value.find((a) => a.isDefault) || null)
 const getById = (id) => accounts.value.find((a) => a.id === id) || null
-const totalCapital = (isSimulation) => {
+const totalCapital = (isSimulation, accountId = null) => {
   const total = accounts.value
     .filter((account) => Boolean(account.isSimulation) === Boolean(isSimulation))
+    .filter((account) => accountId == null || account.id === accountId)
     .reduce((sum, account) => sum + Math.max(0, Number(account.totalCapital) || 0), 0)
   return total
 }
-const refreshLiveBalances = async () => {
+const refreshLiveBalances = async (accountId = null) => {
   await Promise.allSettled(accounts.value
-    .filter((account) => !account.isSimulation && account.apiKey && account.apiSecret)
+    .filter((account) => !account.isSimulation
+      && (accountId == null || account.id === accountId)
+      && account.apiKey && account.apiSecret)
     .map(async (account) => {
       const { data } = await axios.post('http://localhost:9000/exchange/wallets', {
         exchange: account.exchange,
