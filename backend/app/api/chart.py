@@ -116,6 +116,15 @@ def latest_candle(pair: str, timeframe: str = "30m"):
     return None
 
 
+@router.get("/price")
+def latest_price(pair: str):
+    ticker = exchange.fetch_ticker(pair)
+    price = ticker.get("last") or ticker.get("close")
+    if price is None or float(price) <= 0:
+        raise ValueError(f"Unable to get latest price for {pair}")
+    return {"pair": pair, "price": float(price)}
+
+
 @router.get("/bot-positions/{bot_id}")
 def get_bot_positions(bot_id: int, dry_run: bool | None = Query(None)):
     bot = BotManager.get(bot_id)

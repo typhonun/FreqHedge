@@ -248,7 +248,7 @@
 
 <script setup>
 // ... 保持原样，逻辑未变
-import { computed, ref, onMounted, watch } from 'vue'
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { InfoFilled, WarningFilled, ArrowDown } from '@element-plus/icons-vue'
@@ -275,6 +275,9 @@ const loadingSuggest = ref(0)
 const lastSuggestInfo = ref('')
 const currentPrice = ref(null)
 const showGridPreview = ref(false)
+const PRICE_REFRESH_INTERVAL = 30000
+let priceRefreshTimer = null
+let priceRequestId = 0
 
 const perGrid = computed(() => {
   const c = props.config?.grid || {}
@@ -446,20 +449,46 @@ const initDefaultRange = async () => {
   }
 }
 
-onMounted(async () => {
-  await initDefaultRange()
-  if (props.pair && !currentPrice.value) {
-    try {
-      const { data } = await axios.get(`${API}/chart/candles`, {
-        params: { pair: props.pair, timeframe: '5m' }
-      })
-      if (Array.isArray(data) && data.length) {
-        currentPrice.value = Number(data[data.length - 1].close)
-      }
-    } catch (e) {
-      console.warn('[onMounted] fetch current price failed', e)
+const refreshCurrentPrice = async () => {
+  if (!props.pair) {
+    currentPrice.value = null
+    return
+  }
+
+  const requestId = ++priceRequestId
+  try {
+    const { data } = await axios.get(`${API}/chart/price`, {
+      params: { pair: props.pair }
+    })
+    const price = Number(data?.price)
+    if (requestId === priceRequestId && Number.isFinite(price) && price > 0) {
+      currentPrice.value = price
+    }
+  } catch (e) {
+    if (requestId === priceRequestId) {
+      console.warn('[refreshCurrentPrice] failed', e)
     }
   }
+}
+
+watch(() => props.pair, async (newPair) => {
+  priceRequestId += 1
+  currentPrice.value = null
+  if (newPair) await refreshCurrentPrice()
+}, { immediate: true })
+
+onMounted(async () => {
+  await initDefaultRange()
+  await refreshCurrentPrice()
+  priceRefreshTimer = setInterval(refreshCurrentPrice, PRICE_REFRESH_INTERVAL)
+})
+
+onBeforeUnmount(() => {
+  if (priceRefreshTimer) {
+    clearInterval(priceRefreshTimer)
+    priceRefreshTimer = null
+  }
+  priceRequestId += 1
 })
 
 // 1. 修改 gridPreview 的计算，加入利润与手续费的对比
