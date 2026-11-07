@@ -7,6 +7,7 @@ from pathlib import Path
 from app.database import SessionLocal
 from app.models.equity_history import EquityHistory
 from app.models.profit_history import ProfitHistory
+from app.models.archived_profit import ArchivedProfit
 from app.core import runtime
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -60,6 +61,70 @@ def _default_for(kind):
 
 
 class PositionService:
+
+    @staticmethod
+    def archive_bot_profit(bot: dict):
+        """Persist a bot's final cumulative profit before its trade database is removed."""
+        bot_id = int(bot["id"])
+        db = SessionLocal()
+        try:
+            if db.query(ArchivedProfit).filter(ArchivedProfit.bot_id == bot_id).first():
+                return
+
+            snapshot = PositionService.get_snapshot(bot_id=bot_id, cache_seconds=1)
+            if PositionService._has_balance_data(snapshot):
+                summary = PositionService.get_total_profit_summary(
+                    snapshot=snapshot, bot_id=bot_id, dry_run=bool(bot.get("dryRun"))
+                )
+                values = {
+                    "total_profit": summary["total_profit"],
+                    "long_profit": summary["long_total_profit"],
+                    "short_profit": summary["short_total_profit"],
+                }
+            else:
+                latest = (
+                    db.query(ProfitHistory)
+                    .filter(ProfitHistory.bot_id == bot_id)
+                    .order_by(ProfitHistory.timestamp.desc())
+                    .first()
+                )
+                values = {
+                    "total_profit": float(latest.total_profit) if latest else 0.0,
+                    "long_profit": float(latest.long_profit) if latest else 0.0,
+                    "short_profit": float(latest.short_profit) if latest else 0.0,
+                }
+
+            db.add(ArchivedProfit(
+                bot_id=bot_id,
+                account_id=bot.get("exchangeAccountId"),
+                dry_run=bool(bot.get("dryRun")),
+                timestamp=int(time.time()),
+                **values,
+            ))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    @staticmethod
+    def _archived_profit_summary(dry_run: bool | None = None, account_id: str | None = None):
+        db = SessionLocal()
+        try:
+            query = db.query(ArchivedProfit)
+            if dry_run is not None:
+                query = query.filter(ArchivedProfit.dry_run == dry_run)
+            if account_id is not None:
+                query = query.filter(ArchivedProfit.account_id == str(account_id))
+            rows = query.all()
+            return {
+                "long_closed_profit": sum(float(row.long_profit or 0) for row in rows),
+                "short_closed_profit": sum(float(row.short_profit or 0) for row in rows),
+                "total_closed_profit": sum(float(row.total_profit or 0) for row in rows),
+            }
+        finally:
+            db.close()
 
     @staticmethod
     def _account_bot_ids(account_id, dry_run=None):
@@ -634,6 +699,15 @@ class PositionService:
 
         long_profit = long_open_realized + long_closed
         short_profit = short_open_realized + short_closed
+
+        # Deleted bots no longer have a Freqtrade database to contribute trades.
+        # Keep their final cumulative result in the account-level total.
+        if bot_id is None:
+            archived = PositionService._archived_profit_summary(
+                dry_run=dry_run, account_id=account_id
+            )
+            long_profit += archived["long_closed_profit"]
+            short_profit += archived["short_closed_profit"]
 
         return {
             "long_closed_profit": round(long_profit, 2),

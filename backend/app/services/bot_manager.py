@@ -517,6 +517,9 @@ class BotManager:
         from app.services.process_service import ProcessService
         bot = BotManager.get(bot_id)
         if bot:
+            # Archive the result before stopping/removing the bot's trade database.
+            from app.services.position_service import PositionService
+            PositionService.archive_bot_profit(bot)
             try:
                 ProcessService.stop_bot(bot)
             except Exception as e:
