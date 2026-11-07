@@ -3,6 +3,7 @@ import sqlite3
 import json
 from pathlib import Path
 import threading
+import socket
 from config.settings import DCATP_DB
 from app.services.freqtrade_client import FreqtradeClient
 from app.services.config_service import ConfigService
@@ -131,6 +132,16 @@ _migrate()
 _alloc_lock = threading.Lock()
 
 
+def _is_port_available(port: int) -> bool:
+    """检查本机端口是否可绑定，避免复用仍被旧进程监听的端口。"""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        try:
+            sock.bind(("127.0.0.1", port))
+        except OSError:
+            return False
+    return True
+
+
 def _alloc_port(start=None, end=None):
     """
     为每个 bot 分配 2 个连续端口（long=base, short=base+1）。
@@ -140,22 +151,28 @@ def _alloc_port(start=None, end=None):
     start = start if start is not None else PORT_START
     end = end if end is not None else PORT_END
 
-    with _conn() as c:
-        rows = c.execute(
-            "SELECT port FROM bots WHERE port IS NOT NULL"
-        ).fetchall()
-
-    used = set()
-    for r in rows:
-        p = r["port"]
-        if p:
-            used.add(p)
-            used.add(p + 1)   # short 占用的也标记
-
     with _alloc_lock:
+        # 查询和选择必须在同一把锁内，避免扫描端口时读到不一致的状态。
+        with _conn() as c:
+            rows = c.execute(
+                "SELECT port FROM bots WHERE port IS NOT NULL"
+            ).fetchall()
+
+        used = set()
+        for r in rows:
+            p = r["port"]
+            if p:
+                used.add(p)
+                used.add(p + 1)   # short 占用的也标记
+
         port = start
         while port + 1 < end:
-            if port not in used and (port + 1) not in used:
+            if (
+                port not in used
+                and (port + 1) not in used
+                and _is_port_available(port)
+                and _is_port_available(port + 1)
+            ):
                 return port
             port += 2
     raise RuntimeError(f"no free port in [{start}, {end})")
@@ -330,7 +347,8 @@ class BotManager:
         base = payload["base"]
         risk = payload.get("risk", {})
 
-        # ★ 先算端口（事务外，独立完成）
+        # 清理页面异常退出留下的旧草稿，使其端口回到可用池。
+        BotManager.cleanup_stale_drafts()
         port = _alloc_port()
 
         # ★ 按策略类型拆分 config
@@ -523,6 +541,8 @@ class BotManager:
         runtime.clear_exit_reasons(bot_id)
 
         with _conn() as c:
+            # 显式释放端口后再删除记录，确保删除流程中断时不会留下端口占用标记。
+            c.execute("UPDATE bots SET port=NULL WHERE id=?", (bot_id,))
             c.execute("DELETE FROM bots WHERE id=?", (bot_id,))
             c.commit()
 
@@ -576,6 +596,11 @@ class BotManager:
 
         # 4. 删 DB 记录
         with _conn() as c:
+            # 显式释放端口后再删除记录，避免后续扩展软删除时端口继续被占用。
+            c.execute(
+                "UPDATE bots SET port=NULL WHERE id=? AND status='draft'",
+                (bot_id,),
+            )
             c.execute("DELETE FROM bots WHERE id=? AND status='draft'", (bot_id,))
             c.commit()
 
@@ -713,7 +738,8 @@ class BotManager:
         if dry_run is not None:
             base["dryRun"] = dry_run
 
-        # ★ 先算端口（事务外）
+        # 清理页面异常退出留下的旧草稿，使其端口回到可用池。
+        BotManager.cleanup_stale_drafts()
         port = _alloc_port()
 
         with _conn() as c:
