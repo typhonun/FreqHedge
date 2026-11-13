@@ -49,6 +49,9 @@ GRID_DEFAULTS = {
     "amount_per_grid": 0,
     "trigger_price": 0,
     "restart_after_all_tp": False,
+    "trailing_up": False,
+    "trailing_down": False,
+    "min_notional_value": 10,
 }
 
 

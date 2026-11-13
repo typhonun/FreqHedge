@@ -11,6 +11,7 @@ from app.services.config_service import ConfigService
 from app.core.defaults import BOT_DEFAULTS, RISK_DEFAULTS
 from app.core.strategy_registry import get_strategy
 from app.services.exchange_service import ExchangeService
+from app.core.config_manager import ConfigManager
 
 router = APIRouter()
 
@@ -291,3 +292,32 @@ async def stop_bot(bot_id: int):
 @router.get("/{bot_id}/status")
 async def bot_status(bot_id: int):
     return BotManager.status(bot_id)
+
+
+# 找到 bots.py 中的 grid_runtime 路由
+@router.get("/{bot_id}/grid-runtime")
+async def grid_runtime(bot_id: int, side: str = Query("long")):
+    bot = BotManager.get(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    normalized = "short" if str(side).lower() == "short" else "long"
+
+    # 尝试从数据库读取真实的运行状态
+    state = ConfigManager.get_bot_kv(
+        f"grid_runtime_state_{bot_id}_{normalized}"
+    )
+    if not isinstance(state, dict):
+        return {"active": False, "side": normalized}
+
+    grid_config = (bot.get("gridConfig") or {}).get("grid") or {}
+
+    # ★ 核心修复：去掉 lower_price 和 upper_price，与 GridBotBase.py 保持绝对一致！
+    signature = "|".join(
+        str(grid_config.get(key, ""))
+        for key in ("grid_count", "spacing_algo")
+    )
+
+    if state.get("signature") != signature:
+        return {"active": False, "side": normalized}
+
+    return {"active": True, **state}

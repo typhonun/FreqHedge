@@ -501,6 +501,7 @@
             :capital="botBaseInfo.capital"
             :pair="botBaseInfo.pair?.[0]"
             :direction="botBaseInfo.direction"
+            :bot-id="botId"
             :leverage="botBaseInfo.leverage"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"

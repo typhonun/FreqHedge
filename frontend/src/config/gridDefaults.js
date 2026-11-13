@@ -15,6 +15,8 @@ export const GRID_DEFAULTS = Object.freeze({
   trigger_price: 0,
   min_notional_value: 10,
   restart_after_all_tp: false,
+  trailing_up: false,
+  trailing_down: false,
 })
 
 export function getDefaultGridConfig() {

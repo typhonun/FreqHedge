@@ -91,16 +91,21 @@
           <div class="section-title">止损</div>
         </div>
         <div class="form-row">
-          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-full" label-width="100px">
+          <!-- 做多：跌破下沿止损 -->
+          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-full" label-width="110px">
             <div class="input-with-icon">
+              <!-- 删掉 :disabled -->
               <el-switch v-model="config.grid.stop_below_lower" />
               <el-tooltip placement="top" effect="dark" content="价格跌破下沿时，清空所有持仓并停止机器人">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
               </el-tooltip>
             </div>
           </el-form-item>
-          <el-form-item v-if="direction === 'short'" label="突破上沿止损" class="form-item-full" label-width="100px">
+
+          <!-- 做空：突破上沿止损 -->
+          <el-form-item v-else label="突破上沿止损" class="form-item-full" label-width="110px">
             <div class="input-with-icon">
+              <!-- 删掉 :disabled -->
               <el-switch v-model="config.grid.stop_above_upper" />
               <el-tooltip placement="top" effect="dark" content="价格突破上沿时，清空所有持仓并停止机器人">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
@@ -170,12 +175,36 @@
         <div class="section-header">
           <div class="section-title">高级选项</div>
         </div>
+
         <div class="form-row">
-          <!-- ★ 加宽 label 防止挤压 -->
-          <el-form-item label="网格平仓后入场" class="form-item-full" label-width="110px">
+          <el-form-item label="网格平仓后入场" class="form-item-half" label-width="110px">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.restart_after_all_tp" />
               <el-tooltip placement="top" effect="dark" content="当所有网格仓位全部止盈平仓后，如果价格继续上涨/下跌，不等待回落，直接以当前价再次买入首仓">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+        </div>
+
+        <div class="form-row">
+          <!-- 向上追踪 -->
+          <el-form-item label="向上追踪" class="form-item-half" label-width="130px">
+            <div class="input-with-icon">
+              <!-- 删掉 :disabled -->
+              <el-switch v-model="config.grid.trailing_up" />
+              <el-tooltip placement="top" effect="dark" content="1m 收盘价涨破网格上沿后，每根 K 线向上平移一格，直到区间重新包住价格">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+
+          <!-- 向下追踪 -->
+          <el-form-item label="向下追踪" class="form-item-half" label-width="130px">
+            <div class="input-with-icon">
+              <!-- 删掉 :disabled -->
+              <el-switch v-model="config.grid.trailing_down" />
+              <el-tooltip placement="top" effect="dark" content="1m 收盘价跌破网格下沿后，每根 K 线向下平移一格，直到区间重新包住价格">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
               </el-tooltip>
             </div>
@@ -262,6 +291,7 @@ const props = defineProps({
   pair:    { type: String, default: '' },
   direction: { type: String, default: 'long' },
   leverage:  { type: Number, default: 1 },
+  botId: { type: [Number, String], default: null },
 })
 
 const emit = defineEmits(['timeframe-change', 'min-capital-change'])
@@ -278,6 +308,14 @@ const showGridPreview = ref(false)
 const PRICE_REFRESH_INTERVAL = 30000
 let priceRefreshTimer = null
 let priceRequestId = 0
+const previewLower = ref(0)
+const previewUpper = ref(0)
+const runtimeGrid = ref({ active: false })
+const manualPreviewOverride = ref(false)
+const runtimeSyncReady = ref(false)
+let lastRuntimeFillToken = ''
+let manualRuntimeFillToken = ''
+let runtimeGridTimer = null
 
 const perGrid = computed(() => {
   const c = props.config?.grid || {}
@@ -349,6 +387,7 @@ const applySuggest = async (days) => {
 
     props.config.grid.lower_price = data.lower_price
     props.config.grid.upper_price = data.upper_price
+    resetTrailingPreview()
 
     if (!props.config.grid.grid_count || props.config.grid.grid_count <= 0) {
       props.config.grid.grid_count = data.suggest_grid_count || 20
@@ -426,6 +465,7 @@ const initDefaultRange = async () => {
 
     props.config.grid.lower_price = +(price * 0.9).toFixed(4)
     props.config.grid.upper_price = +(price * 1.1).toFixed(4)
+    resetTrailingPreview()
 
     if (props.config.grid.start_mode === 'trigger' &&
         (!props.config.grid.trigger_price || props.config.grid.trigger_price <= 0)) {
@@ -471,6 +511,112 @@ const refreshCurrentPrice = async () => {
   }
 }
 
+const resetTrailingPreview = () => {
+  const g = props.config?.grid || {}
+  previewLower.value = Number(g.lower_price || 0)
+  previewUpper.value = Number(g.upper_price || 0)
+}
+
+const applyManualGridPreview = () => {
+  // 如果还没准备好，或者没有挂载 botId，直接重置
+  if (!runtimeSyncReady.value || !props.botId) {
+    resetTrailingPreview()
+    return
+  }
+
+  // 只要用户手动修改了价格，就覆盖后端的追踪预览，以用户的输入为准
+  manualPreviewOverride.value = true
+  manualRuntimeFillToken = lastRuntimeFillToken
+  runtimeGrid.value = { active: false }
+  resetTrailingPreview()
+}
+
+const refreshRuntimeGrid = async () => {
+  if (!props.botId) {
+    runtimeGrid.value = { active: false }
+    resetTrailingPreview()
+    return
+  }
+  try {
+    const side = props.direction === 'short' ? 'short' : 'long'
+    const { data } = await axios.get(`${API}/bots/${props.botId}/grid-runtime`, { params: { side } })
+
+    if (data?.active) {
+      // 后端有真实数据，覆盖前端
+      runtimeGrid.value = data
+      previewLower.value = Number(data.lower || 0)
+      previewUpper.value = Number(data.upper || 0)
+      manualPreviewOverride.value = false
+    } else {
+      runtimeGrid.value = { active: false }
+
+      // ★ 核心逻辑：如果后端说没数据，且用户没有手动改输入框（manualPreviewOverride === false），
+      // 这说明前端是靠自己的“模拟追踪”在维持网格，此时千万不要 resetTrailingPreview() 把它重置回去！
+      // 只有当用户主动改过输入框后，才需要重置回输入框的值。
+      if (manualPreviewOverride.value) {
+        resetTrailingPreview()
+      }
+    }
+  } catch (e) {
+    console.warn('[refreshRuntimeGrid] failed', e)
+  }
+}
+
+watch(() => props.pair, async (newPair) => {
+  priceRequestId += 1
+  currentPrice.value = null
+  runtimeGrid.value = { active: false }
+  if (newPair) await refreshCurrentPrice()
+}, { immediate: true })
+
+watch(
+  () => [
+    props.config?.grid?.lower_price,
+    props.config?.grid?.upper_price,
+    props.config?.grid?.grid_count,
+    props.config?.grid?.spacing_algo,
+  ],
+  applyManualGridPreview,
+  { immediate: true },
+)
+
+// ==========================================
+// 互斥逻辑：止损 vs 追踪
+// ==========================================
+
+// 1. 开启/关闭 向上追踪 时，联动上沿止损
+watch(() => props.config.grid.trailing_up, (val) => {
+  if (val && props.config.grid.stop_above_upper) {
+    ElMessage.warning('开启向上追踪后，突破上沿止损已自动关闭')
+    props.config.grid.stop_above_upper = false
+  }
+})
+
+// 2. 开启/关闭 突破上沿止损 时，联动向上追踪
+watch(() => props.config.grid.stop_above_upper, (val) => {
+  if (val && props.config.grid.trailing_up) {
+    ElMessage.warning('开启突破上沿止损后，向上追踪已自动关闭')
+    props.config.grid.trailing_up = false
+  }
+})
+
+// 3. 开启/关闭 向下追踪 时，联动下沿止损
+watch(() => props.config.grid.trailing_down, (val) => {
+  if (val && props.config.grid.stop_below_lower) {
+    ElMessage.warning('开启向下追踪后，跌破下沿止损已自动关闭')
+    props.config.grid.stop_below_lower = false
+  }
+})
+
+// 4. 开启/关闭 跌破下沿止损 时，联动向下追踪
+watch(() => props.config.grid.stop_below_lower, (val) => {
+  if (val && props.config.grid.trailing_down) {
+    ElMessage.warning('开启跌破下沿止损后，向下追踪已自动关闭')
+    props.config.grid.trailing_down = false
+  }
+})
+
+
 watch(() => props.pair, async (newPair) => {
   priceRequestId += 1
   currentPrice.value = null
@@ -480,7 +626,10 @@ watch(() => props.pair, async (newPair) => {
 onMounted(async () => {
   await initDefaultRange()
   await refreshCurrentPrice()
+  await refreshRuntimeGrid()
+  runtimeSyncReady.value = true
   priceRefreshTimer = setInterval(refreshCurrentPrice, PRICE_REFRESH_INTERVAL)
+  runtimeGridTimer = setInterval(refreshRuntimeGrid, PRICE_REFRESH_INTERVAL)
 })
 
 onBeforeUnmount(() => {
@@ -488,24 +637,51 @@ onBeforeUnmount(() => {
     clearInterval(priceRefreshTimer)
     priceRefreshTimer = null
   }
+  if (runtimeGridTimer) {
+    clearInterval(runtimeGridTimer)
+    runtimeGridTimer = null
+  }
   priceRequestId += 1
 })
 
-// 1. 修改 gridPreview 的计算，加入利润与手续费的对比
+// 在 GridPanel.vue 的 gridPreview 计算属性开头，加入前端模拟追踪逻辑：
 const gridPreview = computed(() => {
   const c = props.config?.grid || {}
-  const lower = Number(c.lower_price || 0)
-  const upper = Number(c.upper_price || 0)
-  const count = Number(c.grid_count || 0)
-  if (lower <= 0 || upper <= 0 || count <= 0 || upper <= lower) return null
 
-  const levels = []
-  if (c.spacing_algo === 'geometric') {
-    const ratio = Math.pow(upper / lower, 1 / count)
-    for (let i = 0; i <= count; i++) levels.push(lower * Math.pow(ratio, i))
-  } else {
-    const step = (upper - lower) / count
-    for (let i = 0; i <= count; i++) levels.push(lower + step * i)
+  // 1. 获取当前实际基准区间
+  let currentLower = Number(previewLower.value || c.lower_price || 0)
+  let currentUpper = Number(previewUpper.value || c.upper_price || 0)
+  const count = Number(c.grid_count || 0)
+
+  if (currentLower <= 0 || currentUpper <= 0 || count <= 0 || currentUpper <= currentLower) return null
+  const refPrice = currentPrice.value || (currentLower + currentUpper) / 2
+  // ================= ★ 新增：前端模拟动态追踪 =================
+  // 如果开启了追踪，且当前价超出了区间，前端预览自动计算平移
+  const step = (currentUpper - currentLower) / count
+
+  if (step > 0) {
+    if (c.trailing_down && refPrice < currentLower - step * 0.5) {
+      const shiftCount = Math.floor((currentLower - refPrice) / step) + 1
+      const shiftDistance = shiftCount * step
+      currentLower -= shiftDistance
+      currentUpper -= shiftDistance
+    } else if (c.trailing_up && refPrice > currentUpper + step * 0.5) {
+      const shiftCount = Math.floor((refPrice - currentUpper) / step) + 1
+      const shiftDistance = shiftCount * step
+      currentLower += shiftDistance
+      currentUpper += shiftDistance
+    }
+  }
+  const runtimeLevels = runtimeGrid.value.active && Array.isArray(runtimeGrid.value.levels)
+    ? runtimeGrid.value.levels.map(Number).filter(Number.isFinite)
+    : []
+  const levels = runtimeLevels.length >= 2 ? runtimeLevels : []
+  if (levels.length === 0 && c.spacing_algo === 'geometric') {
+    const ratio = Math.pow(currentUpper / currentLower, 1 / count)
+    for (let i = 0; i <= count; i++) levels.push(currentLower * Math.pow(ratio, i))
+  } else if (levels.length === 0) {
+    const stepSize = (currentUpper - currentLower) / count
+    for (let i = 0; i <= count; i++) levels.push(currentLower + stepSize * i)
   }
 
   const step0 = levels[1] - levels[0]
@@ -527,17 +703,32 @@ const gridPreview = computed(() => {
   // 计算当前手续费成本
   const feeCost = perGrid.value * leverage * FEE_RATE
 
-  const refPrice = currentPrice.value || (lower + upper) / 2
   let splitIdx = levels.findIndex(lv => lv >= refPrice)
   if (splitIdx === -1) splitIdx = count
 
   const formatLv = (lv) => lv.toFixed(2)
 
+  const runtimeAddLevels = runtimeGrid.value.active && Array.isArray(runtimeGrid.value.add_levels)
+    ? runtimeGrid.value.add_levels.map(Number).filter(Number.isFinite)
+    : (runtimeGrid.value.active && Number.isFinite(Number(runtimeGrid.value.next_add_price))
+      ? [Number(runtimeGrid.value.next_add_price)]
+      : [])
+  const runtimeReduceLevels = runtimeGrid.value.active && Array.isArray(runtimeGrid.value.reduce_levels)
+    ? runtimeGrid.value.reduce_levels.map(Number).filter(Number.isFinite)
+    : (runtimeGrid.value.active && Number.isFinite(Number(runtimeGrid.value.next_reduce_price))
+      ? [Number(runtimeGrid.value.next_reduce_price)]
+      : [])
   let topLevels = []
   let bottomLevels = []
   let topLabel = ''
   let bottomLabel = ''
 
+  // 把原来的：
+  // if (runtimeAddLevels.length || runtimeReduceLevels.length) { ... }
+  // else if (props.direction === 'long') { ... }
+  // 改为：只在没有手动输入区间时，才展示真实挂单；否则永远展示网格线。
+
+  // 如果你希望界面永远展示满 35 个格子：
   if (props.direction === 'long') {
     topLevels = levels.slice(splitIdx).map(formatLv).reverse()
     bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse()
