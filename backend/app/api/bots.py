@@ -26,6 +26,7 @@ class BotBaseInfo(BaseModel):
     dryRun: bool = BOT_DEFAULTS["dryRun"]
     enableLong: bool = BOT_DEFAULTS["enableLong"]
     enableShort: bool = BOT_DEFAULTS["enableShort"]
+    hedgeMode: bool = BOT_DEFAULTS["hedgeMode"]
     exchangeAccountId: Optional[str] = None
     exchangeAccount: Optional[dict] = None
     tradingMode: str = BOT_DEFAULTS["tradingMode"]
@@ -34,10 +35,12 @@ class BotBaseInfo(BaseModel):
 
     @model_validator(mode="after")
     def _check_direction(self):
-        if self.enableLong and self.enableShort:
-            raise ValueError("不允许同时开启多头和空头")
         if not self.enableLong and not self.enableShort:
             raise ValueError("必须启用一个方向（多头或空头）")
+        if self.enableLong and self.enableShort:
+            if self.tradingMode != "futures":
+                raise ValueError("双向持仓模式只支持合约")
+            self.hedgeMode = True
         if self.tradingMode not in ("spot", "futures"):
             raise ValueError("tradingMode 必须是 spot 或 futures")
         if self.tradingMode == "futures" and self.marginMode not in ("cross", "isolated"):

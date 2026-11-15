@@ -137,6 +137,12 @@
                           >
                             做空
                           </el-radio-button>
+                          <el-radio-button
+                            value="both"
+                            :disabled="botBaseInfo.tradingMode === 'spot' || isLocked"
+                          >
+                            双向
+                          </el-radio-button>
                         </el-radio-group>
                         <!-- ★ 新增：被锁定时的提示 -->
                         <span v-if="isLocked" class="inline-field__hint text-warning">
@@ -1056,6 +1062,7 @@ const loadBotDetail = async () => {
     const dir = (() => {
       const l = !!data.enableLong
       const s = !!data.enableShort
+      if (l && s) return 'both'
       if (s) return 'short'
       return 'long'
     })()
@@ -1083,6 +1090,7 @@ const loadBotDetail = async () => {
       exchangeAccountId: accountId,
       tradingMode: normalizeTradingMode(data.tradingMode ?? BOT_DEFAULTS.tradingMode),
       marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
+      hedgeMode: data.hedgeMode ?? (data.enableLong && data.enableShort),
     }
 
     botRisk.value = Object.fromEntries(
@@ -1095,7 +1103,8 @@ const loadBotDetail = async () => {
     /* ════════════════════════════════════════════════════════
      * ★ 网格机器人与 DCA 机器人的加载路径分叉
      * ════════════════════════════════════════════════════════ */
-    const raw = strategyDef.value.unwrap(data, dir)
+    const configDir = dir === 'both' ? 'long' : dir
+    const raw = strategyDef.value.unwrap(data, configDir)
     if (raw) {
       deepMerge(strategyConfig, raw)
     }
@@ -1106,37 +1115,37 @@ const loadBotDetail = async () => {
       const shortCfg = parseCfg(data.shortConfig)
 
       let cfgToLoad = null
-      if (dir === 'short' && shortCfg && shortCfg.entry) cfgToLoad = shortCfg
-      else if (dir === 'long' && longCfg && longCfg.entry) cfgToLoad = longCfg
+      if (configDir === 'short' && shortCfg && shortCfg.entry) cfgToLoad = shortCfg
+      else if (configDir === 'long' && longCfg && longCfg.entry) cfgToLoad = longCfg
       else if (longCfg && longCfg.entry) cfgToLoad = longCfg
 
       const dcaLevelCount = (strategyConfig.dca?.levels || []).length
 
       if (cfgToLoad && cfgToLoad.entry) {
-        sideFields[dir].entryRsiValue =
-          cfgToLoad.entry?.rsi?.value ?? defaultEntryRsi(dir)
+        sideFields[configDir].entryRsiValue =
+          cfgToLoad.entry?.rsi?.value ?? defaultEntryRsi(configDir)
 
         const cfgLevels = cfgToLoad.dca?.levels || []
-        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, (_, i) => ({
-          rsi_limit: cfgLevels[i]?.rsi_limit ?? defaultRsiLimit(dir),
-          j_limit: cfgLevels[i]?.j_limit ?? defaultJLimit(dir),
+        sideFields[configDir].dcaLevels = Array.from({ length: dcaLevelCount }, (_, i) => ({
+          rsi_limit: cfgLevels[i]?.rsi_limit ?? defaultRsiLimit(configDir),
+          j_limit: cfgLevels[i]?.j_limit ?? defaultJLimit(configDir),
         }))
       } else {
-        sideFields[dir].entryRsiValue = defaultEntryRsi(dir)
-        sideFields[dir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
-          rsi_limit: defaultRsiLimit(dir),
-          j_limit: defaultJLimit(dir),
+        sideFields[configDir].entryRsiValue = defaultEntryRsi(configDir)
+        sideFields[configDir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
+          rsi_limit: defaultRsiLimit(configDir),
+          j_limit: defaultJLimit(configDir),
         }))
       }
 
-      const otherDir = dir === 'long' ? 'short' : 'long'
+      const otherDir = configDir === 'long' ? 'short' : 'long'
       sideFields[otherDir].entryRsiValue = defaultEntryRsi(otherDir)
       sideFields[otherDir].dcaLevels = Array.from({ length: dcaLevelCount }, () => ({
         rsi_limit: defaultRsiLimit(otherDir),
         j_limit: defaultJLimit(otherDir),
       }))
 
-      strategyConfig.side = dir
+      strategyConfig.side = configDir
     }
 
     if (!isCopy.value) {
@@ -1659,8 +1668,9 @@ const buildPayload = () => {
     leverage: normalizeLeverage(botBaseInfo.value.leverage, botBaseInfo.value.tradingMode),
     maxOpenTrades: botBaseInfo.value.maxOpenTrades,
     dryRun,
-    enableLong: dir === 'long',
-    enableShort: dir === 'short',
+    enableLong: dir === 'long' || dir === 'both',
+    enableShort: dir === 'short' || dir === 'both',
+    hedgeMode: dir === 'both',
     exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
     exchangeAccount: acct ? {
       exchange: acct.exchange,
@@ -1751,7 +1761,7 @@ const validate = () => {
     ElMessage.warning('最大持仓数至少为 1')
     return false
   }
-  if (!['long', 'short'].includes(botBaseInfo.value.direction)) {
+  if (!['long', 'short', 'both'].includes(botBaseInfo.value.direction)) {
     ElMessage.warning('请选择方向')
     return false
   }
@@ -1949,7 +1959,9 @@ watch(
     if (strategyType.value !== 'dca') return   // ★ 新增
     if (!loaded.value) return
     if (val == null) return
-    const dir = botBaseInfo.value.direction
+    const dir = botBaseInfo.value.direction === 'both'
+      ? 'long'
+      : botBaseInfo.value.direction
     if (sideFields[dir].entryRsiValue === val) return
     sideFields[dir].entryRsiValue = val
   }
@@ -1964,7 +1976,9 @@ watch(
     if (strategyType.value !== 'dca') return   // ★ 新增
     if (!loaded.value) return
     if (!newArr) return
-    const dir = botBaseInfo.value.direction
+    const dir = botBaseInfo.value.direction === 'both'
+      ? 'long'
+      : botBaseInfo.value.direction
 
     if (sideFields[dir].dcaLevels.length !== newArr.length) {
       sideFields[dir].dcaLevels = newArr.map((x) => ({ ...x }))
@@ -2010,11 +2024,12 @@ watch(
 watch(
   () => botBaseInfo.value.direction,
   (dir, oldDir) => {
+    const configDir = dir === 'both' ? 'long' : dir
     if (strategyType.value !== 'dca') return   // ★ 新增
     if (!loaded.value) return
     if (dir === oldDir) return
 
-    const newFields = sideFields[dir]
+    const newFields = sideFields[configDir]
 
     if (strategyConfig.entry?.rsi) {           // ★ localConfig → strategyConfig
       strategyConfig.entry.rsi.value = newFields.entryRsiValue
@@ -2035,8 +2050,8 @@ watch(
       })
     }
 
-    strategyConfig.side = dir                  // ★ localConfig → strategyConfig
-    console.log(`[direction] 切换到 ${dir}，已换入方向相关字段`)
+    strategyConfig.side = configDir            // ★ localConfig → strategyConfig
+    console.log(`[direction] 切换到 ${configDir}，已换入方向相关字段`)
   }
 )
 

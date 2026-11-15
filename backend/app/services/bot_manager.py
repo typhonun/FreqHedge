@@ -48,6 +48,7 @@ def _ensure_table():
             strategyType TEXT DEFAULT 'dca',
             tradingMode TEXT DEFAULT 'futures',
             marginMode  TEXT DEFAULT 'cross',
+            hedgeMode INTEGER DEFAULT 0,
             createdAt TEXT,
             updatedAt TEXT,
 
@@ -90,6 +91,7 @@ def _migrate():
             ("exchangeAccountJson", "ALTER TABLE bots ADD COLUMN exchangeAccountJson TEXT DEFAULT NULL"),
             ("tradingMode", "ALTER TABLE bots ADD COLUMN tradingMode TEXT DEFAULT 'futures'"),
             ("marginMode", "ALTER TABLE bots ADD COLUMN marginMode  TEXT DEFAULT 'cross'"),
+            ("hedgeMode", "ALTER TABLE bots ADD COLUMN hedgeMode INTEGER DEFAULT 0"),
 
             ("gridConfig", "ALTER TABLE bots ADD COLUMN gridConfig TEXT"),
             ("extraConfig", "ALTER TABLE bots ADD COLUMN extraConfig TEXT"),          # ★ 新增
@@ -285,6 +287,10 @@ class BotManager:
         except (TypeError, ValueError):
             bot["leverage"] = BOT_DEFAULTS["leverage"]
         bot["marginMode"] = bot.get("marginMode") or BOT_DEFAULTS["marginMode"]
+        bot["hedgeMode"] = bool(
+            bot.get("hedgeMode")
+            or (bot["tradingMode"] == "futures" and bot["enableLong"] and bot["enableShort"])
+        )
 
         # ★ 风控字段
         bot["tp_enabled"] = bool(bot.get("tp_enabled"))
@@ -366,7 +372,7 @@ class BotManager:
                                   longConfig, shortConfig, gridConfig, extraConfig, strategyType,
                                   createdAt,
                                   exchangeAccountId, exchangeAccountJson,
-                                  tradingMode, marginMode,
+                                  tradingMode, marginMode, hedgeMode,
                                   tp_enabled, tp_mode, tp_amount, tp_ratio,
                                   sl_enabled, sl_mode, sl_amount, sl_ratio,
                                   trail_enabled, trail_mode,
@@ -379,7 +385,7 @@ class BotManager:
                         'stopped', ?,
                         ?, ?, ?, ?, ?,
                         datetime('now'),
-                        ?, ?,
+                        ?, ?, ?,
                         ?, ?,
                         ?, ?, ?, ?,  ?, ?, ?, ?,  ?, ?,  ?, ?,  ?, ?,
                         ?, ?, ?)
@@ -405,6 +411,7 @@ class BotManager:
 
                     base.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
                     base.get("marginMode", BOT_DEFAULTS["marginMode"]),
+                    int(base.get("hedgeMode", False)),
 
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", RISK_DEFAULTS["tp_mode"]),
@@ -452,7 +459,7 @@ class BotManager:
                     enableLong=?, enableShort=?,
                     longConfig=?, shortConfig=?, gridConfig=?, extraConfig=?, strategyType=?,
                     exchangeAccountId=?, exchangeAccountJson=?,
-                    tradingMode=?, marginMode=?,
+                    tradingMode=?, marginMode=?, hedgeMode=?,
 
                     tp_enabled=?, tp_mode=?, tp_amount=?, tp_ratio=?,
                     sl_enabled=?, sl_mode=?, sl_amount=?, sl_ratio=?,
@@ -483,6 +490,7 @@ class BotManager:
                     json.dumps(base.get("exchangeAccount") or {}),
                     base.get("tradingMode", BOT_DEFAULTS["tradingMode"]),
                     base.get("marginMode", BOT_DEFAULTS["marginMode"]),
+                    int(base.get("hedgeMode", False)),
 
                     int(risk.get("tp_enabled", False)),
                     risk.get("tp_mode", RISK_DEFAULTS["tp_mode"]),

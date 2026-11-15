@@ -3,11 +3,11 @@
 # 适用 Python 3.11 - 3.12（推荐 3.12）
 #
 # 从仓库根目录执行：
-#   python -m pip install -r freqtrade/requirements.txt
+#   python -m pip install -r freqtrade\requirements.txt
+#   python -m pip install -e .\freqtrade
 #
-# 注意：Freqtrade 本身不在此安装。请按 README「安装 Freqtrade CLI」
-# 一节，用 pipx 单独安装 freqtrade 命令，避免其 NumPy/pandas-ta
-# 依赖与后端冲突。
+# 第二条命令是必须的：它安装仓库内经过 Hedge Mode 修改的
+# Freqtrade，而不是从 PyPI 安装官方版本。
 # ============================================================
 
 # ============ Web 后端 ============

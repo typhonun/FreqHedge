@@ -102,6 +102,10 @@ class ConfigService:
     @staticmethod
     def _build_config(bot_id, side, base, strategy_params, strategy_type, template):
         cfg = ConfigService.read_json(template)
+        # Keep hedge-mode generation consistent for direct callers as well as
+        # generate_configs(), which already computes these flags.
+        enable_long = bool(base.get("enableLong", True))
+        enable_short = bool(base.get("enableShort", False))
 
         port = ConfigService._get_port(bot_id, side)
         db_file = (Path(FREQTRADE_DIR)
@@ -180,9 +184,16 @@ class ConfigService:
             cfg["margin_mode"] = margin_mode
             leverage = float(base.get("leverage", BOT_DEFAULTS["leverage"]) or BOT_DEFAULTS["leverage"])
             cfg["leverage"] = min(100.0, max(1.0, leverage))
+            # Hedge mode is required when the long and short workers share an
+            # exchange account. Keep one-direction bots on the legacy path
+            # unless the caller explicitly enables it.
+            cfg["hedge_mode"] = bool(
+                base.get("hedgeMode") or (enable_long and enable_short)
+            )
         else:
             cfg.pop("margin_mode", None)
             cfg["leverage"] = 1
+            cfg.pop("hedge_mode", None)
         cfg["max_open_trades"] = int(base.get("maxOpenTrades", BOT_DEFAULTS["maxOpenTrades"]))
         cfg["tradable_balance_ratio"] = 0.99
         cfg["bot_name"] = f"{base['name']}-{side}"

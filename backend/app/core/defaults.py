@@ -8,6 +8,9 @@ BOT_DEFAULTS = {
     "dryRun": True,
     "enableLong": True,
     "enableShort": False,
+    # Futures bots with both directions enabled use the exchange hedge mode.
+    # A single-direction bot keeps the legacy one-way behavior by default.
+    "hedgeMode": False,
     "tradingMode": "futures",
     "marginMode": "cross",
     "strategyType": "dca",

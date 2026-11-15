@@ -899,9 +899,12 @@ class PositionService:
         whitelist = resp.get("whitelist", [])
 
         positions = PositionService.get_open_positions(bot_id=bot_id)
+        # Hedge mode allows the same pair to be open in opposite directions.
+        # Only an existing position in the requested direction occupies it.
+        requested_positions = positions["long"] if side.lower() == "long" else positions["short"]
         opened = {
             t.get("pair")
-            for t in (positions["long"] + positions["short"])
+            for t in requested_positions
             if t.get("pair")
         }
         return [p for p in whitelist if p not in opened]
@@ -1202,7 +1205,10 @@ class PositionService:
             else:
                 q = q.filter(ProfitHistory.bot_id == bot_id)
 
-            records = q.order_by(ProfitHistory.timestamp.asc()).all()
+            records = q.order_by(
+                ProfitHistory.timestamp.asc(),
+                ProfitHistory.id.asc(),
+            ).all()
             if bot_id is None and dry_run is not None:
                 records = PositionService._aggregate_profit_records(records)
             records = PositionService._limit_curve_records(records)
@@ -1239,26 +1245,62 @@ class PositionService:
 
     @staticmethod
     def _aggregate_profit_records(records):
-        """Combine per-bot profit points into one account-level point per tick."""
-        grouped = {}
-        for record in records:
-            item = grouped.setdefault(
-                record.timestamp,
-                {"total_profit": 0.0, "long_profit": 0.0, "short_profit": 0.0},
-            )
-            item["total_profit"] += float(record.total_profit or 0.0)
-            item["long_profit"] += float(record.long_profit or 0.0)
-            item["short_profit"] += float(record.short_profit or 0.0)
+        """Build a total curve from each bot's latest cumulative value.
 
-        return [
-            ProfitHistory(
-                timestamp=timestamp,
-                total_profit=round(values["total_profit"], 2),
-                long_profit=round(values["long_profit"], 2),
-                short_profit=round(values["short_profit"], 2),
+        Scheduler calls for different bots can cross a second boundary. Adding
+        only records with an identical timestamp therefore drops bots from
+        some points and makes the total curve disagree with the bot cards.
+        """
+        by_bot = {}
+        timestamps = set()
+        for record in records:
+            if record.bot_id is None:
+                continue
+            by_bot.setdefault(record.bot_id, []).append(record)
+            timestamps.add(record.timestamp)
+
+        if not timestamps:
+            return []
+
+        for bot_records in by_bot.values():
+            bot_records.sort(key=lambda item: (item.timestamp, item.id or 0))
+
+        latest = {}
+        indexes = {bot_id: 0 for bot_id in by_bot}
+        aggregated = []
+
+        for timestamp in sorted(timestamps):
+            for bot_id, bot_records in by_bot.items():
+                index = indexes[bot_id]
+                while (
+                    index < len(bot_records)
+                    and bot_records[index].timestamp <= timestamp
+                ):
+                    latest[bot_id] = bot_records[index]
+                    index += 1
+                indexes[bot_id] = index
+
+            totals = {
+                "total_profit": sum(
+                    float(record.total_profit or 0.0) for record in latest.values()
+                ),
+                "long_profit": sum(
+                    float(record.long_profit or 0.0) for record in latest.values()
+                ),
+                "short_profit": sum(
+                    float(record.short_profit or 0.0) for record in latest.values()
+                ),
+            }
+            aggregated.append(
+                ProfitHistory(
+                    timestamp=timestamp,
+                    total_profit=round(totals["total_profit"], 2),
+                    long_profit=round(totals["long_profit"], 2),
+                    short_profit=round(totals["short_profit"], 2),
+                )
             )
-            for timestamp, values in sorted(grouped.items())
-        ]
+
+        return aggregated
 
     @staticmethod
     def _sampling_step(period):

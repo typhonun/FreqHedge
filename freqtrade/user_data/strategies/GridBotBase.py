@@ -69,7 +69,10 @@ class GridBotBase(DcaTpBotBase):
         # ★ 核心修改：如果是重启，尝试读取上次运行的动态区间
         runtime = self._get_bot_grid_runtime()
         if runtime:
-            self._logger.info(f"{GRID_TAG} 检测到上次运行的动态网格区间 [{runtime[0]:.4f}, {runtime[1]:.4f}]，已自动覆盖初始配置。")
+            logger.info(
+                f"{GRID_TAG} 检测到上次运行的动态网格区间 "
+                f"[{runtime[0]:.4f}, {runtime[1]:.4f}]，已自动覆盖初始配置。"
+            )
             # 覆盖当前配置字典中的值
             if "grid" in g:
                 g["lower_price"] = runtime[0]
@@ -530,7 +533,6 @@ class GridBotBase(DcaTpBotBase):
                 if actual_amount <= 0:
                     self._set_grid_positions(trade, {})
                     self._pending_reduce.pop(trade.id, None)
-                    return None
             except (TypeError, ValueError):
                 return None
 
@@ -541,7 +543,11 @@ class GridBotBase(DcaTpBotBase):
 
             if not positions:
                 trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
-                if trade_stake > 0 and np.isfinite(trade_stake):
+                # Only submit a cleanup exit while an exchange position
+                # actually remains. Once the position is flat, a cleanup
+                # request would consume the candle and prevent the configured
+                # post-close restart entry.
+                if actual_amount > 0 and trade_stake > 0 and np.isfinite(trade_stake):
                     self._last_candle_str[trade.pair] = candle_str
                     self._set(trade, "grid_pending_reduce", [])
                     self._set(trade, "grid_cleanup_pending", True)
@@ -555,6 +561,13 @@ class GridBotBase(DcaTpBotBase):
                     if self._get_bool(trade, "grid_stopped", False):
                         return None
 
+                    # The exchange position is already flat. This is the
+                    # authoritative restart condition even if the previous
+                    # reduce callback observed the trade before its amount
+                    # was refreshed.
+                    if actual_amount <= 0:
+                        self._set(trade, "grid_allow_restart", True)
+
                     if not self._get_bool(trade, "grid_allow_restart", False):
                         return None
 
@@ -563,7 +576,8 @@ class GridBotBase(DcaTpBotBase):
                     if getattr(trade, "has_open_orders", False):
                         return None
 
-                    buy_usdt = self._calc_grid_amount(trade, close_price)
+                    restart_price = action_price
+                    buy_usdt = self._calc_grid_amount(trade, restart_price)
                     if buy_usdt <= 0 or pd.isna(buy_usdt) or np.isinf(buy_usdt):
                         return None
 

@@ -108,7 +108,7 @@ Bot #N
 
 独立机器人组合可以覆盖多个币种、多个策略和多个方向：某一币种出现单边行情时，其他币种或方向仍可能保持独立运行，从组合层面降低对单一市场的依赖。全局止盈、止损、追踪止盈和多空持仓差风控会对机器人组合进行统一约束，避免单个机器人风险无限扩大。
 
-> **交易所持仓限制**：独立进程不等于可以在同一交易对同时持有多空仓位。当前同一交易对不能多空双向持仓，不能仅通过创建 Long/Short 两个 bot 绕过交易所限制。
+> **交易所持仓模式**：期货 bot 同时启用 Long 和 Short 时，配置会启用 Hedge Mode，并要求交易所账户已经处于双向持仓模式。
 
 ### 参数可配置化
 
@@ -194,7 +194,7 @@ DCA 机器人适合希望按价格回撤分层补仓、等待反弹退出的交�
 
 在 bot 级风控之外，FreqHedge 还支持**机器人间联合止盈**：把多个独立 bot 的已实现收益和浮动收益汇总为组合收益，达到金额或收益率目标后统一平仓；也可以配置组合级止损、盈利回撤追踪和触发后自动停止。这样可以让盈利的机器人为暂时亏损的机器人提供组合缓冲，但不能消除市场风险，也不能突破交易所的保证金、持仓模式或同一交易对单向持仓限制。
 
-推荐的组合方式是：将不同币种、不同方向或不同策略拆成独立 bot，单个 bot 设置局部仓位和止损，组合层再设置全局风险上限。不要把多个 bot 配置到同一交易对的相反方向并假设它们能够对冲；当前同一交易对无法同时持有多空仓位。
+推荐的组合方式是：将不同币种、不同方向或不同策略拆成独立 bot，单个 bot 设置局部仓位和止损，组合层再设置全局风险上限。需要在同一账户同一交易对对冲时，应在同一个 bot 中同时启用 Long 和 Short，并先在交易所手动切换到 Hedge Mode；多个 bot 共享同一账户时仍不建议对同一交易对进行相反方向的独立交易。
 
 ## 工作方式
 
@@ -221,19 +221,11 @@ FreqHedge 使用 Vue 3、FastAPI、SQLite、SQLAlchemy、APScheduler 和 Freqtra
 
 ### 环境准备
 请先安装以下软件：
-- [Python 3.12.x](https://www.python.org/downloads/)（支持 3.11 - 3.13；不建议使用 3.14。安装时请勾选 `Add Python to PATH`）
+- [Python 3.12.x](https://www.python.org/downloads/)（支持 3.11 - 3.12。安装时请勾选 `Add Python to PATH`）
 - [Node.js 20 LTS](https://nodejs.org/)（支持 18+）与 [pnpm 10](https://pnpm.io/installation)
 - [Git](https://git-scm.com/)
 
-### 打开任意终端，输入以下命令
-```powershell
-freqtrade --version
-```
-
-- 能输出版本号：按**情况 A**操作。
-- 提示找不到命令：按**情况 B**操作。
-
-### 情况 A：已安装 Freqtrade
+### 安装项目依赖
 
 ```powershell
 git clone https://github.com/typhonun/FreqHedge
@@ -243,38 +235,11 @@ py -3.12 -m venv venv
 venv\Scripts\activate
 python -m pip install --upgrade pip
 python -m pip install -r freqtrade\requirements.txt
+python -m pip install -e .\freqtrade
 
-cd frontend
-pnpm install
-```
-
-### 情况 B：尚未安装 Freqtrade
-
-在终端中执行：
-
-```powershell
-deactivate
-python -m pip install --user pipx
-python -m pipx ensurepath
-```
-
-重开终端后安装最新版 Freqtrade：
-
-```powershell
-pipx install freqtrade
-freqtrade --version
-```
-
-然后安装项目：
-
-```powershell
-git clone https://github.com/typhonun/FreqHedge
-cd FreqHedge
-
-py -3.12 -m venv venv
-venv\Scripts\activate
-python -m pip install --upgrade pip
-python -m pip install -r freqtrade\requirements.txt
+# 确认当前虚拟环境使用的是项目内的 Freqtrade
+python -m freqtrade --version
+python -c "import freqtrade; print(freqtrade.__file__)"
 
 cd frontend
 pnpm install

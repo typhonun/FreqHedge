@@ -14,8 +14,7 @@ class ProcessService:
 
     @staticmethod
     def _freqtrade_command() -> list[str]:
-        """Use the project interpreter when Freqtrade is installed there;
-        otherwise use a globally available installation such as pipx."""
+        """Use the active project interpreter with the repository Freqtrade package."""
         if importlib.util.find_spec("freqtrade") is not None:
             return [sys.executable, "-m", "freqtrade"]
 
@@ -24,8 +23,8 @@ class ProcessService:
             return [executable]
 
         raise FileNotFoundError(
-            "找不到 freqtrade。请先按 README 安装 Freqtrade，并确认 "
-            "`freqtrade --version` 可以执行。"
+            "找不到项目内的 freqtrade。请先激活 venv，并执行 "
+            "`python -m pip install -e .\\freqtrade`。"
         )
 
     # =========================================================
