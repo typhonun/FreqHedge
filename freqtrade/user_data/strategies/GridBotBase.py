@@ -212,6 +212,46 @@ class GridBotBase(DcaTpBotBase):
 
         return actual
 
+    def custom_stake_amount(self, pair: str, current_time, current_rate: float, proposed_stake: float, min_stake: Optional[float], max_stake: float, leverage: float, entry_tag: Optional[str], **kwargs) -> float:
+        # 核心修复：干跑模式下通过调整保证金来抵消 freqtrade 错误的杠杆计算
+        # freqtrade 在干跑模式下可能使用错误的杠杆（如1x）来计算订单
+        # 我们通过调整保证金来确保实际使用的保证金与目标杠杆一致
+        try:
+            cfg = self.get_runtime_config() or {}
+            grid_cfg = self._grid_cfg()
+            
+            target_lev = float(
+                grid_cfg.get(
+                    "leverage",
+                    cfg.get("leverage", self.config.get("leverage", 1.0))
+                ) or 1.0
+            )
+            
+            # 检查 freqtrade 传入的杠杆是否正确
+            if abs(leverage - target_lev) > 0.01 and self.config.get("dry_run", False):
+                # 杠杆不一致，需要调整保证金
+                adjustment = target_lev / leverage
+                adjusted_stake = proposed_stake * adjustment
+                
+                logger.warning(
+                    f"{GRID_TAG} 保证金杠杆调整 | Pair={pair} | "
+                    f"目标杠杆={target_lev}x | freqtrade杠杆={leverage}x | "
+                    f"原始保证金={proposed_stake:.2f} | 调整后={adjusted_stake:.2f}"
+                )
+                
+                # 限制在合理范围内
+                if max_stake > 0 and adjusted_stake > max_stake:
+                    adjusted_stake = max_stake
+                if min_stake > 0 and adjusted_stake < min_stake:
+                    adjusted_stake = min_stake
+                
+                return adjusted_stake
+            
+            return proposed_stake
+        except Exception as e:
+            logger.warning(f"{GRID_TAG} custom_stake_amount 计算失败: {e}")
+            return proposed_stake
+
     # ============================================================
     # 工具函数
     # ============================================================
@@ -1505,6 +1545,46 @@ class GridBotBase(DcaTpBotBase):
         )
 
         return actual
+
+    def custom_stake_amount(self, pair: str, current_time, current_rate: float, proposed_stake: float, min_stake: Optional[float], max_stake: float, leverage: float, entry_tag: Optional[str], **kwargs) -> float:
+        # 核心修复：干跑模式下通过调整保证金来抵消 freqtrade 错误的杠杆计算
+        # freqtrade 在干跑模式下可能使用错误的杠杆（如1x）来计算订单
+        # 我们通过调整保证金来确保实际使用的保证金与目标杠杆一致
+        try:
+            cfg = self.get_runtime_config() or {}
+            grid_cfg = self._grid_cfg()
+            
+            target_lev = float(
+                grid_cfg.get(
+                    "leverage",
+                    cfg.get("leverage", self.config.get("leverage", 1.0))
+                ) or 1.0
+            )
+            
+            # 检查 freqtrade 传入的杠杆是否正确
+            if abs(leverage - target_lev) > 0.01 and self.config.get("dry_run", False):
+                # 杠杆不一致，需要调整保证金
+                adjustment = target_lev / leverage
+                adjusted_stake = proposed_stake * adjustment
+                
+                logger.warning(
+                    f"{GRID_TAG} 保证金杠杆调整 | Pair={pair} | "
+                    f"目标杠杆={target_lev}x | freqtrade杠杆={leverage}x | "
+                    f"原始保证金={proposed_stake:.2f} | 调整后={adjusted_stake:.2f}"
+                )
+                
+                # 限制在合理范围内
+                if max_stake > 0 and adjusted_stake > max_stake:
+                    adjusted_stake = max_stake
+                if min_stake > 0 and adjusted_stake < min_stake:
+                    adjusted_stake = min_stake
+                
+                return adjusted_stake
+            
+            return proposed_stake
+        except Exception as e:
+            logger.warning(f"{GRID_TAG} custom_stake_amount 计算失败: {e}")
+            return proposed_stake
 
     # ============================================================
     # 工具函数
