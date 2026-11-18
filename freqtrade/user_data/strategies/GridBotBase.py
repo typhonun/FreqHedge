@@ -71,11 +71,22 @@ class GridBotBase(DcaTpBotBase):
         # ★ 核心修复：解除 CCXT / 交易所市场数据中对部分交易对（如 SQQQ）的 1x 杠杆写死限制
         # 修复时机：确保在策略初始化时就覆盖交易所的限制
         try:
+            logger.info(f"{GRID_TAG} 开始执行杠杆修复检查...")
+            logger.info(f"{GRID_TAG} dp存在: {hasattr(self, 'dp')}")
+            if hasattr(self, 'dp'):
+                logger.info(f"{GRID_TAG} dp不为None: {self.dp is not None}")
+                if self.dp:
+                    logger.info(f"{GRID_TAG} exchange存在: {hasattr(self.dp, 'exchange')}")
+                    if hasattr(self.dp, 'exchange'):
+                        logger.info(f"{GRID_TAG} exchange不为None: {self.dp.exchange is not None}")
+            
             if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
                 exchange = self.dp.exchange
                 target_lev = float(ft_cfg.get("leverage", 5.0) or 5.0)
+                logger.info(f"{GRID_TAG} 目标杠杆: {target_lev}x, 干跑模式: {ft_cfg.get('dry_run', False)}")
 
                 # 1. 直接修改市场数据中的杠杆限制
+                modified_count = 0
                 for markets_attr in ['markets', '_markets']:
                     markets_dict = getattr(exchange, markets_attr, None)
                     if markets_dict and isinstance(markets_dict, dict):
@@ -84,11 +95,16 @@ class GridBotBase(DcaTpBotBase):
                                 limits = market.setdefault('limits', {})
                                 lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
                                 if not lev_limits.get('max') or lev_limits['max'] < target_lev:
+                                    old_max = lev_limits.get('max', 1)
                                     lev_limits['max'] = max(75.0, target_lev)
+                                    modified_count += 1
+                                    logger.info(f"{GRID_TAG} 修改 {symbol} 杠杆上限: {old_max}x -> {lev_limits['max']}x")
+                logger.info(f"{GRID_TAG} 共修改了 {modified_count} 个交易对的杠杆上限")
 
                 # 2. 强制设置所有白名单交易对的杠杆（针对 dry_run 模式）
                 if ft_cfg.get("dry_run", False):
                     whitelist = ft_cfg.get("exchange", {}).get("pair_whitelist", [])
+                    logger.info(f"{GRID_TAG} 白名单: {whitelist}")
                     if whitelist:
                         logger.info(f"{GRID_TAG} 干跑模式：强制设置白名单交易对杠杆为 {target_lev}x")
                         for pair in whitelist:
@@ -98,8 +114,10 @@ class GridBotBase(DcaTpBotBase):
                                 logger.info(f"{GRID_TAG} ✅ 已设置 {pair} 杠杆为 {target_lev}x")
                             except Exception as e:
                                 logger.warning(f"{GRID_TAG} 设置 {pair} 杠杆失败: {e}")
+            else:
+                logger.warning(f"{GRID_TAG} 无法获取 exchange 对象，跳过杠杆修复")
         except Exception as e:
-            logger.warning(f"{GRID_TAG} 调整市场杠杆上限失败: {e}")
+            logger.exception(f"{GRID_TAG} 调整市场杠杆上限失败: {e}")
 
         g = self._grid_cfg()
 
@@ -153,8 +171,36 @@ class GridBotBase(DcaTpBotBase):
             ) or 1.0
         )
 
-        if self.config.get("dry_run", False) or max_leverage <= 1.0:
+        # ★ 强制修复：干跑模式下，即使交易所限制为1x，也强制返回目标杠杆
+        # 这是最后的一道防线，确保策略不受交易所市场数据中错误的杠杆限制影响
+        if self.config.get("dry_run", False):
             actual = target
+            logger.warning(
+                f"{GRID_TAG} 干跑模式强制杠杆 | Pair={pair} | "
+                f"目标={target}x | 交易所限制={max_leverage}x | 强制应用={actual}x"
+            )
+        elif max_leverage <= 1.0:
+            # 实盘模式下如果交易所限制为1x，尝试通过修改市场数据来解除限制
+            actual = target
+            logger.warning(
+                f"{GRID_TAG} 交易所限制为1x，尝试强制使用目标杠杆 | Pair={pair} | "
+                f"目标={target}x | 强制应用={actual}x"
+            )
+            # 尝试动态修改市场数据
+            try:
+                if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
+                    exchange = self.dp.exchange
+                    for markets_attr in ['markets', '_markets']:
+                        markets_dict = getattr(exchange, markets_attr, None)
+                        if markets_dict and isinstance(markets_dict, dict):
+                            market = markets_dict.get(pair)
+                            if market and isinstance(market, dict):
+                                limits = market.setdefault('limits', {})
+                                lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
+                                lev_limits['max'] = max(75.0, target)
+                                logger.info(f"{GRID_TAG} 已动态修改 {pair} 杠杆上限为 {lev_limits['max']}x")
+            except Exception as e:
+                logger.warning(f"{GRID_TAG} 动态修改杠杆上限失败: {e}")
         else:
             actual = min(target, max_leverage)
 
@@ -1419,8 +1465,36 @@ class GridBotBase(DcaTpBotBase):
             ) or 1.0
         )
 
-        if self.config.get("dry_run", False) or max_leverage <= 1.0:
+        # ★ 强制修复：干跑模式下，即使交易所限制为1x，也强制返回目标杠杆
+        # 这是最后的一道防线，确保策略不受交易所市场数据中错误的杠杆限制影响
+        if self.config.get("dry_run", False):
             actual = target
+            logger.warning(
+                f"{GRID_TAG} 干跑模式强制杠杆 | Pair={pair} | "
+                f"目标={target}x | 交易所限制={max_leverage}x | 强制应用={actual}x"
+            )
+        elif max_leverage <= 1.0:
+            # 实盘模式下如果交易所限制为1x，尝试通过修改市场数据来解除限制
+            actual = target
+            logger.warning(
+                f"{GRID_TAG} 交易所限制为1x，尝试强制使用目标杠杆 | Pair={pair} | "
+                f"目标={target}x | 强制应用={actual}x"
+            )
+            # 尝试动态修改市场数据
+            try:
+                if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
+                    exchange = self.dp.exchange
+                    for markets_attr in ['markets', '_markets']:
+                        markets_dict = getattr(exchange, markets_attr, None)
+                        if markets_dict and isinstance(markets_dict, dict):
+                            market = markets_dict.get(pair)
+                            if market and isinstance(market, dict):
+                                limits = market.setdefault('limits', {})
+                                lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
+                                lev_limits['max'] = max(75.0, target)
+                                logger.info(f"{GRID_TAG} 已动态修改 {pair} 杠杆上限为 {lev_limits['max']}x")
+            except Exception as e:
+                logger.warning(f"{GRID_TAG} 动态修改杠杆上限失败: {e}")
         else:
             actual = min(target, max_leverage)
 
