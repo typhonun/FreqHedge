@@ -212,46 +212,6 @@ class GridBotBase(DcaTpBotBase):
 
         return actual
 
-    def custom_stake_amount(self, pair: str, current_time, current_rate: float, proposed_stake: float, min_stake: Optional[float], max_stake: float, leverage: float, entry_tag: Optional[str], **kwargs) -> float:
-        # 核心修复：干跑模式下通过调整保证金来抵消 freqtrade 错误的杠杆计算
-        # freqtrade 在干跑模式下可能使用错误的杠杆（如1x）来计算订单
-        # 我们通过调整保证金来确保实际使用的保证金与目标杠杆一致
-        try:
-            cfg = self.get_runtime_config() or {}
-            grid_cfg = self._grid_cfg()
-            
-            target_lev = float(
-                grid_cfg.get(
-                    "leverage",
-                    cfg.get("leverage", self.config.get("leverage", 1.0))
-                ) or 1.0
-            )
-            
-            # 检查 freqtrade 传入的杠杆是否正确
-            if abs(leverage - target_lev) > 0.01 and self.config.get("dry_run", False):
-                # 杠杆不一致，需要调整保证金
-                adjustment = target_lev / leverage
-                adjusted_stake = proposed_stake * adjustment
-                
-                logger.warning(
-                    f"{GRID_TAG} 保证金杠杆调整 | Pair={pair} | "
-                    f"目标杠杆={target_lev}x | freqtrade杠杆={leverage}x | "
-                    f"原始保证金={proposed_stake:.2f} | 调整后={adjusted_stake:.2f}"
-                )
-                
-                # 限制在合理范围内
-                if max_stake > 0 and adjusted_stake > max_stake:
-                    adjusted_stake = max_stake
-                if min_stake > 0 and adjusted_stake < min_stake:
-                    adjusted_stake = min_stake
-                
-                return adjusted_stake
-            
-            return proposed_stake
-        except Exception as e:
-            logger.warning(f"{GRID_TAG} custom_stake_amount 计算失败: {e}")
-            return proposed_stake
-
     # ============================================================
     # 工具函数
     # ============================================================
@@ -605,6 +565,38 @@ class GridBotBase(DcaTpBotBase):
     def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force, current_time, entry_tag, side,
                             **kwargs):
         try:
+            # 核心修复：在交易确认时，强制设置交易所杠杆
+            # 这发生在 bot_start 之后，exchange 已经初始化
+            try:
+                if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
+                    exchange = self.dp.exchange
+                    target_lev = float(self.config.get('leverage', 5.0) or 5.0)
+                    
+                    # 尝试直接设置杠杆
+                    try:
+                        exchange.set_leverage(target_lev, pair)
+                        logger.info(f"{GRID_TAG} confirm_trade_entry: 已设置 {pair} 杠杆为 {target_lev}x")
+                    except Exception as e:
+                        logger.warning(f"{GRID_TAG} confirm_trade_entry: 设置杠杆失败: {e}")
+                    
+                    # 同时修改市场数据
+                    try:
+                        for markets_attr in ['markets', '_markets']:
+                            markets_dict = getattr(exchange, markets_attr, None)
+                            if markets_dict and isinstance(markets_dict, dict):
+                                market = markets_dict.get(pair)
+                                if market and isinstance(market, dict):
+                                    limits = market.setdefault('limits', {})
+                                    lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
+                                    old_max = lev_limits.get('max', 1)
+                                    if old_max < target_lev:
+                                        lev_limits['max'] = max(75.0, target_lev)
+                                        logger.info(f"{GRID_TAG} confirm_trade_entry: 修改 {pair} 杠杆上限 {old_max}x -> {lev_limits['max']}x")
+                    except Exception as e:
+                        logger.warning(f"{GRID_TAG} confirm_trade_entry: 修改市场数据失败: {e}")
+            except Exception as e:
+                logger.warning(f"{GRID_TAG} confirm_trade_entry: 杠杆设置检查失败: {e}")
+            
             candle_str = self._get_candle_str(current_time)
             if self._last_candle_str.get(pair) == candle_str: return False
 
@@ -1545,46 +1537,6 @@ class GridBotBase(DcaTpBotBase):
         )
 
         return actual
-
-    def custom_stake_amount(self, pair: str, current_time, current_rate: float, proposed_stake: float, min_stake: Optional[float], max_stake: float, leverage: float, entry_tag: Optional[str], **kwargs) -> float:
-        # 核心修复：干跑模式下通过调整保证金来抵消 freqtrade 错误的杠杆计算
-        # freqtrade 在干跑模式下可能使用错误的杠杆（如1x）来计算订单
-        # 我们通过调整保证金来确保实际使用的保证金与目标杠杆一致
-        try:
-            cfg = self.get_runtime_config() or {}
-            grid_cfg = self._grid_cfg()
-            
-            target_lev = float(
-                grid_cfg.get(
-                    "leverage",
-                    cfg.get("leverage", self.config.get("leverage", 1.0))
-                ) or 1.0
-            )
-            
-            # 检查 freqtrade 传入的杠杆是否正确
-            if abs(leverage - target_lev) > 0.01 and self.config.get("dry_run", False):
-                # 杠杆不一致，需要调整保证金
-                adjustment = target_lev / leverage
-                adjusted_stake = proposed_stake * adjustment
-                
-                logger.warning(
-                    f"{GRID_TAG} 保证金杠杆调整 | Pair={pair} | "
-                    f"目标杠杆={target_lev}x | freqtrade杠杆={leverage}x | "
-                    f"原始保证金={proposed_stake:.2f} | 调整后={adjusted_stake:.2f}"
-                )
-                
-                # 限制在合理范围内
-                if max_stake > 0 and adjusted_stake > max_stake:
-                    adjusted_stake = max_stake
-                if min_stake > 0 and adjusted_stake < min_stake:
-                    adjusted_stake = min_stake
-                
-                return adjusted_stake
-            
-            return proposed_stake
-        except Exception as e:
-            logger.warning(f"{GRID_TAG} custom_stake_amount 计算失败: {e}")
-            return proposed_stake
 
     # ============================================================
     # 工具函数
