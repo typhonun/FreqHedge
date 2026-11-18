@@ -44,6 +44,9 @@ class GridBotBase(DcaTpBotBase):
     trailing_stop = False
     position_adjustment_enable = True
     use_custom_stoploss = False
+    process_only_new_candles = False
+
+    startup_candle_count = 500
 
     @property
     def timeframe(self) -> str:
@@ -64,6 +67,40 @@ class GridBotBase(DcaTpBotBase):
         ft_cfg = self.config or {}
         dry_run_wallet = ft_cfg.get("dry_run_wallet", 0)
         leverage = ft_cfg.get("leverage", 1)
+
+        # ★ 核心修复：解除 CCXT / 交易所市场数据中对部分交易对（如 SQQQ）的 1x 杠杆写死限制
+        # 修复时机：确保在策略初始化时就覆盖交易所的限制
+        try:
+            if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
+                exchange = self.dp.exchange
+                target_lev = float(ft_cfg.get("leverage", 5.0) or 5.0)
+
+                # 1. 直接修改市场数据中的杠杆限制
+                for markets_attr in ['markets', '_markets']:
+                    markets_dict = getattr(exchange, markets_attr, None)
+                    if markets_dict and isinstance(markets_dict, dict):
+                        for symbol, market in markets_dict.items():
+                            if market and isinstance(market, dict):
+                                limits = market.setdefault('limits', {})
+                                lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
+                                if not lev_limits.get('max') or lev_limits['max'] < target_lev:
+                                    lev_limits['max'] = max(75.0, target_lev)
+
+                # 2. 强制设置所有白名单交易对的杠杆（针对 dry_run 模式）
+                if ft_cfg.get("dry_run", False):
+                    whitelist = ft_cfg.get("exchange", {}).get("pair_whitelist", [])
+                    if whitelist:
+                        logger.info(f"{GRID_TAG} 干跑模式：强制设置白名单交易对杠杆为 {target_lev}x")
+                        for pair in whitelist:
+                            try:
+                                # 通过 exchange API 设置杠杆（即使是在干跑模式下）
+                                exchange.set_leverage(target_lev, pair)
+                                logger.info(f"{GRID_TAG} ✅ 已设置 {pair} 杠杆为 {target_lev}x")
+                            except Exception as e:
+                                logger.warning(f"{GRID_TAG} 设置 {pair} 杠杆失败: {e}")
+        except Exception as e:
+            logger.warning(f"{GRID_TAG} 调整市场杠杆上限失败: {e}")
+
         g = self._grid_cfg()
 
         # ★ 核心修改：如果是重启，尝试读取上次运行的动态区间
@@ -95,9 +132,44 @@ class GridBotBase(DcaTpBotBase):
             f"======================================================"
         )
 
+    def leverage(
+            self,
+            pair: str,
+            current_time,
+            current_rate: float,
+            proposed_leverage: float,
+            max_leverage: float,
+            entry_tag: str | None,
+            side: str,
+            **kwargs,
+    ) -> float:
+        cfg = self.get_runtime_config() or {}
+        grid_cfg = self._grid_cfg()
+
+        target = float(
+            grid_cfg.get(
+                "leverage",
+                cfg.get("leverage", self.config.get("leverage", 1.0))
+            ) or 1.0
+        )
+
+        if self.config.get("dry_run", False) or max_leverage <= 1.0:
+            actual = target
+        else:
+            actual = min(target, max_leverage)
+
+        logger.info(
+            f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
+            f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
+            f"最终应用={actual}x"
+        )
+
+        return actual
+
     # ============================================================
     # 工具函数
     # ============================================================
+
     def get_runtime_config(self):
         custom = (self.config or {}).get("custom_params", {}) or {}
         if custom.get("config"): return custom["config"]
@@ -939,16 +1011,55 @@ class GridBotBase(DcaTpBotBase):
             qty = self._order_filled_quantity(order)
 
             try:
-                lev = float(self.leverage(trade.pair) or 1.0)
-            except Exception:
+                lev = float(getattr(trade, 'leverage', 1.0) or 1.0)
+                if not np.isfinite(lev) or lev <= 0:
+                    lev = 1.0
+            except (TypeError, ValueError):
                 lev = 1.0
-            margin = (entry_price * qty) / lev if lev > 0 else 0.0
+
+            margin = (entry_price * qty) / lev
+
+            logger.info(
+                f"{GRID_TAG} 成交杠杆校验 | "
+                f"Pair={trade.pair} | "
+                f"实际杠杆={lev:.2f}x | "
+                f"成交价={entry_price:.4f} | "
+                f"成交数量={qty:.6f} | "
+                f"保证金={margin:.4f} USDT"
+            )
             candle_str = self._get_candle_str(current_time)
             is_manual_entry = reason.startswith("force_entry") or reason.startswith("forceenter")
             is_manual_exit = reason.startswith("force_exit") or reason.startswith("forceexit")
 
             # ---- A. 首仓成交 ----
             if not self._get_bool(trade, "grid_n_initialized", False) and order.ft_order_side == self._entry_order_side:
+                target_leverage = float(self.config.get("leverage", 5.0) or 5.0)
+                actual_leverage = float(getattr(trade, "leverage", 1.0) or 1.0)
+
+                # ★ 核心修复：自动纠正 trade.leverage 为配置目标杠杆，确保后续浮盈、清算价和保证金计算正确
+                if abs(actual_leverage - target_leverage) > 0.01:
+                    logger.warning(
+                        f"{GRID_TAG} ⚠️ 杠杆不一致！已自动强制对齐 | "
+                        f"Pair={trade.pair} | "
+                        f"配置目标={target_leverage}x | "
+                        f"原始成交={actual_leverage}x"
+                    )
+                    trade.leverage = target_leverage
+                    try:
+                        trade.save()
+                    except Exception:
+                        pass
+                    lev = target_leverage
+                else:
+                    lev = actual_leverage
+                    logger.info(
+                        f"{GRID_TAG} ✅ 首仓杠杆正常 | "
+                        f"{trade.pair} | {actual_leverage}x"
+                    )
+
+                # 重新计算修正后的保证金
+                margin = (entry_price * qty) / lev
+
                 # 由于是动态网格，用时间戳作为首仓 ID
                 idx = int(current_time.timestamp())
 
@@ -1011,7 +1122,7 @@ class GridBotBase(DcaTpBotBase):
                     message=("手动开仓" if is_manual_entry else f"网格首仓 价格{entry_price:.4f}"),
                     candle_time=current_time
                 )
-                logger.info(f"[STRATEGY] [ENTRY] {GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f}")
+                logger.info(f"[STRATEGY] [ENTRY] {GRID_TAG} ▶ 首仓成交 | 价格={entry_price:.4f} | 杠杆={lev}x")
                 return
 
             # ---- B. 加仓成交 ----
@@ -1287,9 +1398,44 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             return None
 
+    def leverage(
+            self,
+            pair: str,
+            current_time,
+            current_rate: float,
+            proposed_leverage: float,
+            max_leverage: float,
+            entry_tag: str | None,
+            side: str,
+            **kwargs,
+    ) -> float:
+        cfg = self.get_runtime_config() or {}
+        grid_cfg = self._grid_cfg()
+
+        target = float(
+            grid_cfg.get(
+                "leverage",
+                cfg.get("leverage", self.config.get("leverage", 1.0))
+            ) or 1.0
+        )
+
+        if self.config.get("dry_run", False) or max_leverage <= 1.0:
+            actual = target
+        else:
+            actual = min(target, max_leverage)
+
+        logger.info(
+            f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
+            f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
+            f"最终应用={actual}x"
+        )
+
+        return actual
+
     # ============================================================
     # 工具函数
     # ============================================================
+
     def _calc_grid_amount(self, trade, price: float) -> float:
         g = self._grid_cfg()
         amount_per_grid = self._cfg_float(g, "amount_per_grid", 0.0)
@@ -1301,9 +1447,32 @@ class GridBotBase(DcaTpBotBase):
             else:
                 per_grid = self._collateral_total() * (amount_per_grid / 100.0)
         else:
-            wallet = float((self.config or {}).get("dry_run_wallet", 0) or 0)
-            grid_count = max(1, self._cfg_int(g, "grid_count", 20))
-            per_grid = wallet / grid_count
+            per_grid = float((self.config or {}).get("stake_amount", 0) or 0)
+            if per_grid <= 0 or pd.isna(per_grid):
+                wallet = float((self.config or {}).get("dry_run_wallet", 0) or 0)
+                grid_count = max(1, self._cfg_int(g, "grid_count", 20))
+                per_grid = wallet / grid_count
+
+        leverage = float(self.leverage(
+            pair=trade.pair,
+            current_time=None,
+            current_rate=price,
+            proposed_leverage=1.0,
+            max_leverage=100.0,
+            entry_tag=None,
+            side=self._side_str
+        ) or 1.0)
+
+        try:
+            market = self.dp.market(trade.pair)
+            min_notional = float(market["limits"]["cost"]["min"] or 5.0) if market else 5.0
+        except Exception:
+            min_notional = 5.0
+
+        min_margin_needed = min_notional / leverage
+
+        if per_grid < min_margin_needed:
+            per_grid = min_margin_needed
 
         available = self._available_stake()
         if available > 0 and per_grid > available * 0.8:
