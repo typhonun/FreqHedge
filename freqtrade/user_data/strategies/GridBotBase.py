@@ -1418,6 +1418,21 @@ class GridBotBase(DcaTpBotBase):
                     message="手动平仓" if is_full_exit else "手动减仓",
                     candle_time=current_time
                 )
+                # ★ 修复：手动全仓平仓后设置重启标志并触发动态白名单扫描
+                if is_full_exit:
+                    logger.info(f"{GRID_TAG} 🏁 检测到手动全仓平仓完成，触发重启和动态白名单扫描")
+                    self._set(trade, "grid_allow_restart", True)
+                    self._set(trade, "grid_cleanup_pending", False)
+                    # 清理网格状态
+                    self._set_grid_positions(trade, {})
+                    self._set(trade, "grid_pending_reduce", [])
+                    self._set(trade, "grid_pending_add", None)
+                    # 触发动态白名单扫描（如果启用）
+                    g = self._grid_cfg()
+                    if bool(g.get("dynamic_whitelist", False)):
+                        self._trigger_dynamic_whitelist_scan(trade)
+                    else:
+                        logger.info(f"{GRID_TAG} 动态白名单未启用，手动平仓后等待下次信号")
         except Exception:
             logger.exception(f"{GRID_TAG} order_filled 网格记录失败")
 
