@@ -1747,7 +1747,7 @@ class GridBotBase(DcaTpBotBase):
                 def async_scan():
                     try:
                         response = requests.post(
-                            f"{api_base}/api/bots/{self._bot_id}/dynamic-whitelist-scan",
+                            f"{api_base}/bots/{self._bot_id}/dynamic-whitelist-scan",
                             json=payload,
                             timeout=30
                         )
