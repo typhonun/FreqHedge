@@ -1703,6 +1703,81 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             pass
 
+    def _trigger_dynamic_whitelist_scan(self, trade):
+        """
+        动态白名单模式：平仓后触发多因子扫描，选择新币并更新白名单
+        """
+        try:
+            g = self._grid_cfg()
+            # 检查是否启用了动态白名单模式
+            is_dynamic = bool(g.get("dynamic_whitelist", False))
+            if not is_dynamic:
+                logger.info(f"{GRID_TAG} 动态白名单未启用，跳过扫描")
+                return
+
+            logger.info(f"{GRID_TAG} ========== 触发动态白名单扫描 ==========")
+            logger.info(f"{GRID_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={trade.pair}")
+
+            # 获取当前所有持仓的交易对
+            open_trades = Trade.get_open_trades()
+            existing_pairs = set(t.pair for t in open_trades if t.pair != trade.pair)
+            logger.info(f"{GRID_TAG} 当前持仓交易对: {list(existing_pairs)}")
+
+            # 调用后端 API 触发扫描
+            try:
+                import requests
+                import os
+                import threading
+
+                # 从环境变量或默认值获取 API 地址
+                api_base = os.environ.get('DCATP_API_URL', 'http://localhost:9000')
+
+                direction = 'SHORT' if self._is_short else 'LONG'
+                payload = {
+                    'bot_id': self._bot_id,
+                    'side': self._side_str,
+                    'direction': direction,
+                    'exclude_pairs': list(existing_pairs)
+                }
+
+                logger.info(f"{GRID_TAG} 调用后端 API: {api_base}/api/bots/{self._bot_id}/dynamic-whitelist-scan")
+                logger.info(f"{GRID_TAG} 请求参数: {payload}")
+
+                # 异步调用，不阻塞当前流程
+                def async_scan():
+                    try:
+                        response = requests.post(
+                            f"{api_base}/api/bots/{self._bot_id}/dynamic-whitelist-scan",
+                            json=payload,
+                            timeout=30
+                        )
+
+                        if response.status_code == 200:
+                            result = response.json()
+                            if result.get('success'):
+                                logger.info(
+                                    f"{GRID_TAG} ✅ 动态白名单扫描成功 | "
+                                    f"新币={result.get('new_pair')} | "
+                                    f"新白名单={result.get('new_whitelist')}"
+                                )
+                            else:
+                                logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描失败: {result.get('error')}")
+                        else:
+                            logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描请求失败: {response.status_code} | {response.text}")
+                    except Exception as e:
+                        logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描异常: {e}")
+
+                # 启动后台线程执行扫描
+                thread = threading.Thread(target=async_scan, daemon=True)
+                thread.start()
+                logger.info(f"{GRID_TAG} 后台扫描线程已启动")
+
+            except Exception as e:
+                logger.warning(f"{GRID_TAG} 动态白名单扫描初始化异常: {e}")
+
+        except Exception as e:
+            logger.exception(f"{GRID_TAG} _trigger_dynamic_whitelist_scan 异常")
+
 
 class GridBotLong(GridBotBase):
     can_short = False
