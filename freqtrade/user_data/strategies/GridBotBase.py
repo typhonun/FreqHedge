@@ -261,7 +261,30 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             return 0.0
 
-    def _runtime_grid_bounds(self):
+    def _prefetched_bounds_for_pair(self, pair):
+        """动态白名单扫描预取的交易对专属网格区间（grid_prefetch_range kv）"""
+        if not pair:
+            return None
+        try:
+            from core.config_manager import ConfigManager
+            raw = ConfigManager.get_bot_kv(f"grid_prefetch_range_{self._bot_id}_{self._side_str}")
+            if isinstance(raw, dict):
+                info = (raw.get("pairs") or {}).get(pair)
+                if isinstance(info, dict):
+                    lower = float(info.get("lower") or 0)
+                    upper = float(info.get("upper") or 0)
+                    if lower > 0 and upper > lower:
+                        return lower, upper
+        except Exception:
+            pass
+        return None
+
+    def _runtime_grid_bounds(self, pair=None):
+        # 动态白名单新币优先使用后端预取的专属区间
+        if pair:
+            pre = self._prefetched_bounds_for_pair(pair)
+            if pre:
+                return pre
         g = self._grid_cfg()
         runtime = self._get_bot_grid_runtime()
         if runtime:
@@ -298,12 +321,19 @@ class GridBotBase(DcaTpBotBase):
             return lower * (ratio - 1.0)
         return (upper - lower) / count
 
-    def _get_grid_step(self) -> float:
-        lower, upper = self._runtime_grid_bounds()
+    def _get_grid_step(self, pair=None) -> float:
+        lower, upper = self._runtime_grid_bounds(pair)
         return self._get_grid_step_for_bounds(
             lower,
             upper,
         )
+
+    def _trade_grid_step(self, trade) -> float:
+        """按交易自身的动态网格边界计算步长（优先于全局共享边界）"""
+        g = self._grid_cfg()
+        dl = self._get_float(trade, "grid_dyn_lower", self._cfg_float(g, "lower_price", 0.0))
+        du = self._get_float(trade, "grid_dyn_upper", self._cfg_float(g, "upper_price", 0.0))
+        return self._get_grid_step_for_bounds(dl, du)
 
     def _shift_dynamic_grid(self, trade, direction: int) -> bool:
         """Move the live grid one spacing after the triggering order is filled."""
@@ -475,8 +505,8 @@ class GridBotBase(DcaTpBotBase):
         }
 
     # ★ 重写：基于动态开仓价计算止盈价
-    def _grid_tp_price(self, entry_price: float) -> float:
-        step = self._get_grid_step()
+    def _grid_tp_price(self, entry_price: float, trade=None) -> float:
+        step = self._trade_grid_step(trade) if trade is not None else self._get_grid_step()
         if step <= 0 or entry_price <= 0:
             return 0.0
         if self._is_short:
@@ -509,7 +539,7 @@ class GridBotBase(DcaTpBotBase):
         dataframe[col_short] = 0
 
         g = self._grid_cfg()
-        lower, upper = self._runtime_grid_bounds()
+        lower, upper = self._runtime_grid_bounds(metadata.get('pair'))
         start_mode = str(g.get("start_mode", "grid")).lower()
         trigger_price = self._cfg_float(g, "trigger_price", 0.0)
 
@@ -601,7 +631,7 @@ class GridBotBase(DcaTpBotBase):
             if self._last_candle_str.get(pair) == candle_str: return False
 
             g = self._grid_cfg()
-            lower, upper = self._runtime_grid_bounds()
+            lower, upper = self._runtime_grid_bounds(pair)
             if upper <= 0 or lower <= 0: return False
 
             try:
@@ -672,11 +702,11 @@ class GridBotBase(DcaTpBotBase):
             self._check_and_apply_trailing(trade, close_price)
 
             g = self._grid_cfg()
-            step = self._get_grid_step()
 
             # The live boundaries are the source of truth after the first fill.
             dyn_lower = self._get_float(trade, "grid_dyn_lower", self._cfg_float(g, "lower_price", 0.0))
             dyn_upper = self._get_float(trade, "grid_dyn_upper", self._cfg_float(g, "upper_price", 0.0))
+            step = self._get_grid_step_for_bounds(dyn_lower, dyn_upper)
 
             try:
                 actual_amount = float(getattr(trade, "amount", 0) or 0)
@@ -796,7 +826,7 @@ class GridBotBase(DcaTpBotBase):
                     if entry <= 0 or pd.isna(entry) or np.isinf(entry):
                         continue
 
-                    tp_price = self._grid_tp_price(entry)
+                    tp_price = self._grid_tp_price(entry, trade)
                     if tp_price <= 0:
                         continue
 
@@ -982,7 +1012,7 @@ class GridBotBase(DcaTpBotBase):
             if len(positions) >= max_grids:
                 return None
 
-            step = self._get_grid_step()
+            step = self._get_grid_step_for_bounds(dyn_lower, dyn_upper)
             if step <= 0:
                 return None
 
@@ -1160,12 +1190,11 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_allow_restart", False)
                 self._set(trade, "grid_trailing_candle", None)
                 g = self._grid_cfg()
-                runtime = self._get_bot_grid_runtime()
-                runtime_lower = runtime[0] if runtime else self._cfg_float(g, "lower_price", 0.0)
-                runtime_upper = runtime[1] if runtime else self._cfg_float(g, "upper_price", 0.0)
+                # 动态白名单新币优先使用后端预取的专属区间
+                runtime_lower, runtime_upper = self._runtime_grid_bounds(trade.pair)
                 self._set(trade, "grid_dyn_lower", runtime_lower)
                 self._set(trade, "grid_dyn_upper", runtime_upper)
-                step = self._get_grid_step()
+                step = self._get_grid_step_for_bounds(runtime_lower, runtime_upper)
                 if step > 0:
                     next_add = entry_price + step if self._is_short else entry_price - step
                     self._set(trade, "grid_next_add_price", next_add)
@@ -1644,7 +1673,7 @@ class GridBotBase(DcaTpBotBase):
             if len(closed) == 1:
                 idx, entry, qty, margin, pnl = closed[0]
                 pnl_pct = (price - entry) / entry * 100 if entry > 0 else 0
-                tp_price = self._grid_tp_price(entry)
+                tp_price = self._grid_tp_price(entry, trade)
                 logger.info(
                     f"[STRATEGY] [REDUCE] {GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | {entry:.4f} → {price:.4f}(止盈线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
                 )
@@ -1664,7 +1693,7 @@ class GridBotBase(DcaTpBotBase):
                 for k in sorted(positions.keys(), key=lambda x: int(x)):
                     v = positions[k]
                     entry = float(v.get("entry", 0.0))
-                    tp_price = self._grid_tp_price(entry)
+                    tp_price = self._grid_tp_price(entry, trade)
                     tp_pct = (tp_price - entry) / entry * 100 if entry > 0 else 0
                     parts.append(f"建仓={entry:.4f}(止盈={tp_price:.4f}, {tp_pct:+.2f}%)")
                 logger.info(f"{GRID_TAG}    └ 持仓: {' '.join(parts)} | 共{len(positions)}单")
@@ -1737,10 +1766,11 @@ class GridBotBase(DcaTpBotBase):
                     'bot_id': self._bot_id,
                     'side': self._side_str,
                     'direction': direction,
-                    'exclude_pairs': list(existing_pairs)
+                    'exclude_pairs': list(existing_pairs),
+                    'closed_pair': trade.pair
                 }
 
-                logger.info(f"{GRID_TAG} 调用后端 API: {api_base}/api/bots/{self._bot_id}/dynamic-whitelist-scan")
+                logger.info(f"{GRID_TAG} 调用后端 API: {api_base}/bots/{self._bot_id}/dynamic-whitelist-scan")
                 logger.info(f"{GRID_TAG} 请求参数: {payload}")
 
                 # 异步调用，不阻塞当前流程
@@ -1749,7 +1779,7 @@ class GridBotBase(DcaTpBotBase):
                         response = requests.post(
                             f"{api_base}/bots/{self._bot_id}/dynamic-whitelist-scan",
                             json=payload,
-                            timeout=30
+                            timeout=180
                         )
 
                         if response.status_code == 200:

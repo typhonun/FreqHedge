@@ -32,9 +32,13 @@ class BotBaseInfo(BaseModel):
     tradingMode: str = BOT_DEFAULTS["tradingMode"]
     marginMode: str = BOT_DEFAULTS["marginMode"]
     strategyType: str = "dca"
+    pairSelectionMode: str = "manual"
 
     @model_validator(mode="after")
     def _check_direction(self):
+        # ▼▼▼ 加上这行 ▼▼▼
+        print(f"\n🚨🚨🚨 [API DEBUG] 收到请求！strategyType={self.strategyType!r}, pairCount={len(self.pair)} 🚨🚨🚨\n", flush=True)
+
         if not self.enableLong and not self.enableShort:
             raise ValueError("必须启用一个方向（多头或空头）")
         if self.enableLong and self.enableShort:
@@ -47,7 +51,14 @@ class BotBaseInfo(BaseModel):
             raise ValueError("marginMode 必须是 cross 或 isolated")
         if self.tradingMode == "spot" and self.enableShort:
             raise ValueError("现货模式不支持做空")
+
         meta = get_strategy(self.strategyType)
+
+        if self.strategyType == "grid":
+            print(f"✅ [API DEBUG] 命中 grid 分支，跳过单币校验！", flush=True)
+            return self
+
+        print(f"❌ [API DEBUG] 走到单币校验了，single_pair={meta.get('single_pair')}", flush=True)
         if meta.get("single_pair") and len(self.pair) != 1:
             raise ValueError(f"{meta['label']} 只支持单个交易对")
         return self
@@ -80,6 +91,35 @@ class BotPayload(BaseModel):
     shortConfig: Optional[dict] = None
     gridConfig: Optional[dict] = None
 
+    @model_validator(mode="after")
+    def _check_grid_pair_mode(self):
+        if self.base.strategyType != "grid":
+            return self
+
+        grid = (self.gridConfig or {}).get("grid") or {}
+
+        # 判定是否为多因子模式（满足任一即可）
+        is_scanner = (
+            self.base.pairSelectionMode == "scanner"
+            or bool(grid.get("smart_range_mode"))
+            or len(self.base.pair) > 1   # ★ 兜底：多币必定是多因子
+        )
+
+        if not is_scanner and len(self.base.pair) != 1:
+            raise ValueError("手动网格模式只支持单个交易对")
+
+        # ★ 多因子模式下：maxOpenTrades 必须 >= 1 且 <= pair 数量
+        if is_scanner:
+            if len(self.base.pair) < 1:
+                raise ValueError("多因子网格至少需要 1 个交易对")
+            if self.base.maxOpenTrades < 1:
+                raise ValueError("多因子网格 maxOpenTrades 必须 >= 1")
+            if self.base.maxOpenTrades > len(self.base.pair):
+                # 自动修正而不是报错，避免前端改值麻烦
+                self.base.maxOpenTrades = len(self.base.pair)
+
+        return self
+
 
 # =========================================================
 # ★ 给单个 bot 补上收益字段（累计 / 多头 / 空头）
@@ -111,18 +151,24 @@ def _attach_profit_batch(bots: list[dict]) -> list[dict]:
 # ★ 新增：网格资金校验工具函数
 # =========================================================
 def _validate_grid_capital(data: dict):
-    """校验网格策略的资金是否满足最低要求，防止无法平仓尾仓"""
     base = data.get("base", {})
     if base.get("strategyType") != "grid":
-        return  # 只有网格策略才校验
+        return
 
     grid_config = data.get("gridConfig") or {}
     grid = grid_config.get("grid", {})
 
-    capital = float(base.get("capital", 0))
+    total_capital = float(base.get("capital", 0))
     leverage = float(base.get("leverage", 1))
     count = int(grid.get("grid_count", 20))
-    # 以交易所实时规则为准，配置值只作为接口不可用时的回退。
+    max_open = int(base.get("maxOpenTrades", 1))
+
+    # 识别是否是多因子模式
+    is_scanner = bool(grid.get("smart_range_mode"))
+
+    # ★ 计算实际用于单币的资金
+    actual_capital = total_capital / max_open if is_scanner else total_capital
+
     min_notional = float(grid.get("min_notional_value", 10))
     pair = (base.get("pair") or [None])[0]
     if pair:
@@ -133,16 +179,15 @@ def _validate_grid_capital(data: dict):
     if count <= 0:
         raise HTTPException(400, "网格数量必须大于 0")
 
-    # 每格最低保证金 = 最小名义价值 / 杠杆
-    min_per_grid_capital = min_notional / leverage
-    # 最低总资金 = 每格最低保证金 * 网格数量
-    min_total_capital = min_per_grid_capital * count
+    # 单币最低总资金 = (最小名义价值 / 杠杆) * 网格数量
+    min_total_capital = (min_notional / leverage) * count
 
-    if capital < min_total_capital:
+    if actual_capital < min_total_capital:
+        mode_str = f"多因子并发 {max_open} 个币，分摊后单币" if is_scanner else "当前"
         raise HTTPException(
             400,
-            f"资金不足：当前杠杆 {leverage}x 下，{count} 格网格最低需要 "
-            f"{min_total_capital:.2f} USDT，否则极易产生无法平仓的尾仓！"
+            f"资金不足：{mode_str}可用资金 {actual_capital:.2f} USDT，"
+            f"而当前杠杆 {leverage}x 下 {count} 格网格最低需要 {min_total_capital:.2f} USDT。"
         )
 
 
@@ -302,7 +347,7 @@ async def bot_status(bot_id: int):
 async def grid_runtime(bot_id: int, side: str = Query("long")):
     bot = BotManager.get(bot_id)
     if not bot:
-        raise HTTPException(404, "bot not found")
+        return {"active": False, "side": side, "error": "bot not found"}
     normalized = "short" if str(side).lower() == "short" else "long"
 
     # 尝试从数据库读取真实的运行状态
@@ -324,3 +369,116 @@ async def grid_runtime(bot_id: int, side: str = Query("long")):
         return {"active": False, "side": normalized}
 
     return {"active": True, **state}
+
+
+# =========================================================
+# 动态白名单相关 API
+# =========================================================
+class DynamicWhitelistRequest(BaseModel):
+    bot_id: int
+    side: str = "long"
+    direction: str = "LONG"  # LONG 或 SHORT
+    exclude_pairs: list[str] = []
+    closed_pair: str = ""  # ★ 本次平仓触发替换的交易对
+
+
+@router.post("/{bot_id}/dynamic-whitelist-scan")
+async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
+    """
+    动态白名单扫描：平仓后触发，选择最优币并更新白名单，
+    同时返回新币的区间，供策略端立即同步 _prefetched_bounds。
+    """
+    import asyncio
+    from app.services.grid_scanner import GridScanner
+    from app.services.config_service import ConfigService
+    from app.services.bot_manager import BotManager
+
+    print(f"[API] 收到动态白名单扫描请求: bot_id={bot_id}, payload={payload}")
+
+    bot = BotManager.get(bot_id)
+    if not bot:
+        raise HTTPException(404, "bot not found")
+    if bot.get("strategyType") != "grid":
+        raise HTTPException(400, "动态白名单仅支持网格策略")
+
+    grid_config = (bot.get("gridConfig") or {}).get("grid") or {}
+    if not grid_config.get("dynamic_whitelist", False):
+        raise HTTPException(400, "该机器人未启用动态白名单模式")
+
+    try:
+        # 1) 多因子扫描
+        scanner = GridScanner()
+        best_pair_info = await asyncio.to_thread(
+            scanner.select_best_pair,
+            payload.direction,
+            payload.exclude_pairs,
+        )
+
+        if not best_pair_info:
+            return {"success": False, "error": "未找到符合条件的交易对"}
+
+        new_pair = best_pair_info["name"]   # ★ 只取字符串 name，不要传整个 dict
+        print(f"[API] 扫描到最优币: {new_pair}")
+
+        # 2) 计算新币区间
+        #    days 由 grid_config.smart_range_mode 决定（与策略端保持一致）
+        days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
+        days = days_map.get(
+            str(grid_config.get("smart_range_mode", "moderate")).lower(), 30
+        )
+        new_pair_range = await asyncio.to_thread(
+            scanner.get_range, new_pair, days
+        )
+        print(f"[API] 新币 {new_pair} 区间: {new_pair_range}")
+
+        # 3) 更新白名单
+        current_pairs = bot.get("pair") or []
+        max_open = bot.get("maxOpenTrades", 1)
+
+        # ★ 核心修复：exclude_pairs 是"仍持仓的币"（用于扫描排除），不能用于过滤白名单！
+        # 正确逻辑：移除本次平仓触发替换的币，保留其余（含仍持仓的币），加入新币
+        new_whitelist = [p for p in current_pairs if p != payload.closed_pair]
+        if new_pair not in new_whitelist:
+            new_whitelist.append(new_pair)
+
+        # 超出上限时优先保留：新币 > 仍有持仓的币 > 其余币
+        if len(new_whitelist) > max_open:
+            protected = {new_pair} | set(payload.exclude_pairs or [])
+            head = [p for p in new_whitelist if p in protected]
+            tail = [p for p in new_whitelist if p not in protected]
+            new_whitelist = (head + tail)[:max_open]
+
+        side = "short" if payload.direction == "SHORT" else "long"
+        if side == "long" and not bot.get("enableLong"):
+            return {"success": False, "error": "多头未启用"}
+        if side == "short" and not bot.get("enableShort"):
+            return {"success": False, "error": "空头未启用"}
+
+        success = ConfigService.update_whitelist(bot_id, side, new_whitelist)
+        if not success:
+            return {"success": False, "error": "白名单更新失败"}
+
+        # 4) 把新币区间同步写入 prefetch kv（可选，双保险）
+        try:
+            from core.config_manager import ConfigManager
+            import time as _time
+            kv_key = f"grid_prefetch_range_{bot_id}_{side}"
+            kv_data = ConfigManager.get_bot_kv(kv_key) or {"days": days, "pairs": {}}
+            kv_data.setdefault("pairs", {})[new_pair] = new_pair_range
+            kv_data["generated_at"] = _time.time()
+            ConfigManager.set_bot_kv(kv_key, kv_data)
+        except Exception as e:
+            print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
+
+        return {
+            "success": True,
+            "new_pair": new_pair,                        # ★ 字符串
+            "new_pair_range": new_pair_range,            # ★ 策略端必需的字段
+            "new_whitelist": new_whitelist,
+            "message": f"已更新白名单，新币 {new_pair} 将自动开首仓",
+        }
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"动态白名单扫描失败: {str(e)}")
