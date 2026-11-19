@@ -76,7 +76,17 @@
                 <div class="field-row">
                   <div class="field-label">交易对</div>
                   <div class="field-value">
+                    <!-- 模式切换 -->
+                    <div style="margin-bottom: 8px;">
+                      <el-radio-group v-model="pairSelectMode" size="small">
+                        <el-radio-button value="manual">手动选择</el-radio-button>
+                        <el-radio-button value="scanner" :disabled="strategyType !== 'grid'">多因子筛选</el-radio-button>
+                      </el-radio-group>
+                    </div>
+
+                    <!-- 手动模式 -->
                     <el-select
+                      v-if="pairSelectMode === 'manual'"
                       v-model="botBaseInfo.pair"
                       multiple
                       filterable
@@ -87,13 +97,27 @@
                       style="width: 100%"
                       :loading="pairLoading"
                     >
-                      <el-option
-                        v-for="p in pairOptions"
-                        :key="p.name"
-                        :label="p.name"
-                        :value="p.name"
-                      />
+                      <el-option v-for="p in pairOptions" :key="p.name" :label="p.name" :value="p.name" />
                     </el-select>
+
+                    <!-- 多因子模式 -->
+                    <div v-if="pairSelectMode === 'scanner'" class="scanner-preview-box">
+                      <!-- ★ 去掉“尚未扫描”的文字提示，只保留标签列表 -->
+                      <div v-if="botBaseInfo.pair.length > 0" class="scanner-tags">
+                        <el-tag
+                          v-for="p in botBaseInfo.pair"
+                          :key="p.name"
+                          :type="p.direction === 'LONG' ? 'success' : 'danger'"
+                          closable
+                          @close="removePair(p.name)"
+                        >
+                          {{ p.name }} ({{ p.direction === 'LONG' ? '多' : '空' }})
+                        </el-tag>
+                      </div>
+                      <el-button type="primary" plain @click="scannerVisible = true">
+                        <el-icon><Aim /></el-icon> 打开多因子扫描
+                      </el-button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -176,8 +200,17 @@
                           :style="{ color: botBaseInfo.capital < minGridCapital ? 'var(--el-color-danger)' : 'var(--el-text-color-placeholder)' }"
                           style="margin-top: 4px;"
                         >
-                          当前配置建议最低资金：<b>{{ minGridCapital.toFixed(2) }} USDT</b>
-                          <span v-if="botBaseInfo.capital < minGridCapital">（资金过低，极易产生无法平仓的尾仓！）</span>
+                          <template v-if="pairSelectMode === 'scanner'">
+                            当前配置建议最低总资金：<b>{{ minGridCapital.toFixed(2) }} USDT</b>
+                            <span class="text-secondary">(并发 {{ botBaseInfo.maxOpenTrades }} 个币，单币约 {{ (minGridCapital / botBaseInfo.maxOpenTrades).toFixed(2) }} U)</span>
+                          </template>
+                          <template v-else>
+                            当前配置建议最低资金：<b>{{ minGridCapital.toFixed(2) }} USDT</b>
+                          </template>
+
+                          <span v-if="botBaseInfo.capital < minGridCapital">
+                            （资金过低，极易产生无法平仓的尾仓！）
+                          </span>
                         </span>
                       </div>
 
@@ -186,6 +219,9 @@
                         <template v-if="strategyType === 'grid'">
                           <span class="inline-field__label">每格金额 (USDT)</span>
                           <el-input :model-value="gridPerGridText" readonly style="width: 100%" />
+                          <span class="inline-field__hint" v-if="pairSelectMode === 'scanner'">
+                            (当前按 {{ botBaseInfo.maxOpenTrades }} 个交易对均摊)
+                          </span>
                         </template>
                         <template v-else>
                           <span class="inline-field__label">单笔保证金 (USDT)</span>
@@ -229,14 +265,15 @@
                       <div class="inline-field">
                         <span class="inline-field__label">最大持仓数</span>
                         <el-input-number
-                          v-model="botBaseInfo.maxOpenTrades"
-                          :min="1" :max="100" :step="1"
-                          :disabled="strategyType === 'grid'"
-                          controls-position="right"
-                          style="width: 100%"
-                        />
+                            v-model="botBaseInfo.maxOpenTrades"
+                            :min="1"
+                            :max="pairSelectMode === 'scanner' ? Math.max(1, botBaseInfo.pair.length) : 1"
+                            :step="1"
+                            :disabled="strategyType === 'grid' && pairSelectMode !== 'scanner'"
+                            controls-position="right"
+                            style="width: 100%"
+                          />
                       </div>
-
                     </div>
                   </div>
                 </div>
@@ -504,11 +541,12 @@
           <component
             :is="strategyDef.panel"
             :config="strategyConfig"
-            :capital="botBaseInfo.capital"
-            :pair="botBaseInfo.pair?.[0]"
+            :capital="pairSelectMode === 'scanner' ? (botBaseInfo.capital / Math.max(1, botBaseInfo.maxOpenTrades)) : botBaseInfo.capital"
+            :pair="botBaseInfo.pair?.[0]?.name || botBaseInfo.pair?.[0] || ''"
             :direction="botBaseInfo.direction"
             :bot-id="botId"
             :leverage="botBaseInfo.leverage"
+            :is-scanner="pairSelectMode === 'scanner'"
             @save="handleSaveStrategy"
             @timeframe-change="onTimeframeChange"
             @min-capital-change="onMinCapitalChange"
@@ -868,6 +906,8 @@
         {{ submitButtonText }}
       </el-button>
     </div>
+
+    <GridScannerDialog v-model="scannerVisible" @confirm="handleScannerConfirm" />
   </div>
 </template>
 
@@ -891,6 +931,8 @@ import {
   cancelDownload,
   downloadData
 } from '@/api/backtest.js'
+import GridScannerDialog from './GridScannerDialog.vue'
+import { Aim } from '@element-plus/icons-vue'
 import { useBotStore } from '@/stores/botStore.js'
 import { useModeStore } from '@/stores/modeStore'
 import axios from 'axios'
@@ -924,6 +966,11 @@ const exchangeLabel = (v) => ({
   huobi: 'HTX',
 }[v] || v)
 
+const pairSelectMode = ref('manual')
+const scannerVisible = ref(false)
+const cachedScannerPairs = ref([])
+const manualPairs = ref([])
+
 const DRY_RUN_VALUE = '__dry_run__'
 
 const goExchangeSettings = () => {
@@ -949,7 +996,10 @@ const botId = computed(() => route.params.id)
 // ★ 新增：判断当前是什么策略类型
 const strategyType = computed(() => route.query.strategyType || 'dca')
 const strategyDef = computed(() => getStrategyDef(strategyType.value))
-const isSinglePair = computed(() => !!strategyDef.value.singlePair)
+// 网格策略只有手动模式限制单币，多因子模式允许多个筛选结果。
+const isSinglePair = computed(() =>
+  !!strategyDef.value.singlePair && pairSelectMode.value === 'manual'
+)
 
 const copyFromId = computed(() => route.query.copyFrom)
 const isCopy = computed(() => !!copyFromId.value)
@@ -971,7 +1021,15 @@ const gridPerGridText = computed(() => {
   const grid = strategyConfig.grid || {}
   const gridCount = Math.max(1, Number(grid.grid_count || 20))
   const capital = Number(botBaseInfo.value.capital || 0)
-  const v = capital / gridCount
+
+  // ★ 核心修改：如果是多因子模式，总资金要按最大持仓数（币种数）均摊
+  const pairCount = pairSelectMode.value === 'scanner'
+      ? Math.max(1, Number(botBaseInfo.value.maxOpenTrades || 1))
+      : 1
+
+  const capitalPerPair = capital / pairCount
+  const v = capitalPerPair / gridCount
+
   if (!Number.isFinite(v) || v <= 0) return '—'
   return `${v.toFixed(2)} USDT`
 })
@@ -991,10 +1049,19 @@ const onMinCapitalChange = (val) => {
   dynamicMinGridCapital.value = Number(val) || 0
 }
 
-// ★ 修改：计算网格最低启动资金（固定基准，不随输入资金变化）
+// 计算网格最低启动资金（UI展示与总控校验专用）
 const minGridCapital = computed(() => {
   if (strategyType.value !== 'grid') return 0
-  return dynamicMinGridCapital.value
+
+  const singlePairMin = Number(dynamicMinGridCapital.value) || 0
+
+  // ★ 核心修改：如果是多因子模式，总需求 = 单币要求 * 并发数量
+  if (pairSelectMode.value === 'scanner') {
+    const maxTrades = Math.max(1, Number(botBaseInfo.value.maxOpenTrades || 1))
+    return singlePairMin * maxTrades
+  }
+
+  return singlePairMin
 })
 
 // 3. 修改 loadBotDetail 方法，获取持仓状态
@@ -1076,21 +1143,44 @@ const loadBotDetail = async () => {
       )
       : (data.exchangeAccountId || modeAccounts[0]?.id || null)
 
+    const persistedGridConfig = parseCfg(data.gridConfig)
+    const persistedScannerMode = strategyType.value === 'grid'
+      && !!persistedGridConfig?.grid?.smart_range_mode
+
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
-      pair: Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []),
+      pair: (Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : [])).map(p => ({
+        name: typeof p === 'string' ? p : p.name,
+        direction: dir === 'short' ? 'SHORT' : 'LONG'
+      })),
       capital: (!isDryRunFromData && (data.status === 'draft' || isCopy.value))
         ? null
         : (data.capital ?? BOT_DEFAULTS.capital),
       stakeAmount: data.stakeAmount ?? BOT_DEFAULTS.stakeAmount,
       leverage: normalizeLeverage(data.leverage, data.tradingMode),
-      // ★ 如果是网格策略，强制 maxOpenTrades 为 1
-      maxOpenTrades: strategyType.value === 'grid' ? 1 : (data.maxOpenTrades ?? BOT_DEFAULTS.maxOpenTrades),
+      // 手动网格固定单币；多因子网格保留已选交易对的并发数。
+      maxOpenTrades: strategyType.value === 'grid' && !persistedScannerMode
+        ? 1
+        : (data.maxOpenTrades ?? BOT_DEFAULTS.maxOpenTrades),
       direction: dir,
       exchangeAccountId: accountId,
       tradingMode: normalizeTradingMode(data.tradingMode ?? BOT_DEFAULTS.tradingMode),
       marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
       hedgeMode: data.hedgeMode ?? (data.enableLong && data.enableShort),
+    }
+
+    // ★ 自动识别是否是多因子模式
+    const rawPairs = Array.isArray(data.pair) ? data.pair : (data.pair ? [data.pair] : []);
+    if (
+      (rawPairs.length > 0 && typeof rawPairs[0] === 'object' && rawPairs[0].direction)
+      || persistedScannerMode
+    ) {
+      pairSelectMode.value = 'scanner'
+      cachedScannerPairs.value = JSON.parse(JSON.stringify(botBaseInfo.value.pair))
+    } else {
+      pairSelectMode.value = 'manual'
+      // ★ 如果是手动模式，赋值给 manualPairs
+      manualPairs.value = Array.isArray(data.pair) ? data.pair.map(p => typeof p === 'string' ? p : p.name) : []
     }
 
     botRisk.value = Object.fromEntries(
@@ -1650,23 +1740,61 @@ const buildPayload = () => {
   const acct = getExchangeAccount(botBaseInfo.value.exchangeAccountId)
   const dryRun = isDryRun.value
 
-  // ★ 计算 stakeAmount
-  let stakeAmount = botBaseInfo.value.stakeAmount
+  // ★ 核心修复：先补齐多因子标识，再构造基础配置
+  const isGridScanner = pairSelectMode.value === 'scanner' && strategyType.value === 'grid'
+
+  if (isGridScanner) {
+    if (strategyConfig.grid) {
+      // 多因子模式下清空绝对上下限（后端会动态计算）
+      strategyConfig.grid.lower_price = 0
+      strategyConfig.grid.upper_price = 0
+      // ★ 必须确保 smart_range_mode 存在，否则后端判定不是 scanner
+      if (!strategyConfig.grid.smart_range_mode) {
+        strategyConfig.grid.smart_range_mode = 'moderate'
+      }
+    }
+  } else if (strategyConfig.grid) {
+    // ★ 手动网格模式下，清掉 smart_range_mode，避免误判
+    delete strategyConfig.grid.smart_range_mode
+  }
+
+  // ★ 计算 stakeAmount（带兜底）
+  let stakeAmount = Number(botBaseInfo.value.stakeAmount) || 0
   if (strategyType.value === 'grid') {
     const grid = strategyConfig.grid || {}
-    const gridCount = Math.max(1, Number(grid.grid_count || 20))
-    const capital = Number(botBaseInfo.value.capital || 0)
-    // ★ 每格金额 = 投入资金 / 网格数量
-    stakeAmount = capital / gridCount
+    const gridCount = Math.max(1, Number(grid.grid_count) || 20)
+    const capital = Number(botBaseInfo.value.capital) || 0
+    // ★ 多因子模式下，每格金额 = 总资金 / (并发数 * 网格数)
+    const pairCount = isGridScanner
+      ? Math.max(1, Number(botBaseInfo.value.maxOpenTrades) || 1)
+      : 1
+    const capitalPerPair = capital / pairCount
+    const computed = capitalPerPair / gridCount
+    stakeAmount = Number.isFinite(computed) && computed > 0
+      ? computed
+      : (Number.isFinite(stakeAmount) && stakeAmount > 0 ? stakeAmount : 1)
+  } else if (!Number.isFinite(stakeAmount) || stakeAmount <= 0) {
+    stakeAmount = 1
   }
+
+  // ★ maxOpenTrades 兜底
+  const pairLen = Array.isArray(botBaseInfo.value.pair) ? botBaseInfo.value.pair.length : 0
+  let maxOpenTrades = Math.max(1, Number(botBaseInfo.value.maxOpenTrades) || 1)
+  if (isGridScanner && pairLen > 0 && maxOpenTrades > pairLen) {
+    maxOpenTrades = pairLen  // 并发数不能超过币种数
+  }
+
+  // ★ 资金兜底
+  const capitalNum = Number(botBaseInfo.value.capital)
+  const capital = Number.isFinite(capitalNum) && capitalNum > 0 ? capitalNum : 0
 
   const common = {
     name: botBaseInfo.value.name,
-    pair: botBaseInfo.value.pair,
-    capital: botBaseInfo.value.capital,
-    stakeAmount: stakeAmount,        // ★ 用算好的
+    pair: (botBaseInfo.value.pair || []).map(p => typeof p === 'string' ? p : p.name),
+    capital,
+    stakeAmount,
     leverage: normalizeLeverage(botBaseInfo.value.leverage, botBaseInfo.value.tradingMode),
-    maxOpenTrades: botBaseInfo.value.maxOpenTrades,
+    maxOpenTrades,
     dryRun,
     enableLong: dir === 'long' || dir === 'both',
     enableShort: dir === 'short' || dir === 'both',
@@ -1681,6 +1809,8 @@ const buildPayload = () => {
     tradingMode: botBaseInfo.value.tradingMode,
     marginMode: botBaseInfo.value.marginMode,
     strategyType: strategyType.value,
+    // ★ 关键：多因子模式必须传 scanner
+    pairSelectionMode: isGridScanner ? 'scanner' : 'manual',
   }
 
   return {
@@ -1773,16 +1903,50 @@ const validate = () => {
       ElMessage.warning('网格最低资金尚未计算完成，请稍等片刻再保存')
       return false
     }
-    // ★ 真正拦截资金不足
+
+    // 此时 minGridCapital 已经是【总需求】（单币 * 并发数）了
     if (botBaseInfo.value.capital < minGridCapital.value) {
       ElMessage.warning(
-        `资金过低！当前交易对 + 杠杆下，最低需要 ${minGridCapital.value.toFixed(2)} USDT，` +
-        `否则极易产生无法平仓的尾仓。`
+        `资金过低！当前配置并发 ${pairSelectMode.value === 'scanner' ? botBaseInfo.value.maxOpenTrades : 1} 个网格，` +
+        `最低需要 ${minGridCapital.value.toFixed(2)} USDT，否则极易产生无法平仓的尾仓。`
       )
       return false
     }
   }
+  // ★ 实盘必须选择有效交易所账户
+  if (!isDryRun.value) {
+    if (!botBaseInfo.value.exchangeAccountId) {
+      ElMessage.warning('请选择交易所账户')
+      return false
+    }
+    if (!getExchangeAccount(botBaseInfo.value.exchangeAccountId)) {
+      ElMessage.warning('所选交易所账户不存在或已被删除，请重新选择')
+      return false
+    }
+  }
 
+  // ★ capital 必须是有限正数
+  const capNum = Number(botBaseInfo.value.capital)
+  if (!Number.isFinite(capNum) || capNum <= 0) {
+    ElMessage.warning('机器人可用资金必须是大于 0 的数字')
+    return false
+  }
+
+  // ★ stakeAmount（非网格）必须是有限正数
+  if (strategyType.value !== 'grid') {
+    const stakeNum = Number(botBaseInfo.value.stakeAmount)
+    if (!Number.isFinite(stakeNum) || stakeNum <= 0) {
+      ElMessage.warning('单笔保证金必须是大于 0 的数字')
+      return false
+    }
+  }
+
+  // ★ maxOpenTrades 必须是 >=1 的整数
+  const mot = Number(botBaseInfo.value.maxOpenTrades)
+  if (!Number.isInteger(mot) || mot < 1) {
+    ElMessage.warning('最大持仓数必须是大于等于 1 的整数')
+    return false
+  }
   return true
 }
 
@@ -1830,7 +1994,21 @@ const saveAndRestart = async () => {
     return true
   } catch (e) {
     console.error(e)
-    ElMessage.error(e?.response?.data?.detail || e?.message || '保存失败')
+    const detail = e?.response?.data?.detail
+    let msg = '保存失败'
+    if (Array.isArray(detail)) {
+      msg = detail
+        .map(d => {
+          const loc = Array.isArray(d.loc) ? d.loc.filter(x => x !== 'body').join('.') : ''
+          return loc ? `${loc}: ${d.msg}` : d.msg
+        })
+        .join('；')
+    } else if (typeof detail === 'string') {
+      msg = detail
+    } else if (e?.message) {
+      msg = e.message
+    }
+    ElMessage.error({ message: msg, duration: 8000, showClose: true })
     return false
   } finally {
     saving.value = false
@@ -1929,7 +2107,19 @@ const syncConfig = async () => {
 
     await axios.put(`${API}/bots/${botId.value}`, payload)
   } catch (e) {
-    console.error('[syncConfig] failed', e)
+    const detail = e?.response?.data?.detail
+    let msg = '同步配置失败'
+    if (Array.isArray(detail)) {
+      msg = detail
+        .map(d => {
+          const loc = Array.isArray(d.loc) ? d.loc.filter(x => x !== 'body').join('.') : ''
+          return loc ? `${loc}: ${d.msg}` : d.msg
+        })
+        .join('；')
+    } else if (typeof detail === 'string') {
+      msg = detail
+    }
+    console.error('[syncConfig] failed:', msg, 'payload=', buildPayload())
   } finally {
     syncing.value = false
   }
@@ -2055,6 +2245,64 @@ watch(
   }
 )
 
+watch(pairSelectMode, (mode, oldMode) => {
+  if (mode === 'manual') {
+    if (Array.isArray(botBaseInfo.value.pair) && botBaseInfo.value.pair.length > 0 && typeof botBaseInfo.value.pair[0] === 'object') {
+      cachedScannerPairs.value = JSON.parse(JSON.stringify(botBaseInfo.value.pair))
+    }
+    botBaseInfo.value.pair = JSON.parse(JSON.stringify(manualPairs.value))
+    botBaseInfo.value.maxOpenTrades = 1
+  } else if (mode === 'scanner' && oldMode === 'manual') {
+    if (Array.isArray(botBaseInfo.value.pair)) {
+      manualPairs.value = [...botBaseInfo.value.pair]
+    }
+    if (cachedScannerPairs.value.length > 0) {
+      botBaseInfo.value.pair = JSON.parse(JSON.stringify(cachedScannerPairs.value))
+      // ★ 不再强制 = pair.length，保留用户之前设的值；仅在非法时才设默认
+      const mot = Number(botBaseInfo.value.maxOpenTrades)
+      if (!Number.isInteger(mot) || mot < 1) {
+        botBaseInfo.value.maxOpenTrades = botBaseInfo.value.pair.length
+      }
+      const longs = botBaseInfo.value.pair.filter(p => p.direction === 'LONG').length
+      const shorts = botBaseInfo.value.pair.filter(p => p.direction === 'SHORT').length
+      if (longs > 0 && shorts > 0) botBaseInfo.value.direction = 'both'
+      else if (shorts > 0) botBaseInfo.value.direction = 'short'
+      else botBaseInfo.value.direction = 'long'
+    } else {
+      botBaseInfo.value.pair = []
+    }
+  }
+})
+
+const handleScannerConfirm = (selected) => {
+  const newPairs = selected.map(s => ({ name: s.symbol, direction: s.direction }))
+  if (pairSelectMode.value !== 'scanner') {
+    if (Array.isArray(botBaseInfo.value.pair)) {
+      manualPairs.value = [...botBaseInfo.value.pair]
+    }
+    pairSelectMode.value = 'scanner'
+  }
+  botBaseInfo.value.pair = newPairs
+  cachedScannerPairs.value = JSON.parse(JSON.stringify(newPairs))
+
+  // ★ 只有当前 maxOpenTrades 非法时才设为 pair.length；否则保留用户设置
+  const mot = Number(botBaseInfo.value.maxOpenTrades)
+  if (!Number.isInteger(mot) || mot < 1 || mot > newPairs.length) {
+    botBaseInfo.value.maxOpenTrades = Math.max(1, newPairs.length)
+  }
+
+  const longs = newPairs.filter(s => s.direction === 'LONG').length
+  const shorts = newPairs.filter(s => s.direction === 'SHORT').length
+  if (longs > 0 && shorts > 0) botBaseInfo.value.direction = 'both'
+  else if (shorts > 0) botBaseInfo.value.direction = 'short'
+  else botBaseInfo.value.direction = 'long'
+
+  scannerVisible.value = false
+}
+
+const removePair = (name) => {
+  botBaseInfo.value.pair = botBaseInfo.value.pair.filter(p => p.name !== name)
+}
 /* ══════════════════════════════════════════════════════════════════
  * 15. 回测
  * ══════════════════════════════════════════════════════════════════ */

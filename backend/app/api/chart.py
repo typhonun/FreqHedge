@@ -68,6 +68,9 @@ def get_candles(
         end_time: int | None = None,
         limit: int = 1500
 ):
+    if not pair or not pair.strip():
+        return []
+
     since = None
     if end_time:
         end_time_sec = end_time // 1000
@@ -75,7 +78,6 @@ def get_candles(
             "1m": 60, "5m": 300, "15m": 900, "30m": 1800,
             "1h": 3600, "4h": 14400, "1d": 86400
         }.get(timeframe, 60)
-        # 往前多拉 10 根作为重叠
         since = int(end_time_sec - (limit + 10) * tf_sec) * 1000
     else:
         key = f"{pair}_{timeframe}_{limit}"
@@ -86,21 +88,22 @@ def get_candles(
                 return data
 
     fetch_kwargs = {"timeframe": timeframe, "limit": limit}
-    if since and since > 0: # ★ 防止 since 算出来是 0 或者负数
+    if since and since > 0:
         fetch_kwargs["since"] = since
 
-    ohlcv = exchange.fetch_ohlcv(pair, **fetch_kwargs)
-
-    data = [
-        {"time": c[0], "open": c[1], "high": c[2], "low": c[3],
-         "close": c[4], "volume": c[5]}
-        for c in ohlcv
-    ]
-
-    if not end_time:
-        kline_cache[key] = (time.time(), data)
-
-    return data
+    try:
+        ohlcv = exchange.fetch_ohlcv(pair, **fetch_kwargs)
+        data = [
+            {"time": c[0], "open": c[1], "high": c[2], "low": c[3],
+             "close": c[4], "volume": c[5]}
+            for c in ohlcv
+        ]
+        if not end_time:
+            kline_cache[key] = (time.time(), data)
+        return data
+    except Exception as e:
+        print(f"[chart] fetch candles failed for {pair}: {e}")
+        return []
 
 
 @router.get("/latest")
@@ -118,11 +121,18 @@ def latest_candle(pair: str, timeframe: str = "30m"):
 
 @router.get("/price")
 def latest_price(pair: str):
-    ticker = exchange.fetch_ticker(pair)
-    price = ticker.get("last") or ticker.get("close")
-    if price is None or float(price) <= 0:
-        raise ValueError(f"Unable to get latest price for {pair}")
-    return {"pair": pair, "price": float(price)}
+    if not pair or not pair.strip():
+        return {"pair": pair, "price": 0.0}
+
+    try:
+        ticker = exchange.fetch_ticker(pair)
+        price = ticker.get("last") or ticker.get("close")
+        if price is None or float(price) <= 0:
+            raise ValueError(f"Invalid price for {pair}")
+        return {"pair": pair, "price": float(price)}
+    except Exception as e:
+        print(f"[chart] latest_price failed for {pair}: {e}")
+        return {"pair": pair, "price": 0.0}
 
 
 @router.get("/bot-positions/{bot_id}")

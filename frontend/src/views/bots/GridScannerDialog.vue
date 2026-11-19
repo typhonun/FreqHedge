@@ -1,6 +1,5 @@
-<!-- frontend/src/components/GridScannerDialog.vue -->
 <template>
-  <el-dialog v-model="visible" title="AI 多因子选币雷达" width="800px" @close="onClose">
+  <el-dialog v-model="visible" title="多因子选币" width="800px" @close="onClose">
     <div class="controls">
       <div class="control-group">
         <span>目标做多数量：</span>
@@ -24,18 +23,31 @@
     >
       <el-table-column type="selection" width="45" />
       <el-table-column prop="symbol" label="币种" min-width="130" />
-      <el-table-column label="建议方向" width="90">
+
+      <!-- ★ 新增：分数列 -->
+      <el-table-column prop="score" label="评分" width="80" sortable align="center" />
+
+      <el-table-column label="建议方向" width="90" align="center">
         <template #default="{ row }">
           <el-tag :type="row.direction === 'LONG' ? 'success' : 'danger'" size="small">
             {{ row.direction === 'LONG' ? '做多' : '做空' }}
           </el-tag>
         </template>
       </el-table-column>
+
       <el-table-column prop="atr_pct" label="波动率%" width="90" />
       <el-table-column prop="hurst" label="Hurst" width="80" />
       <el-table-column prop="adx" label="ADX" width="80" />
       <el-table-column prop="z_score" label="Z-Score" width="90" />
       <el-table-column prop="rsi" label="RSI" width="80" />
+
+      <!-- ★ 新增：状态列 -->
+      <el-table-column label="状态" width="90" align="center">
+        <template #default="{ row }">
+          <el-tag v-if="row.is_fallback" type="warning" size="small">补位</el-tag>
+          <el-tag v-else type="success" size="small">极佳</el-tag>
+        </template>
+      </el-table-column>
     </el-table>
 
     <template #footer>

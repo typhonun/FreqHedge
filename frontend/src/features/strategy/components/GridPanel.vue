@@ -3,31 +3,44 @@
     <!-- ★ 优化：取消全局的固定 label-width，让自适应和特定宽度结合 -->
     <el-form size="small" class="compact-form" label-width="auto">
 
-      <!-- ── 1. 价格区间 ── -->
-      <div class="section-block">
-        <div class="section-header">
-          <div class="section-title">价格区间</div>
-          <div class="smart-range-inline">
-            <span class="smart-label">智能填入：</span>
-            <el-button-group>
-              <el-button size="small" :loading="loadingSuggest === 7" @click="applySuggest(7)">激进(7天)</el-button>
-              <el-button size="small" :loading="loadingSuggest === 30" @click="applySuggest(30)">稳健(30天)</el-button>
-              <el-button size="small" :loading="loadingSuggest === 90" @click="applySuggest(90)">保守(90天)</el-button>
-            </el-button-group>
-            <span v-if="lastSuggestInfo" class="current-price-tip">{{ lastSuggestInfo }}</span>
-          </div>
+    <!-- ── 1. 价格区间 ── -->
+    <div class="section-block">
+      <div class="section-header">
+        <div class="section-title">价格区间</div>
+
+        <!-- 多因子模式下的智能策略切换 -->
+        <div v-if="isScanner" class="smart-range-inline">
+          <span class="smart-label">区间策略：</span>
+          <el-radio-group v-model="config.grid.smart_range_mode" size="small">
+            <el-radio-button value="aggressive">激进 (7天)</el-radio-button>
+            <el-radio-button value="moderate">稳健 (30天)</el-radio-button>
+            <el-radio-button value="conservative">保守 (90天)</el-radio-button>
+          </el-radio-group>
+          <span class="current-price-tip">选中后将按各币种历史极值独立配置</span>
         </div>
 
-        <div class="form-row">
-          <!-- ★ 使用全局自适应宽度，输入框限制最大宽度 -->
-          <el-form-item label="网格下限价" class="form-item-half">
-            <el-input-number v-model="config.grid.lower_price" :min="0" :step="100" controls-position="right" class="num-input" />
-          </el-form-item>
-          <el-form-item label="网格上限价" class="form-item-half">
-            <el-input-number v-model="config.grid.upper_price" :min="0" :step="100" controls-position="right" class="num-input" />
-          </el-form-item>
+        <!-- 单币模式下的智能填入 -->
+        <div v-else class="smart-range-inline">
+          <span class="smart-label">智能填入：</span>
+          <el-button-group>
+            <el-button size="small" :loading="loadingSuggest === 7" @click="applySuggest(7)">激进(7天)</el-button>
+            <el-button size="small" :loading="loadingSuggest === 30" @click="applySuggest(30)">稳健(30天)</el-button>
+            <el-button size="small" :loading="loadingSuggest === 90" @click="applySuggest(90)">保守(90天)</el-button>
+          </el-button-group>
+          <span v-if="lastSuggestInfo" class="current-price-tip">{{ lastSuggestInfo }}</span>
         </div>
       </div>
+
+      <!-- 绝对价格输入框，多因子模式下隐藏 -->
+      <div class="form-row" v-if="!isScanner">
+        <el-form-item label="网格下限价" class="form-item-half">
+          <el-input-number v-model="config.grid.lower_price" :min="0" :step="100" controls-position="right" class="num-input" />
+        </el-form-item>
+        <el-form-item label="网格上限价" class="form-item-half">
+          <el-input-number v-model="config.grid.upper_price" :min="0" :step="100" controls-position="right" class="num-input" />
+        </el-form-item>
+      </div>
+    </div>
 
       <!-- ── 2. 网格参数 ── -->
       <div class="section-block">
@@ -40,7 +53,7 @@
           <el-form-item label="网格数量" class="form-item-half">
             <el-input-number
               v-model="config.grid.grid_count"
-              :min="2" :max="200" :step="1"
+              :min="2" :max="isScanner ? undefined : 200" :step="1"
               controls-position="right" class="num-input"
               @change="onGridCountChange"
             />
@@ -185,6 +198,16 @@
               </el-tooltip>
             </div>
           </el-form-item>
+
+          <!-- 动态白名单开关（仅多因子模式显示） -->
+          <el-form-item v-if="isScanner" label="动态白名单" class="form-item-half" label-width="110px">
+            <div class="input-with-icon">
+              <el-switch v-model="config.grid.dynamic_whitelist" />
+              <el-tooltip placement="top" effect="dark" content="平仓后自动重新扫描，选择最优交易对替换白名单并开首仓">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
         </div>
 
         <div class="form-row">
@@ -220,6 +243,7 @@
 
             <!-- 原有的统计数据 -->
             <span class="grid-preview-stats-inline">
+              单格价值 ≈ {{ (perGrid * leverage).toFixed(2) }} USDT |
               格距 ≈ {{ gridPreview.stepText }} |
               每格利润 ≈ {{ gridPreview.profitText }} |
               总投入 ≈ {{ gridPreview.totalText }} USDT |
@@ -291,6 +315,7 @@ const props = defineProps({
   pair:    { type: String, default: '' },
   direction: { type: String, default: 'long' },
   leverage:  { type: Number, default: 1 },
+  isScanner: { type: Boolean, default: false },
   botId: { type: [Number, String], default: null },
 })
 
@@ -452,8 +477,9 @@ watch(minGridCapital, (val) => {
 
 const initDefaultRange = async () => {
   const g = props.config?.grid || {}
-  if (Number(g.lower_price) > 0 && Number(g.upper_price) > 0) return
-  if (!props.pair) return
+  if (props.isScanner) return;
+  // 如果没有交易对，直接中断，不发请求！
+  if (!props.pair) return;
 
   try {
     const { data } = await axios.get(`${API}/chart/candles`, {
@@ -532,32 +558,42 @@ const applyManualGridPreview = () => {
 }
 
 const refreshRuntimeGrid = async () => {
-  if (!props.botId) {
+  // ★ 修复 1：如果 botId 是无效的（比如 undefined, null, 空字符串, 或是字符串 'undefined'）
+  if (
+    !props.botId ||
+    props.botId === 'undefined' ||
+    props.botId === 'null' ||
+    props.botId === 0 ||
+    String(props.botId).trim() === ''
+  ) {
     runtimeGrid.value = { active: false }
     resetTrailingPreview()
     return
   }
+
   try {
     const side = props.direction === 'short' ? 'short' : 'long'
     const { data } = await axios.get(`${API}/bots/${props.botId}/grid-runtime`, { params: { side } })
 
     if (data?.active) {
-      // 后端有真实数据，覆盖前端
       runtimeGrid.value = data
       previewLower.value = Number(data.lower || 0)
       previewUpper.value = Number(data.upper || 0)
       manualPreviewOverride.value = false
     } else {
       runtimeGrid.value = { active: false }
-
-      // ★ 核心逻辑：如果后端说没数据，且用户没有手动改输入框（manualPreviewOverride === false），
-      // 这说明前端是靠自己的“模拟追踪”在维持网格，此时千万不要 resetTrailingPreview() 把它重置回去！
-      // 只有当用户主动改过输入框后，才需要重置回输入框的值。
       if (manualPreviewOverride.value) {
         resetTrailingPreview()
       }
     }
   } catch (e) {
+    // ★ 修复 3：静默拦截 404，不打印任何 console.warn
+    if (e?.response?.status === 404) {
+      runtimeGrid.value = { active: false }
+      return
+    }
+
+    // 只有其他非 404 错误（比如断网、500）才打印警告
     console.warn('[refreshRuntimeGrid] failed', e)
   }
 }
@@ -739,6 +775,22 @@ const gridPreview = computed(() => {
     bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse()
     topLabel = '🔴 加仓网格'
     bottomLabel = '🟢 减仓网格'
+  }
+  // ★ 多因子模式下没有固定价格，显示提示
+  if (props.isScanner && (Number(c.lower_price) <= 0 || Number(c.upper_price) <= 0)) {
+    return {
+      stepText: '等待实盘启动',
+      profitText: '等待实盘启动',
+      totalText: (perGrid.value * (c.grid_count || 20)).toFixed(2),
+      topLevels: [],
+      bottomLevels: [],
+      topLabel: '🟢 减仓网格 (启动后自动计算)',
+      bottomLabel: '🔴 加仓网格 (启动后自动计算)',
+      refPriceText: '未知',
+      tooNarrow: false,
+      profitUsdt: 0,
+      feeCost: 0,
+    }
   }
 
   return {

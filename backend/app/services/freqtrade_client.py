@@ -121,3 +121,8 @@ class FreqtradeClient:
     @classmethod
     def get_whitelist(cls, url):
         return cls.get(url, "/api/v1/whitelist")
+
+    @classmethod
+    def reload_config(cls, url):
+        """重新加载配置（热更新）"""
+        return cls.post(url, "/api/v1/reload_config")

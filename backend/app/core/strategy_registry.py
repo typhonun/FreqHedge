@@ -41,7 +41,9 @@ STRATEGIES = {
         },
         "inject_mode": "single",
         "timeframe": "5m",
-        "single_pair": True,
+        # 网格手动模式的单币限制由 BotPayload 按选择模式校验；
+        # 多因子模式需要允许多个交易对。
+        "single_pair": False,
     },
     # ★ 未来加第三种：
     # "trailing": {

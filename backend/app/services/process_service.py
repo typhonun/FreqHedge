@@ -176,8 +176,8 @@ class ProcessService:
             result[side] = FreqtradeClient.is_freqtrade_alive(url)
         return result
 
-    @staticmethod
-    def _get_port(bot_id: int, side: str) -> int:
+    @classmethod
+    def _get_port(cls, bot_id: int, side: str) -> int:
         """
         ★ 改为从 DB 读 port 字段
         """
@@ -259,3 +259,9 @@ class ProcessService:
             capture_output=True, text=True
         )
         return bool(result.stdout.strip())
+
+    @staticmethod
+    def get_freqtrade_url(bot_id: int, side: str) -> str:
+        """获取指定 bot 和 side 的 freqtrade API URL"""
+        port = ProcessService._get_port(bot_id, side)
+        return f"http://127.0.0.1:{port}"

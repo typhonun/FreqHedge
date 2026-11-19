@@ -158,12 +158,17 @@ class ConfigService:
         if strategy_type == "grid":
             grid_cfg = (strategy_params or {}).get("grid") or {}
             grid_count = int(grid_cfg.get("grid_count", 20) or 20)
-            amount_per_grid = float(grid_cfg.get("amount_per_grid", 0) or 0)
+            max_open = int(base.get("maxOpenTrades", 1) or 1)  # ★ 新增读取并发数
 
+            # 多因子模式下，按交易对总数或并发数均摊
+            is_scanner = bool(grid_cfg.get("smart_range_mode")) or len(base.get("pair") or []) > 1
+            actual_capital = capital / max_open if is_scanner else capital
+
+            amount_per_grid = float(grid_cfg.get("amount_per_grid", 0) or 0)
             if amount_per_grid > 0:
                 stake_amount = amount_per_grid
             else:
-                stake_amount = capital / max(1, grid_count)
+                stake_amount = actual_capital / max(1, grid_count)
 
             cfg["stake_amount"] = round(stake_amount, 8)
             print(f"[config] grid stake_amount = {cfg['stake_amount']} "
@@ -203,7 +208,14 @@ class ConfigService:
             cfg["timeframe"] = meta["timeframe"]
 
         cfg.setdefault("exchange", {})
-        cfg["exchange"]["pair_whitelist"] = list(base["pair"])
+        # 多因子选择结果在前端可能带有方向等展示字段，配置文件只需要交易对名称。
+        pairs = [
+            item.get("name") if isinstance(item, dict) else item
+            for item in (base.get("pair") or [])
+        ]
+        cfg["exchange"]["pair_whitelist"] = [
+            pair for pair in pairs if isinstance(pair, str) and pair
+        ]
 
         acct = base.get("exchangeAccount") or {}
         if acct.get("exchange"):
@@ -315,3 +327,80 @@ class ConfigService:
     def write_json(path, data):
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
+
+    @staticmethod
+    def update_whitelist(bot_id: int, side: str, new_pairs: list):
+        """
+        动态更新白名单并热更新配置
+        用于动态白名单模式：平仓后自动替换为新的交易对
+        """
+        from app.services.bot_manager import BotManager
+        from app.services.freqtrade_client import FreqtradeClient
+        from app.services.process_service import ProcessService
+
+        # 1. 获取 bot 信息
+        bot = BotManager.get(bot_id)
+        if not bot:
+            raise ValueError(f"Bot {bot_id} not found")
+
+        # 2. 更新数据库中的 pair 列表
+        from app.services.bot_manager import _conn
+        with _conn() as c:
+            c.execute(
+                "UPDATE bots SET pair=?, updatedAt=datetime('now') WHERE id=?",
+                (json.dumps(new_pairs), bot_id)
+            )
+            c.commit()
+
+        # 3. 重新生成配置文件
+        bot_data = {
+            "base": {
+                "name": bot["name"],
+                "pair": new_pairs,
+                "capital": bot["capital"],
+                "stakeAmount": bot.get("stakeAmount", BOT_DEFAULTS["stakeAmount"]),
+                "leverage": bot["leverage"],
+                "maxOpenTrades": bot["maxOpenTrades"],
+                "dryRun": bot["dryRun"],
+                "enableLong": bot["enableLong"],
+                "enableShort": bot["enableShort"],
+                "tradingMode": bot["tradingMode"],
+                "marginMode": bot["marginMode"],
+                "strategyType": bot["strategyType"],
+            },
+            "risk": {
+                "tp_enabled": bot.get("tp_enabled", False),
+                "tp_mode": bot.get("tp_mode", "amount"),
+                "tp_amount": bot.get("tp_amount", 0),
+                "tp_ratio": bot.get("tp_ratio", 0),
+                "sl_enabled": bot.get("sl_enabled", False),
+                "sl_mode": bot.get("sl_mode", "amount"),
+                "sl_amount": bot.get("sl_amount", 0),
+                "sl_ratio": bot.get("sl_ratio", 0),
+                "trail_enabled": bot.get("trail_enabled", False),
+                "trail_mode": bot.get("trail_mode", "ratio"),
+                "trail_activate_amount": bot.get("trail_activate_amount", 0),
+                "trail_activate_ratio": bot.get("trail_activate_ratio", 0),
+                "trail_drawdown_amount": bot.get("trail_drawdown_amount", 0),
+                "trail_drawdown_ratio": bot.get("trail_drawdown_ratio", 0),
+                "auto_stop_on_tp": bot.get("auto_stop_on_tp", True),
+                "auto_stop_on_sl": bot.get("auto_stop_on_sl", True),
+                "auto_stop_on_trail": bot.get("auto_stop_on_trail", True),
+            },
+            "longConfig": bot.get("longConfig"),
+            "shortConfig": bot.get("shortConfig"),
+            "gridConfig": bot.get("gridConfig"),
+        }
+
+        ConfigService.generate_configs(bot_id, bot_data)
+
+        # 4. 热更新 freqtrade 配置
+        try:
+            freqtrade_url = ProcessService.get_freqtrade_url(bot_id, side)
+            if freqtrade_url:
+                FreqtradeClient.reload_config(freqtrade_url)
+                print(f"[config] 热更新白名单成功: bot_id={bot_id}, side={side}, pairs={new_pairs}")
+                return True
+        except Exception as e:
+            print(f"[config] 热更新白名单失败: {e}")
+            return False

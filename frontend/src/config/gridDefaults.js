@@ -17,6 +17,7 @@ export const GRID_DEFAULTS = Object.freeze({
   restart_after_all_tp: false,
   trailing_up: false,
   trailing_down: false,
+  dynamic_whitelist: false,  // ★ 动态白名单开关
 })
 
 export function getDefaultGridConfig() {

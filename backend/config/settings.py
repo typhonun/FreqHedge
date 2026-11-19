@@ -43,6 +43,9 @@ RESET_TOKEN_EXPIRE_MINUTES = 30
 # 前端地址（生成邮件里的链接用）
 FRONTEND_URL = "http://localhost:5173"
 
+# 后端 API 地址（用于策略内部调用）
+API_BASE_URL = "http://localhost:9000"
+
 # ===== SMTP =====
 SMTP_HOST = "smtp.qq.com"
 SMTP_PORT = 465

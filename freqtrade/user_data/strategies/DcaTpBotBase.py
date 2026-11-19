@@ -453,34 +453,27 @@ class DcaTpBotBase(IStrategy):
                 return roi, minutes
         return None, 0
 
-    def leverage(self, pair, **kwargs):
+    def leverage(self, pair, current_time=None, current_rate=None, proposed_leverage=1.0, max_leverage=1.0, **kwargs):
         try:
+            # 优先从子类的 runtime config 或顶层 config 读取
+            cfg = self.get_runtime_config() if hasattr(self, "get_runtime_config") else {}
             ft_cfg = self.config or {}
-            ft_leverage = ft_cfg.get("leverage", None)
-            if ft_leverage is not None:
-                try:
-                    return float(ft_leverage)
-                except (TypeError, ValueError):
-                    pass
 
-            cfg = self.get_runtime_config()
-            top_level = self._cfg(cfg, "leverage", default=None)
-            if top_level is not None:
-                try:
-                    return float(top_level)
-                except (TypeError, ValueError):
-                    pass
+            target = float(
+                cfg.get("leverage") or
+                ft_cfg.get("leverage") or
+                1.0
+            )
 
-            nested = self._cfg(cfg, "strategy", "leverage", default=None)
-            if nested is not None:
-                try:
-                    return float(nested)
-                except (TypeError, ValueError):
-                    pass
+            # 模拟盘或交易所返回最大杠杆<=1时，直接信任前端目标杠杆
+            if ft_cfg.get("dry_run", False) or max_leverage <= 1.0:
+                actual = target
+            else:
+                actual = min(target, max_leverage)
 
-            return 10.0
+            return actual
         except Exception:
-            return 10.0
+            return 1.0
 
     def _available_stake(self):
         try:

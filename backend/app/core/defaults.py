@@ -55,6 +55,7 @@ GRID_DEFAULTS = {
     "trailing_up": False,
     "trailing_down": False,
     "min_notional_value": 10,
+    "dynamic_whitelist": False,  # ★ 动态白名单开关
 }
 
 

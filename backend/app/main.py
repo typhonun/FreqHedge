@@ -18,6 +18,7 @@ from app.api.chart import router as chart_router
 from app.api import exchange
 from app.api import logs
 from app.api import bots, backtest, combo
+from app.api import scanner
 from app.services.health_monitor import (
     start_health_monitor,
     stop_health_monitor,
@@ -100,4 +101,5 @@ app.include_router(risk_router,     prefix="/api/risk", tags=["risk"])
 app.include_router(logs.router,     prefix="/logs", tags=["logs"])
 app.include_router(exchange.router, prefix="/exchange", tags=["exchange"])
 app.include_router(auth.router,     prefix="/auth", tags=["auth"])
+app.include_router(scanner.router,  prefix="/api/scanner", tags=["scanner"])
 app.include_router(combo.router,    prefix="/combo", tags=["combo"])
