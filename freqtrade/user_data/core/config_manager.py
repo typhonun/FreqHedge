@@ -99,7 +99,10 @@ class ConfigManager:
 
     @classmethod
     def get_bot_kv(cls, key, default=None):
-        if key in cls._bot_kv_cache:
+        # grid_prefetch_range_* 由后端异步写入且会随扫描/预取更新，
+        # 不能走进程内永久缓存，否则新值永远读不到
+        skip_cache = isinstance(key, str) and key.startswith("grid_prefetch_range_")
+        if not skip_cache and key in cls._bot_kv_cache:
             return cls._bot_kv_cache[key]
 
         cls._ensure_kv_table()
@@ -118,7 +121,8 @@ class ConfigManager:
             val = json.loads(raw)
         except Exception:
             val = raw
-        cls._bot_kv_cache[key] = val
+        if not skip_cache:
+            cls._bot_kv_cache[key] = val
         return val
 
     @classmethod

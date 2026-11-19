@@ -460,7 +460,7 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
 
         # 4) 把新币区间同步写入 prefetch kv（可选，双保险）
         try:
-            from core.config_manager import ConfigManager
+            from app.core.config_manager import ConfigManager
             import time as _time
             kv_key = f"grid_prefetch_range_{bot_id}_{side}"
             kv_data = ConfigManager.get_bot_kv(kv_key) or {"days": days, "pairs": {}}
