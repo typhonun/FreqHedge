@@ -1166,7 +1166,7 @@ const loadBotDetail = async () => {
       exchangeAccountId: accountId,
       tradingMode: normalizeTradingMode(data.tradingMode ?? BOT_DEFAULTS.tradingMode),
       marginMode: data.marginMode ?? BOT_DEFAULTS.marginMode,
-      hedgeMode: data.hedgeMode ?? (data.enableLong && data.enableShort),
+      hedgeMode: data.hedgeMode ?? true,
     }
 
     // ★ 自动识别是否是多因子模式
@@ -1798,7 +1798,7 @@ const buildPayload = () => {
     dryRun,
     enableLong: dir === 'long' || dir === 'both',
     enableShort: dir === 'short' || dir === 'both',
-    hedgeMode: dir === 'both',
+    hedgeMode: botBaseInfo.value.hedgeMode ?? true,
     exchangeAccountId: botBaseInfo.value.exchangeAccountId || null,
     exchangeAccount: acct ? {
       exchange: acct.exchange,

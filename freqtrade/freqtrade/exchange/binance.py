@@ -128,13 +128,29 @@ class Binance(Exchange):
                 assets_margin = self._api.fapiPrivateGetMultiAssetsMargin()
                 self._log_exchange_response("multi_asset_margin", assets_margin)
                 msg = ""
-                if position_side.get("dualSidePosition") is True and not self._config.get(
-                    "hedge_mode", False
-                ):
-                    msg += (
-                        "\nHedge Mode is not supported by freqtrade. "
-                        "Please change 'Position Mode' on your binance futures account."
-                    )
+                dual_side = position_side.get("dualSidePosition")
+                hedge_mode = bool(self._config.get("hedge_mode", False))
+                if dual_side is not None and bool(dual_side) != hedge_mode:
+                    # Account position mode doesn't match config - try to switch it
+                    # automatically. Binance rejects the change while positions or
+                    # open orders exist, in which case we fail fast with a clear error.
+                    try:
+                        res = self._api.set_position_mode(hedged=hedge_mode)
+                        self._log_exchange_response("set_position_mode", res)
+                        logger.warning(
+                            f"Binance position mode switched to "
+                            f"{'hedge (dual-side)' if hedge_mode else 'one-way'} "
+                            f"to match hedge_mode={hedge_mode}."
+                        )
+                    except ccxt.BaseError as e:
+                        raise OperationalException(
+                            f"Binance position mode is "
+                            f"{'hedge (dual-side)' if dual_side else 'one-way'}, "
+                            f"but config hedge_mode={hedge_mode}. "
+                            f"Automatic switch failed: {e}. "
+                            "Close all positions/open orders or change 'Position Mode' "
+                            "in your Binance futures settings."
+                        ) from e
                 if (
                     assets_margin.get("multiAssetsMargin") is True
                     and self.margin_mode != MarginMode.CROSS

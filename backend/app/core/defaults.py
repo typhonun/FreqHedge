@@ -8,9 +8,11 @@ BOT_DEFAULTS = {
     "dryRun": True,
     "enableLong": True,
     "enableShort": False,
-    # Futures bots with both directions enabled use the exchange hedge mode.
-    # A single-direction bot keeps the legacy one-way behavior by default.
-    "hedgeMode": False,
+    # Exchange accounts running Binance dual-side (hedge) position mode require
+    # every futures bot to trade with positionSide. Default to hedge mode so
+    # generated configs work out of the box; single-direction bots may still
+    # opt out explicitly via hedgeMode=False.
+    "hedgeMode": True,
     "tradingMode": "futures",
     "marginMode": "cross",
     "strategyType": "dca",

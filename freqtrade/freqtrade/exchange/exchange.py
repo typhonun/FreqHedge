@@ -1457,6 +1457,9 @@ class Exchange:
         params = self._get_params(side, ordertype, leverage, reduceOnly, time_in_force)
         if position_side:
             params["positionSide"] = position_side
+            # Binance hedge mode rejects reduceOnly alongside positionSide
+            # (-1106); side + positionSide already define the closing direction.
+            params.pop("reduceOnly", None)
 
         try:
             # Set the precision for amount and price(rate) as accepted by the exchange
@@ -1618,7 +1621,7 @@ class Exchange:
             )
             if position_side:
                 params["positionSide"] = position_side
-            if self.trading_mode == TradingMode.FUTURES:
+            if self.trading_mode == TradingMode.FUTURES and not position_side:
                 params["reduceOnly"] = True
                 if "stoploss_price_type" in order_types and "stop_price_type_field" in self._ft_has:
                     price_type = self._ft_has["stop_price_type_value_mapping"][
@@ -3839,6 +3842,9 @@ class Exchange:
             self._log_exchange_response("set_margin_mode", res)
         except ccxt.DDoSProtection as e:
             raise DDosProtection(e) from e
+        except ccxt.MarginModeAlreadySet:
+            # Margin type already matches the requested mode - treat as success.
+            logger.debug(f"Margin mode for {pair} already set to {margin_mode.value}.")
         except (ccxt.BadRequest, ccxt.OperationRejected) as e:
             if not accept_fail:
                 raise TemporaryError(
@@ -4051,7 +4057,18 @@ class Exchange:
             liquidation_price_buffer = (
                 liquidation_price - buffer_amount if is_short else liquidation_price + buffer_amount
             )
-            return max(liquidation_price_buffer, 0.0)
+            liquidation_price_buffer = max(liquidation_price_buffer, 0.0)
+            # Cross-margin accounts can report liquidation prices absurdly far
+            # from the entry (e.g. 100x the price). freqtrade's exit logic assumes
+            # the liquidation price sits on the losing side of the entry, so a
+            # wrong-side or wildly deviating value would trigger a bogus
+            # "liquidation" exit on every tick. Treat implausible values as
+            # "no liquidation price".
+            if is_short:
+                plausible = open_rate < liquidation_price_buffer <= open_rate * 10
+            else:
+                plausible = 0 < liquidation_price_buffer < open_rate
+            return liquidation_price_buffer if plausible else None
         else:
             return None
 

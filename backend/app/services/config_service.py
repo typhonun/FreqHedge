@@ -102,11 +102,6 @@ class ConfigService:
     @staticmethod
     def _build_config(bot_id, side, base, strategy_params, strategy_type, template):
         cfg = ConfigService.read_json(template)
-        # Keep hedge-mode generation consistent for direct callers as well as
-        # generate_configs(), which already computes these flags.
-        enable_long = bool(base.get("enableLong", True))
-        enable_short = bool(base.get("enableShort", False))
-
         port = ConfigService._get_port(bot_id, side)
         db_file = (Path(FREQTRADE_DIR)
                    / f"user_data/bots/{bot_id}/tradesv3_bot{bot_id}_{side}.sqlite").as_posix()
@@ -189,12 +184,14 @@ class ConfigService:
             cfg["margin_mode"] = margin_mode
             leverage = float(base.get("leverage", BOT_DEFAULTS["leverage"]) or BOT_DEFAULTS["leverage"])
             cfg["leverage"] = min(100.0, max(1.0, leverage))
-            # Hedge mode is required when the long and short workers share an
-            # exchange account. Keep one-direction bots on the legacy path
-            # unless the caller explicitly enables it.
-            cfg["hedge_mode"] = bool(
-                base.get("hedgeMode") or (enable_long and enable_short)
-            )
+            # Hedge mode is mandatory: the Binance futures account runs
+            # dual-side position mode, where every order must carry
+            # positionSide. Forcing it unconditionally prevents stale UI
+            # payloads (hedgeMode=false) or whitelist hot-reloads from
+            # regenerating configs that crash freqtrade at startup.
+            cfg["hedge_mode"] = True
+            if base.get("hedgeMode") is False:
+                print("[config] hedgeMode=false ignored: account uses dual-side position mode, forcing hedge_mode=true")
         else:
             cfg.pop("margin_mode", None)
             cfg["leverage"] = 1
