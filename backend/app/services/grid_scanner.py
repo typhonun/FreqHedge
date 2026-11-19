@@ -17,6 +17,14 @@ class GridScanner:
         self.limit = 90
         self._cache_lock = threading.Lock()
         self._range_cache = {}
+        # 股指代币、ETF、股票代币黑名单（只交易传统加密货币）
+        self._stock_blacklist = {
+            'AAOI', 'TQQQ', 'SQQQ', 'SOXS', 'KORU', 'SPY', 'QQQ', 'NVDA',
+            'TSLA', 'AAPL', 'MSFT', 'SKHYNIX', 'AMD', 'INTC', 'GOOGL',
+            'META', 'AMZN', 'NFLX', 'COIN', 'MSTR', 'BABA', 'JD',
+            'PDD', 'BIDU', 'NIO', 'XPEV', 'LI', 'BTCC', 'ETHU',
+            'SOLV', 'BCHN'
+        }
 
     def _calculate_hurst(self, price_series):
         try:
@@ -138,8 +146,7 @@ class GridScanner:
 
             # ④ 额外双保险：排除常见的美股/指数基础币种白名单（防止交易所未打标签）
             base_currency = market.get('base', '').upper()
-            stock_blacklist = {'AAOI', 'TQQQ', 'SQQQ', 'SOXS', 'KORU', 'SPY', 'QQQ', 'NVDA', 'TSLA', 'AAPL', 'MSFT'}
-            if base_currency in stock_blacklist:
+            if base_currency in self._stock_blacklist:
                 continue
 
             # ⑤ 必须在 tickers 中有成交量数据

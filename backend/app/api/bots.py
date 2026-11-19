@@ -381,14 +381,25 @@ class DynamicWhitelistRequest(BaseModel):
     exclude_pairs: list[str] = []
     closed_pair: str = ""  # ★ 本次平仓触发替换的交易对
 
+def _whitelist_lock_key(bot_id: int, side: str) -> str:
+    return f"grid_whitelist_scan_lock_{bot_id}_{side}"
+
+
+def _whitelist_state_key(bot_id: int, side: str) -> str:
+    return f"grid_whitelist_state_{bot_id}_{side}"
 
 @router.post("/{bot_id}/dynamic-whitelist-scan")
 async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
     """
-    动态白名单扫描：平仓后触发，选择最优币并更新白名单，
-    同时返回新币的区间，供策略端立即同步 _prefetched_bounds。
+    动态白名单扫描严格顺序：
+    1. 写入扫描锁（阻止期间新开仓）
+    2. 扫描最优币 + 计算区间
+    3. 写入新白名单配置 & prefetch kv
+    4. 若机器人正在运行，重启/重载使其生效，并更新生效状态
+    5. 释放扫描锁，允许后续正常开仓
     """
     import asyncio
+    import time as _time
     from app.services.grid_scanner import GridScanner
     from app.services.config_service import ConfigService
     from app.services.bot_manager import BotManager
@@ -405,23 +416,41 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
     if not grid_config.get("dynamic_whitelist", False):
         raise HTTPException(400, "该机器人未启用动态白名单模式")
 
+    side = "short" if payload.direction.upper() == "SHORT" else "long"
+    if side == "long" and not bot.get("enableLong"):
+        return {"success": False, "error": "多头未启用"}
+    if side == "short" and not bot.get("enableShort"):
+        return {"success": False, "error": "空头未启用"}
+
+    lock_key = _whitelist_lock_key(bot_id, side)
+    state_key = _whitelist_state_key(bot_id, side)
+    now_ts = _time.time()
+
+    # 1) 写扫描锁（超时 240s 自动视为过期，防止异常卡死）
+    ConfigManager.set_bot_kv(lock_key, {
+        "scanning": True,
+        "started_at": now_ts,
+        "expire_at": now_ts + 240,
+        "closed_pair": payload.closed_pair,
+    })
+
     try:
-        # 1) 多因子扫描
+        # 2) 多因子扫描
         scanner = GridScanner()
         best_pair_info = await asyncio.to_thread(
             scanner.select_best_pair,
-            payload.direction,
+            payload.direction.upper(),
             payload.exclude_pairs,
         )
 
         if not best_pair_info:
+            ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
             return {"success": False, "error": "未找到符合条件的交易对"}
 
-        new_pair = best_pair_info["name"]   # ★ 只取字符串 name，不要传整个 dict
+        new_pair = best_pair_info["name"]
         print(f"[API] 扫描到最优币: {new_pair}")
 
-        # 2) 计算新币区间
-        #    days 由 grid_config.smart_range_mode 决定（与策略端保持一致）
+        # 3) 计算新币区间
         days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
         days = days_map.get(
             str(grid_config.get("smart_range_mode", "moderate")).lower(), 30
@@ -431,37 +460,29 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
         )
         print(f"[API] 新币 {new_pair} 区间: {new_pair_range}")
 
-        # 3) 更新白名单
+        # 4) 生成并写入新白名单配置
         current_pairs = bot.get("pair") or []
-        max_open = bot.get("maxOpenTrades", 1)
+        max_open = int(bot.get("maxOpenTrades") or 1)
 
-        # ★ 核心修复：exclude_pairs 是"仍持仓的币"（用于扫描排除），不能用于过滤白名单！
-        # 正确逻辑：移除本次平仓触发替换的币，保留其余（含仍持仓的币），加入新币
         new_whitelist = [p for p in current_pairs if p != payload.closed_pair]
         if new_pair not in new_whitelist:
             new_whitelist.append(new_pair)
 
-        # 超出上限时优先保留：新币 > 仍有持仓的币 > 其余币
         if len(new_whitelist) > max_open:
             protected = {new_pair} | set(payload.exclude_pairs or [])
             head = [p for p in new_whitelist if p in protected]
             tail = [p for p in new_whitelist if p not in protected]
             new_whitelist = (head + tail)[:max_open]
 
-        side = "short" if payload.direction == "SHORT" else "long"
-        if side == "long" and not bot.get("enableLong"):
-            return {"success": False, "error": "多头未启用"}
-        if side == "short" and not bot.get("enableShort"):
-            return {"success": False, "error": "空头未启用"}
-
-        success = ConfigService.update_whitelist(bot_id, side, new_whitelist)
+        success = await asyncio.to_thread(
+            ConfigService.update_whitelist, bot_id, side, new_whitelist
+        )
         if not success:
+            ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
             return {"success": False, "error": "白名单更新失败"}
 
-        # 4) 把新币区间同步写入 prefetch kv（可选，双保险）
+        # 同步新币区间到 prefetch kv
         try:
-            from app.core.config_manager import ConfigManager
-            import time as _time
             kv_key = f"grid_prefetch_range_{bot_id}_{side}"
             kv_data = ConfigManager.get_bot_kv(kv_key) or {"days": days, "pairs": {}}
             kv_data.setdefault("pairs", {})[new_pair] = new_pair_range
@@ -470,15 +491,42 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
         except Exception as e:
             print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
 
+        # 5) 让新配置/白名单真正生效：若机器人正在运行，执行重启使其加载新白名单
+        restarted = False
+        latest_bot = BotManager.get(bot_id)
+        if latest_bot and latest_bot.get("status") == "running":
+            print(f"[API] 白名单已写入，重启 bot={bot_id} 使新白名单生效...")
+            await asyncio.to_thread(BotManager.restart, bot_id, True)
+            restarted = True
+
+        ConfigManager.set_bot_kv(state_key, {
+            "whitelist": new_whitelist,
+            "new_pair": new_pair,
+            "restarted": restarted,
+            "applied_at": _time.time(),
+        })
+        ConfigManager.set_bot_kv(lock_key, {
+            "scanning": False,
+            "completed_at": _time.time(),
+            "new_pair": new_pair,
+            "new_whitelist": new_whitelist,
+        })
+
         return {
             "success": True,
-            "new_pair": new_pair,                        # ★ 字符串
-            "new_pair_range": new_pair_range,            # ★ 策略端必需的字段
+            "new_pair": new_pair,
+            "new_pair_range": new_pair_range,
             "new_whitelist": new_whitelist,
-            "message": f"已更新白名单，新币 {new_pair} 将自动开首仓",
+            "restarted": restarted,
+            "message": f"已更新白名单并生效，新币 {new_pair} 可正常参与开仓",
         }
 
     except Exception as e:
         import traceback
         traceback.print_exc()
+        ConfigManager.set_bot_kv(lock_key, {
+            "scanning": False,
+            "error_at": _time.time(),
+            "error": str(e),
+        })
         raise HTTPException(500, f"动态白名单扫描失败: {str(e)}")

@@ -340,6 +340,67 @@ class GridBotBase(DcaTpBotBase):
             self._maybe_fetch_grid_bounds()
         return lower, upper
 
+    # ============================================================
+    # 动态白名单门禁 & 白名单校验
+    # ============================================================
+    def _whitelist_lock_key(self) -> str:
+        return f"grid_whitelist_scan_lock_{self._bot_id}_{self._side_str}"
+
+    def _whitelist_state_key(self) -> str:
+        return f"grid_whitelist_state_{self._bot_id}_{self._side_str}"
+
+    def _set_whitelist_scanning_lock(self, scanning: bool, closed_pair: str = "", ttl_sec: int = 240):
+        now_ts = time.time()
+        self._local_whitelist_scanning = bool(scanning)
+        self._local_whitelist_lock_until = (now_ts + ttl_sec) if scanning else 0.0
+        try:
+            from core.config_manager import ConfigManager
+            ConfigManager.set_bot_kv(self._whitelist_lock_key(), {
+                "scanning": bool(scanning),
+                "updated_at": now_ts,
+                "expire_at": (now_ts + ttl_sec) if scanning else 0.0,
+                "closed_pair": closed_pair,
+            })
+        except Exception as e:
+            logger.warning(f"{GRID_TAG} 写入动态白名单锁失败: {e}")
+
+    def _is_whitelist_scanning(self) -> bool:
+        now_ts = time.time()
+        if getattr(self, "_local_whitelist_scanning", False):
+            if now_ts < getattr(self, "_local_whitelist_lock_until", 0.0):
+                return True
+            self._local_whitelist_scanning = False
+
+        try:
+            from core.config_manager import ConfigManager
+            lock_info = ConfigManager.get_bot_kv(self._whitelist_lock_key())
+            if isinstance(lock_info, dict) and lock_info.get("scanning"):
+                expire_at = float(lock_info.get("expire_at") or 0.0)
+                if expire_at <= 0 or now_ts < expire_at:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _get_effective_whitelist(self) -> list[str]:
+        try:
+            from core.config_manager import ConfigManager
+            state = ConfigManager.get_bot_kv(self._whitelist_state_key())
+            if isinstance(state, dict) and isinstance(state.get("whitelist"), list):
+                wl = [str(p) for p in state["whitelist"] if p]
+                if wl:
+                    return wl
+        except Exception:
+            pass
+        cfg_wl = ((self.config or {}).get("exchange") or {}).get("pair_whitelist") or []
+        return [str(p) for p in cfg_wl if p]
+
+    def _is_pair_in_whitelist(self, pair: str) -> bool:
+        wl = self._get_effective_whitelist()
+        if not wl:
+            return True
+        return pair in wl
+
     def _build_grid_levels(self, lower=None, upper=None):
         g = self._grid_cfg()
         if lower is None or upper is None:
@@ -641,21 +702,29 @@ class GridBotBase(DcaTpBotBase):
     def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force, current_time, entry_tag, side,
                             **kwargs):
         try:
+            g = self._grid_cfg()
+            # ★ 门禁 1：动态白名单扫描/配置生效期间，禁止新开仓
+            if bool(g.get("dynamic_whitelist", False)) and self._is_whitelist_scanning():
+                logger.info(f"{GRID_TAG} [{pair}] 动态白名单扫描/生效中，暂缓新开仓")
+                return False
+
+            # ★ 门禁 2：开仓前校验交易对是否在最新白名单内
+            if not self._is_pair_in_whitelist(pair):
+                logger.info(f"{GRID_TAG} [{pair}] 不在当前有效白名单 {self._get_effective_whitelist()} 中，拒绝开仓")
+                return False
+
             # 核心修复：在交易确认时，强制设置交易所杠杆
-            # 这发生在 bot_start 之后，exchange 已经初始化
             try:
                 if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
                     exchange = self.dp.exchange
                     target_lev = float(self.config.get('leverage', 5.0) or 5.0)
-                    
-                    # 尝试直接设置杠杆
+
                     try:
                         exchange.set_leverage(target_lev, pair)
                         logger.info(f"{GRID_TAG} confirm_trade_entry: 已设置 {pair} 杠杆为 {target_lev}x")
                     except Exception as e:
                         logger.warning(f"{GRID_TAG} confirm_trade_entry: 设置杠杆失败: {e}")
-                    
-                    # 同时修改市场数据
+
                     try:
                         for markets_attr in ['markets', '_markets']:
                             markets_dict = getattr(exchange, markets_attr, None)
@@ -667,26 +736,28 @@ class GridBotBase(DcaTpBotBase):
                                     old_max = lev_limits.get('max', 1)
                                     if old_max < target_lev:
                                         lev_limits['max'] = max(75.0, target_lev)
-                                        logger.info(f"{GRID_TAG} confirm_trade_entry: 修改 {pair} 杠杆上限 {old_max}x -> {lev_limits['max']}x")
+                                        logger.info(
+                                            f"{GRID_TAG} confirm_trade_entry: 修改 {pair} 杠杆上限 {old_max}x -> {lev_limits['max']}x")
                     except Exception as e:
                         logger.warning(f"{GRID_TAG} confirm_trade_entry: 修改市场数据失败: {e}")
             except Exception as e:
                 logger.warning(f"{GRID_TAG} confirm_trade_entry: 杠杆设置检查失败: {e}")
-            
-            candle_str = self._get_candle_str(current_time)
-            if self._last_candle_str.get(pair) == candle_str: return False
 
-            g = self._grid_cfg()
+            candle_str = self._get_candle_str(current_time)
+            if self._last_candle_str.get(pair) == candle_str:
+                return False
+
             lower, upper = self._runtime_grid_bounds(pair)
-            if upper <= 0 or lower <= 0: return False
+            if upper <= 0 or lower <= 0:
+                return False
 
             try:
                 open_count = len(list(Trade.get_trades_proxy(pair=pair, is_open=True)))
             except Exception:
                 open_count = 0
-            if open_count > 0: return False
+            if open_count > 0:
+                return False
 
-            # immediate 也必须遵守绝对网格上下沿
             if rate < lower or rate > upper:
                 return False
 
@@ -1566,67 +1637,6 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             return None
 
-    def leverage(
-            self,
-            pair: str,
-            current_time,
-            current_rate: float,
-            proposed_leverage: float,
-            max_leverage: float,
-            entry_tag: str | None,
-            side: str,
-            **kwargs,
-    ) -> float:
-        cfg = self.get_runtime_config() or {}
-        grid_cfg = self._grid_cfg()
-
-        target = float(
-            grid_cfg.get(
-                "leverage",
-                cfg.get("leverage", self.config.get("leverage", 1.0))
-            ) or 1.0
-        )
-
-        # ★ 强制修复：干跑模式下，即使交易所限制为1x，也强制返回目标杠杆
-        # 这是最后的一道防线，确保策略不受交易所市场数据中错误的杠杆限制影响
-        if self.config.get("dry_run", False):
-            actual = target
-            logger.warning(
-                f"{GRID_TAG} 干跑模式强制杠杆 | Pair={pair} | "
-                f"目标={target}x | 交易所限制={max_leverage}x | 强制应用={actual}x"
-            )
-        elif max_leverage <= 1.0:
-            # 实盘模式下如果交易所限制为1x，尝试通过修改市场数据来解除限制
-            actual = target
-            logger.warning(
-                f"{GRID_TAG} 交易所限制为1x，尝试强制使用目标杠杆 | Pair={pair} | "
-                f"目标={target}x | 强制应用={actual}x"
-            )
-            # 尝试动态修改市场数据
-            try:
-                if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
-                    exchange = self.dp.exchange
-                    for markets_attr in ['markets', '_markets']:
-                        markets_dict = getattr(exchange, markets_attr, None)
-                        if markets_dict and isinstance(markets_dict, dict):
-                            market = markets_dict.get(pair)
-                            if market and isinstance(market, dict):
-                                limits = market.setdefault('limits', {})
-                                lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
-                                lev_limits['max'] = max(75.0, target)
-                                logger.info(f"{GRID_TAG} 已动态修改 {pair} 杠杆上限为 {lev_limits['max']}x")
-            except Exception as e:
-                logger.warning(f"{GRID_TAG} 动态修改杠杆上限失败: {e}")
-        else:
-            actual = min(target, max_leverage)
-
-        logger.info(
-            f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
-            f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
-            f"最终应用={actual}x"
-        )
-
-        return actual
 
     # ============================================================
     # 工具函数
@@ -1780,78 +1790,74 @@ class GridBotBase(DcaTpBotBase):
 
     def _trigger_dynamic_whitelist_scan(self, trade):
         """
-        动态白名单模式：平仓后触发多因子扫描，选择新币并更新白名单
+        动态白名单模式：平仓后先上锁阻止开仓，再触发扫描 -> 写配置 -> 生效 -> 解锁
         """
         try:
             g = self._grid_cfg()
-            # 检查是否启用了动态白名单模式
             is_dynamic = bool(g.get("dynamic_whitelist", False))
             if not is_dynamic:
                 logger.info(f"{GRID_TAG} 动态白名单未启用，跳过扫描")
                 return
 
+            # ★ 第一步：立即上锁，阻断扫描与配置生效期间的新开仓
+            self._set_whitelist_scanning_lock(True, closed_pair=trade.pair, ttl_sec=240)
+
             logger.info(f"{GRID_TAG} ========== 触发动态白名单扫描 ==========")
             logger.info(f"{GRID_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={trade.pair}")
 
-            # 获取当前所有持仓的交易对
             open_trades = Trade.get_open_trades()
             existing_pairs = set(t.pair for t in open_trades if t.pair != trade.pair)
             logger.info(f"{GRID_TAG} 当前持仓交易对: {list(existing_pairs)}")
 
-            # 调用后端 API 触发扫描
-            try:
-                import requests
-                import os
-                import threading
+            import requests
+            import os
+            import threading
 
-                # 从环境变量或默认值获取 API 地址
-                api_base = os.environ.get('DCATP_API_URL', 'http://localhost:9000')
+            api_base = os.environ.get('DCATP_API_URL', 'http://localhost:9000')
+            direction = 'SHORT' if self._is_short else 'LONG'
+            payload = {
+                'bot_id': self._bot_id,
+                'side': self._side_str,
+                'direction': direction,
+                'exclude_pairs': list(existing_pairs),
+                'closed_pair': trade.pair
+            }
 
-                direction = 'SHORT' if self._is_short else 'LONG'
-                payload = {
-                    'bot_id': self._bot_id,
-                    'side': self._side_str,
-                    'direction': direction,
-                    'exclude_pairs': list(existing_pairs),
-                    'closed_pair': trade.pair
-                }
+            logger.info(f"{GRID_TAG} 调用后端 API: {api_base}/bots/{self._bot_id}/dynamic-whitelist-scan")
+            logger.info(f"{GRID_TAG} 请求参数: {payload}")
 
-                logger.info(f"{GRID_TAG} 调用后端 API: {api_base}/bots/{self._bot_id}/dynamic-whitelist-scan")
-                logger.info(f"{GRID_TAG} 请求参数: {payload}")
+            def async_scan():
+                try:
+                    response = requests.post(
+                        f"{api_base}/bots/{self._bot_id}/dynamic-whitelist-scan",
+                        json=payload,
+                        timeout=240
+                    )
 
-                # 异步调用，不阻塞当前流程
-                def async_scan():
-                    try:
-                        response = requests.post(
-                            f"{api_base}/bots/{self._bot_id}/dynamic-whitelist-scan",
-                            json=payload,
-                            timeout=180
-                        )
-
-                        if response.status_code == 200:
-                            result = response.json()
-                            if result.get('success'):
-                                logger.info(
-                                    f"{GRID_TAG} ✅ 动态白名单扫描成功 | "
-                                    f"新币={result.get('new_pair')} | "
-                                    f"新白名单={result.get('new_whitelist')}"
-                                )
-                            else:
-                                logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描失败: {result.get('error')}")
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('success'):
+                            logger.info(
+                                f"{GRID_TAG} ✅ 动态白名单扫描并生效 | "
+                                f"新币={result.get('new_pair')} | "
+                                f"新白名单={result.get('new_whitelist')}"
+                            )
                         else:
-                            logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描请求失败: {response.status_code} | {response.text}")
-                    except Exception as e:
-                        logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描异常: {e}")
+                            logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描失败: {result.get('error')}")
+                            self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                    else:
+                        logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描请求失败: {response.status_code} | {response.text}")
+                        self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                except Exception as e:
+                    logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描异常: {e}")
+                    self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
 
-                # 启动后台线程执行扫描
-                thread = threading.Thread(target=async_scan, daemon=True)
-                thread.start()
-                logger.info(f"{GRID_TAG} 后台扫描线程已启动")
-
-            except Exception as e:
-                logger.warning(f"{GRID_TAG} 动态白名单扫描初始化异常: {e}")
+            thread = threading.Thread(target=async_scan, daemon=True)
+            thread.start()
+            logger.info(f"{GRID_TAG} 后台扫描线程已启动（已开启开仓门禁锁）")
 
         except Exception as e:
+            self._set_whitelist_scanning_lock(False, closed_pair=getattr(trade, "pair", ""))
             logger.exception(f"{GRID_TAG} _trigger_dynamic_whitelist_scan 异常")
 
 

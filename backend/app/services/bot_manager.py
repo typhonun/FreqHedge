@@ -334,11 +334,6 @@ class BotManager:
         bot["strategyType"] = bot.get("strategyType") or "dca"
         return bot
 
-    @staticmethod
-    def list_all():
-        with _conn() as c:
-            rows = c.execute("SELECT * FROM bots ORDER BY id").fetchall()
-        return [BotManager._normalize(r) for r in rows]
 
     @staticmethod
     def get(bot_id: int):
@@ -521,6 +516,34 @@ class BotManager:
         return BotManager.get(bot_id)
 
     @staticmethod
+    def restart(bot_id: int, wait: bool = True):
+        """停止后等待端口释放并重新启动机器人，确保新配置/白名单生效"""
+        import time as _time
+
+        bot = BotManager.get(bot_id)
+        if not bot:
+            return {"success": False, "error": "bot not found"}
+
+        was_running = bot.get("status") == "running" or (
+                bot.get("port") and not _is_port_available(int(bot["port"]))
+        )
+        if was_running:
+            BotManager.stop(bot_id)
+            port = bot.get("port")
+            if port:
+                for _ in range(30):
+                    if _is_port_available(int(port)) and _is_port_available(int(port) + 1):
+                        break
+                    _time.sleep(0.2)
+            _time.sleep(0.5)
+
+        fresh_bot = BotManager.get(bot_id)
+        if not fresh_bot:
+            return {"success": False, "error": "bot not found after stop"}
+
+        return BotManager.start(bot_id, wait=wait)
+
+    @staticmethod
     def delete(bot_id: int):
         from app.services.process_service import ProcessService
         bot = BotManager.get(bot_id)
@@ -690,7 +713,9 @@ class BotManager:
         try:
             result = ProcessService.start_bot(bot)
             if result.get("success"):
-                # 已经在 start 里置 running，无需再改
+                with _conn() as c:
+                    c.execute("UPDATE bots SET status='running' WHERE id=?", (bot_id,))
+                    c.commit()
                 try:
                     from app.services.risk_service import RiskService
                     RiskService.init_round(bot_id)
