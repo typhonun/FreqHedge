@@ -5,6 +5,7 @@
 
 import sys
 import json
+import time
 import bisect
 from pathlib import Path
 from datetime import datetime
@@ -150,6 +151,9 @@ class GridBotBase(DcaTpBotBase):
             f"======================================================"
         )
 
+        # 启动时若网格边界缺失且启用 smart_range_mode，立即后台预取各币区间
+        self._maybe_fetch_grid_bounds()
+
     def leverage(
             self,
             pair: str,
@@ -279,6 +283,46 @@ class GridBotBase(DcaTpBotBase):
             pass
         return None
 
+    def _maybe_fetch_grid_bounds(self):
+        """边界缺失且启用 smart_range_mode 时，后台请求后端计算白名单各币的网格区间"""
+        try:
+            g = self._grid_cfg()
+            mode = str(g.get("smart_range_mode", "") or "").lower()
+            days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
+            if mode not in days_map:
+                return
+            now = time.time()
+            if now - getattr(self, "_bounds_fetch_ts", 0.0) < 60:
+                return
+            self._bounds_fetch_ts = now
+
+            import os
+            import threading
+            import requests
+            api_base = os.environ.get('DCATP_API_URL', 'http://localhost:9000')
+            pairs = (self.config.get('exchange', {}) or {}).get('pair_whitelist', []) or []
+            if not pairs:
+                return
+            payload = {
+                "bot_id": self._bot_id,
+                "side": self._side_str,
+                "days": days_map[mode],
+                "pairs": pairs,
+                "persist": True,
+            }
+
+            def _fetch():
+                try:
+                    r = requests.post(f"{api_base}/api/scanner/range/bot", json=payload, timeout=60)
+                    logger.info(f"{GRID_TAG} 网格区间预取完成 | status={r.status_code}")
+                except Exception as e:
+                    logger.warning(f"{GRID_TAG} 网格区间预取失败: {e}")
+
+            threading.Thread(target=_fetch, daemon=True).start()
+            logger.info(f"{GRID_TAG} 网格边界缺失，已触发区间预取 | mode={mode} | pairs={pairs}")
+        except Exception as e:
+            logger.warning(f"{GRID_TAG} 触发区间预取异常: {e}")
+
     def _runtime_grid_bounds(self, pair=None):
         # 动态白名单新币优先使用后端预取的专属区间
         if pair:
@@ -289,10 +333,12 @@ class GridBotBase(DcaTpBotBase):
         runtime = self._get_bot_grid_runtime()
         if runtime:
             return runtime
-        return (
-            self._cfg_float(g, "lower_price", 0.0),
-            self._cfg_float(g, "upper_price", 0.0),
-        )
+        lower = self._cfg_float(g, "lower_price", 0.0)
+        upper = self._cfg_float(g, "upper_price", 0.0)
+        # 边界无效时尝试向后端请求计算（smart_range_mode 模式）
+        if not (lower > 0 and upper > lower):
+            self._maybe_fetch_grid_bounds()
+        return lower, upper
 
     def _build_grid_levels(self, lower=None, upper=None):
         g = self._grid_cfg()
