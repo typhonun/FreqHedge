@@ -858,14 +858,27 @@ class GridBotBase(DcaTpBotBase):
                     if self._get_bool(trade, "grid_stopped", False):
                         return None
 
-                    # The exchange position is already flat. This is the
-                    # authoritative restart condition even if the previous
-                    # reduce callback observed the trade before its amount
-                    # was refreshed.
+                    # ★ 修复：动态白名单扫描/生效期间禁止同 pair 重启，
+                    # 否则会绕过 _trigger_dynamic_whitelist_scan 的门禁锁，
+                    # 导致"平了又开"永远不换币。
+                    if bool(g.get("dynamic_whitelist", False)) and self._is_whitelist_scanning():
+                        logger.info(
+                            f"{GRID_TAG} [{trade.pair}] 动态白名单扫描/生效中，暂缓网格重启"
+                        )
+                        return None
+
                     if actual_amount <= 0:
                         self._set(trade, "grid_allow_restart", True)
 
                     if not self._get_bool(trade, "grid_allow_restart", False):
+                        return None
+
+                    # ★ 修复：即使扫描锁已释放，也要校验当前 pair 是否仍在有效白名单内
+                    if bool(g.get("dynamic_whitelist", False)) and not self._is_pair_in_whitelist(trade.pair):
+                        logger.info(
+                            f"{GRID_TAG} [{trade.pair}] 已不在有效白名单 "
+                            f"{self._get_effective_whitelist()} 中，跳过重启"
+                        )
                         return None
 
                     if self._last_candle_str.get(trade.pair) == candle_str:
@@ -1108,24 +1121,80 @@ class GridBotBase(DcaTpBotBase):
                 except (TypeError, ValueError):
                     pending_ts = 0.0
 
-                # 如果超过 60 秒没有成交，或者时间戳无法解析，直接强行释放
-                if pending_ts <= 0 or (current_time.timestamp() - pending_ts) > 60:
-                    logger.warning(
-                        f"{GRID_TAG} 释放超时遗留的 pending_add (超过60s) | "
-                        f"trade_id={trade.id}"
+                elapsed = current_time.timestamp() - pending_ts if pending_ts > 0 else float("inf")
+
+                # ★ 修复：不能仅凭时间超时释放 pending_add，否则在途订单成交后
+                # 会与新一轮加仓叠加，导致同根 K 线双倍下单。
+                # 释放条件收紧为：
+                #   1) 时间戳无效（数据损坏）→ 直接释放，但记 error
+                #   2) 超过硬上限（默认 300s）且交易所确认无在途订单 / 无持仓增量
+                # 其余情况一律 return None 跳过本轮，继续等待。
+                hard_timeout = max(120, self._cfg_int(g, "pending_add_hard_timeout_seconds", 300))
+
+                if pending_ts <= 0:
+                    # 时间戳损坏，无法判断，保守释放并打 error 便于排查
+                    logger.error(
+                        f"{GRID_TAG} pending_add 时间戳无效，强制释放 | trade_id={trade.id}"
                     )
                     self._pending_add.pop(trade.id, None)
                     self._set(trade, "grid_pending_add", None)
-                else:
-                    # 如果还在 60 秒内，说明可能刚下单，或者交易所确认有延迟
-                    # 此时为了防并发/防重复下单，直接 return None 跳过本轮
+                    # 不 return，允许本轮继续走后续逻辑（但下面 should_add 可能再次触发，
+                    # 这是极端异常路径，可接受）
+                elif elapsed <= hard_timeout:
+                    # 未到硬上限：无条件跳过，防止重复下单
                     return None
+                else:
+                    # 到达硬上限：先确认交易所侧是否还有在途订单
+                    has_open = bool(getattr(trade, "has_open_orders", False))
+                    if not has_open:
+                        # 再尝试通过 trade.amount 与 positions 总和做一次对账，
+                        # 若持仓数量明显大于本地记录，说明订单其实成交了但回调丢失，
+                        # 此时释放 pending 会再次下单，必须放弃本轮并保留 pending 让
+                        # order_filled 补记（或等下一轮 order_filled 补记后自然清理）。
+                        positions_now = self._get_grid_positions(trade)
+                        local_qty = sum(float(v.get("qty", 0) or 0) for v in positions_now.values())
+                        try:
+                            actual_qty = float(getattr(trade, "amount", 0) or 0)
+                        except (TypeError, ValueError):
+                            actual_qty = 0.0
+                        # 允许 1% 误差（手续费/精度）
+                        if actual_qty > local_qty * 1.01 + 1e-9:
+                            logger.warning(
+                                f"{GRID_TAG} pending_add 超时但持仓数量大于本地记录，"
+                                f"疑似回调丢失，保留 pending 等待对账 | "
+                                f"trade_id={trade.id} | actual_qty={actual_qty:.8f} | "
+                                f"local_qty={local_qty:.8f}"
+                            )
+                            return None
 
-            max_grids = self._cfg_int(g, "max_open_grids", self._cfg_int(g, "grid_count", 20))
+                        logger.warning(
+                            f"{GRID_TAG} pending_add 超时且交易所无在途订单、无持仓增量，释放 | "
+                            f"trade_id={trade.id} | elapsed={elapsed:.1f}s"
+                        )
+                        self._pending_add.pop(trade.id, None)
+                        self._set(trade, "grid_pending_add", None)
+                        # 释放后不 return，允许本轮继续判断是否加仓
+                    else:
+                        # 仍有在途订单，继续等待
+                        logger.info(
+                            f"{GRID_TAG} pending_add 超时但仍有在途订单，继续等待 | "
+                            f"trade_id={trade.id} | elapsed={elapsed:.1f}s"
+                        )
+                        return None
+
             grid_count = self._cfg_int(g, "grid_count", 20)
-            # 强制不超过网格总数（防止历史/外部配置越界）
-            if grid_count > 0:
-                max_grids = max(1, min(max_grids, grid_count))
+
+            # max_open_grids 是独立的持仓格数上限，不再被 grid_count 钳制。
+            # 原因：trailing 平移后网格区间仍是 grid_count 格宽，但趋势行情中
+            # 价格会走出原区间，若持仓上限锁死在 grid_count，会在下跌/上涨
+            # 途中提前冻结加仓，网格退化为"固定 N 格后躺平"。
+            max_grids = self._cfg_int(g, "max_open_grids", 0)
+            if max_grids <= 0:
+                # 未显式配置时才回落到 grid_count，保持旧默认行为
+                max_grids = grid_count if grid_count > 0 else 20
+            # 兜底：至少 1 格；不设上限钳制，允许用户配置大于 grid_count
+            max_grids = max(1, max_grids)
+
             if len(positions) >= max_grids:
                 return None
 
@@ -1428,6 +1497,16 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_allow_restart", is_flat)
                 self._set(trade, "grid_cleanup_pending", not is_flat)
 
+                # ★ 新增：碎片尾仓整笔平掉后若已 flat，同样触发扫描
+                if is_flat:
+                    _g = self._grid_cfg()
+                    if bool(_g.get("dynamic_whitelist", False)):
+                        logger.info(
+                            f"{GRID_TAG} 🏁 碎片尾仓整笔平仓后已 flat，触发动态白名单扫描 | "
+                            f"closed_pair={trade.pair}"
+                        )
+                        self._trigger_dynamic_whitelist_scan(trade)
+
                 logger.info(
                     f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 碎片尾仓整笔平仓成交 | "
                     f"价格={filled_price:.4f} | 金额={margin:.2f} | "
@@ -1464,6 +1543,19 @@ class GridBotBase(DcaTpBotBase):
                         logger.info(f"{GRID_TAG} 🏁 当前所有网格已平仓，等待后续 K 线继续操作。")
                         self._set(trade, "grid_allow_restart", True)
                         self._set(trade, "grid_cleanup_pending", False)
+
+                        # ★ 修复：网格自动全平后，与手动全平一样触发动态白名单扫描
+                        # 否则 restart_after_all_tp=True 会在同一 pair 上无限重启，
+                        # dynamic_whitelist 永远不生效。
+                        _g = self._grid_cfg()
+                        if bool(_g.get("dynamic_whitelist", False)):
+                            logger.info(
+                                f"{GRID_TAG} 🏁 网格自动全平完成，触发动态白名单扫描 | "
+                                f"closed_pair={trade.pair}"
+                            )
+                            self._trigger_dynamic_whitelist_scan(trade)
+                        else:
+                            logger.info(f"{GRID_TAG} 动态白名单未启用，网格全平后允许同 pair 重启")
                     else:
                         logger.warning(
                             f"{GRID_TAG} 网格记录已空，但交易实际剩余数量="
@@ -1471,7 +1563,6 @@ class GridBotBase(DcaTpBotBase):
                         )
                         self._set(trade, "grid_allow_restart", False)
                         self._set(trade, "grid_cleanup_pending", True)
-
                 else:
                     self._set(trade, "grid_allow_restart", False)
 
@@ -1522,6 +1613,15 @@ class GridBotBase(DcaTpBotBase):
                 is_flat = actual_amount <= 0
                 self._set(trade, "grid_allow_restart", is_flat)
                 self._set(trade, "grid_cleanup_pending", not is_flat)
+                # ★ 新增：清理残余仓位后若已 flat，触发扫描
+                if is_flat:
+                    _g = self._grid_cfg()
+                    if bool(_g.get("dynamic_whitelist", False)):
+                        logger.info(
+                            f"{GRID_TAG} 🏁 清理残余仓位完成并已 flat，触发动态白名单扫描 | "
+                            f"closed_pair={trade.pair}"
+                        )
+                        self._trigger_dynamic_whitelist_scan(trade)
                 logger.info(
                     f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 清理残余实际仓位成交 | "
                     f"价格={entry_price:.4f} | 剩余数量={actual_amount:.8f}"
@@ -1800,7 +1900,7 @@ class GridBotBase(DcaTpBotBase):
                 return
 
             # ★ 第一步：立即上锁，阻断扫描与配置生效期间的新开仓
-            self._set_whitelist_scanning_lock(True, closed_pair=trade.pair, ttl_sec=240)
+            self._set_whitelist_scanning_lock(True, closed_pair=trade.pair, ttl_sec=300)
 
             logger.info(f"{GRID_TAG} ========== 触发动态白名单扫描 ==========")
             logger.info(f"{GRID_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={trade.pair}")
