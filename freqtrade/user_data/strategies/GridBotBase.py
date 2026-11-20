@@ -340,6 +340,11 @@ class GridBotBase(DcaTpBotBase):
             self._maybe_fetch_grid_bounds()
         return lower, upper
 
+    def _clear_full_reduce_retry(self, trade):
+        """统一清理碎片平仓重试锁的内存与持久化字段，防止不一致。"""
+        self._full_reduce_retry_after.pop(trade.id, None)
+        self._set(trade, "grid_full_reduce_retry_until", None)
+
     # ============================================================
     # 动态白名单门禁 & 白名单校验
     # ============================================================
@@ -786,11 +791,17 @@ class GridBotBase(DcaTpBotBase):
             retry_until = self._full_reduce_retry_after.get(trade.id)
             if retry_until is None:
                 retry_until = self._get_float(trade, "grid_full_reduce_retry_until", 0.0)
+            try:
+                if retry_until > 0 and float(getattr(trade, "amount", 0) or 0) <= 0:
+                    logger.info(f"{GRID_TAG} 仓位已 flat，清理遗留碎片重试锁 | trade_id={trade.id}")
+                    self._clear_full_reduce_retry(trade)
+                    retry_until = 0.0
+            except (TypeError, ValueError):
+                pass
             if retry_until > current_time.timestamp():
                 return None
             if retry_until > 0:
-                self._full_reduce_retry_after.pop(trade.id, None)
-                self._set(trade, "grid_full_reduce_retry_until", None)
+                self._clear_full_reduce_retry(trade)
 
             df, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
             if df is None or df.empty: return None
@@ -1489,7 +1500,7 @@ class GridBotBase(DcaTpBotBase):
             # ---- C. 减仓成交 ----
             elif reason.startswith("grid_reduce_full"):
                 filled_price = entry_price
-                self._full_reduce_retry_after.pop(trade.id, None)
+                self._clear_full_reduce_retry(trade)
                 self._set(trade, "grid_pending_reduce", [])
                 self._set_grid_positions(trade, {})
                 actual_amount = float(getattr(trade, "amount", 0) or 0)
@@ -1525,8 +1536,7 @@ class GridBotBase(DcaTpBotBase):
                 )
 
             elif reason.startswith("grid_reduce_multi"):
-                self._full_reduce_retry_after.pop(trade.id, None)
-                self._set(trade, "grid_full_reduce_retry_until", None)
+                self._clear_full_reduce_retry(trade)
                 pending_reduce_set = self._pending_reduce.pop(trade.id, set())
                 filled_price = entry_price
 
@@ -1602,8 +1612,7 @@ class GridBotBase(DcaTpBotBase):
 
             # ---- D. 网格状态已清空后的实际数量清理 ----
             elif reason.startswith("grid_reduce_cleanup"):
-                self._full_reduce_retry_after.pop(trade.id, None)
-                self._set(trade, "grid_full_reduce_retry_until", None)
+                self._clear_full_reduce_retry(trade)
                 self._pending_reduce.pop(trade.id, None)
                 self._pending_add.pop(trade.id, None)
                 self._set(trade, "grid_positions", "{}")
@@ -1693,8 +1702,7 @@ class GridBotBase(DcaTpBotBase):
         if trade.id in self._pending_reduce:
             self._pending_reduce.pop(trade.id, None)
             self._set(trade, "grid_pending_reduce", [])
-        self._full_reduce_retry_after.pop(trade.id, None)
-        self._set(trade, "grid_full_reduce_retry_until", None)
+        self._clear_full_reduce_retry(trade)
         if trade.id in self._pending_add:
             self._pending_add.pop(trade.id, None)
             self._set(trade, "grid_pending_add", None)
@@ -1707,8 +1715,7 @@ class GridBotBase(DcaTpBotBase):
         if trade.id in self._pending_reduce:
             self._pending_reduce.pop(trade.id, None)
             self._set(trade, "grid_pending_reduce", [])
-        self._full_reduce_retry_after.pop(trade.id, None)
-        self._set(trade, "grid_full_reduce_retry_until", None)
+        self._clear_full_reduce_retry(trade)
         if trade.id in self._pending_add:
             self._pending_add.pop(trade.id, None)
             self._set(trade, "grid_pending_add", None)
