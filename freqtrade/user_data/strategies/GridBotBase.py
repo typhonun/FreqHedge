@@ -69,56 +69,77 @@ class GridBotBase(DcaTpBotBase):
         dry_run_wallet = ft_cfg.get("dry_run_wallet", 0)
         leverage = ft_cfg.get("leverage", 1)
 
-        # ★ 核心修复：解除 CCXT / 交易所市场数据中对部分交易对（如 SQQQ）的 1x 杠杆写死限制
-        # 修复时机：确保在策略初始化时就覆盖交易所的限制
+        # ★ 杠杆处理策略：
+        # - dry_run：模拟撮合不受交易所真实限制约束，可修改本地 markets 字典 + set_leverage，
+        #            让 Freqtrade 内部风控按目标杠杆计算，便于回测/模拟。
+        # - 实盘：严禁修改本地 markets 字典，严禁强制 set_leverage。
+        #         真实杠杆由交易所决定，策略层通过 leverage() 读取 max_leverage 自适应降级。
+        #         篡改 markets 只会让 Freqtrade 内部风控与交易所实际脱节，导致保证金/清算价错误。
+        is_dry_run = bool(ft_cfg.get("dry_run", False))
         try:
-            logger.info(f"{GRID_TAG} 开始执行杠杆修复检查...")
-            logger.info(f"{GRID_TAG} dp存在: {hasattr(self, 'dp')}")
-            if hasattr(self, 'dp'):
-                logger.info(f"{GRID_TAG} dp不为None: {self.dp is not None}")
-                if self.dp:
-                    logger.info(f"{GRID_TAG} exchange存在: {hasattr(self.dp, 'exchange')}")
-                    if hasattr(self.dp, 'exchange'):
-                        logger.info(f"{GRID_TAG} exchange不为None: {self.dp.exchange is not None}")
-            
+            logger.info(f"{GRID_TAG} 开始执行杠杆检查 | dry_run={is_dry_run}")
+
             if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
                 exchange = self.dp.exchange
                 target_lev = float(ft_cfg.get("leverage", 5.0) or 5.0)
-                logger.info(f"{GRID_TAG} 目标杠杆: {target_lev}x, 干跑模式: {ft_cfg.get('dry_run', False)}")
+                logger.info(f"{GRID_TAG} 目标杠杆: {target_lev}x")
 
-                # 1. 直接修改市场数据中的杠杆限制
-                modified_count = 0
-                for markets_attr in ['markets', '_markets']:
-                    markets_dict = getattr(exchange, markets_attr, None)
-                    if markets_dict and isinstance(markets_dict, dict):
-                        for symbol, market in markets_dict.items():
-                            if market and isinstance(market, dict):
-                                limits = market.setdefault('limits', {})
-                                lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
-                                if not lev_limits.get('max') or lev_limits['max'] < target_lev:
-                                    old_max = lev_limits.get('max', 1)
-                                    lev_limits['max'] = max(75.0, target_lev)
-                                    modified_count += 1
-                                    logger.info(f"{GRID_TAG} 修改 {symbol} 杠杆上限: {old_max}x -> {lev_limits['max']}x")
-                logger.info(f"{GRID_TAG} 共修改了 {modified_count} 个交易对的杠杆上限")
+                if not is_dry_run:
+                    # 实盘：只读检查白名单交易对的真实杠杆上限，不修改任何本地数据
+                    whitelist = ft_cfg.get("exchange", {}).get("pair_whitelist", []) or []
+                    logger.info(f"{GRID_TAG} 实盘模式：跳过本地 markets 杠杆上限修改，仅做只读检查")
+                    for pair in whitelist:
+                        try:
+                            market = exchange.market(pair) if hasattr(exchange, "market") else None
+                            real_max = None
+                            if isinstance(market, dict):
+                                real_max = (market.get("limits") or {}).get("leverage", {}).get("max")
+                            if real_max is not None and target_lev > float(real_max):
+                                logger.warning(
+                                    f"{GRID_TAG} 实盘杠杆超限 | Pair={pair} | "
+                                    f"目标={target_lev}x | 交易所最大={real_max}x | "
+                                    f"将以交易所实际上限开仓，请检查账户是否已开通该交易对杠杆权限"
+                                )
+                            elif real_max is not None:
+                                logger.info(
+                                    f"{GRID_TAG} 实盘杠杆检查通过 | Pair={pair} | "
+                                    f"目标={target_lev}x | 交易所最大={real_max}x"
+                                )
+                        except Exception as e:
+                            logger.warning(f"{GRID_TAG} 实盘杠杆只读检查失败 | Pair={pair} | {e}")
+                else:
+                    # dry_run：修改本地 markets 字典，让 Freqtrade 内部风控按目标杠杆计算
+                    modified_count = 0
+                    for markets_attr in ['markets', '_markets']:
+                        markets_dict = getattr(exchange, markets_attr, None)
+                        if markets_dict and isinstance(markets_dict, dict):
+                            for symbol, market in markets_dict.items():
+                                if market and isinstance(market, dict):
+                                    limits = market.setdefault('limits', {})
+                                    lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
+                                    if not lev_limits.get('max') or lev_limits['max'] < target_lev:
+                                        old_max = lev_limits.get('max', 1)
+                                        lev_limits['max'] = max(75.0, target_lev)
+                                        modified_count += 1
+                                        logger.info(
+                                            f"{GRID_TAG} 干跑修改 {symbol} 杠杆上限: "
+                                            f"{old_max}x -> {lev_limits['max']}x"
+                                        )
+                    logger.info(f"{GRID_TAG} 干跑模式共修改了 {modified_count} 个交易对的杠杆上限")
 
-                # 2. 强制设置所有白名单交易对的杠杆（针对 dry_run 模式）
-                if ft_cfg.get("dry_run", False):
-                    whitelist = ft_cfg.get("exchange", {}).get("pair_whitelist", [])
-                    logger.info(f"{GRID_TAG} 白名单: {whitelist}")
+                    whitelist = ft_cfg.get("exchange", {}).get("pair_whitelist", []) or []
                     if whitelist:
                         logger.info(f"{GRID_TAG} 干跑模式：强制设置白名单交易对杠杆为 {target_lev}x")
                         for pair in whitelist:
                             try:
-                                # 通过 exchange API 设置杠杆（即使是在干跑模式下）
                                 exchange.set_leverage(target_lev, pair)
                                 logger.info(f"{GRID_TAG} ✅ 已设置 {pair} 杠杆为 {target_lev}x")
                             except Exception as e:
                                 logger.warning(f"{GRID_TAG} 设置 {pair} 杠杆失败: {e}")
             else:
-                logger.warning(f"{GRID_TAG} 无法获取 exchange 对象，跳过杠杆修复")
+                logger.warning(f"{GRID_TAG} 无法获取 exchange 对象，跳过杠杆检查")
         except Exception as e:
-            logger.exception(f"{GRID_TAG} 调整市场杠杆上限失败: {e}")
+            logger.exception(f"{GRID_TAG} 杠杆检查/修复失败: {e}")
 
         g = self._grid_cfg()
 
@@ -174,45 +195,48 @@ class GridBotBase(DcaTpBotBase):
                 cfg.get("leverage", self.config.get("leverage", 1.0))
             ) or 1.0
         )
+        target = max(1.0, target)
 
-        # ★ 强制修复：干跑模式下，即使交易所限制为1x，也强制返回目标杠杆
-        # 这是最后的一道防线，确保策略不受交易所市场数据中错误的杠杆限制影响
-        if self.config.get("dry_run", False):
+        is_dry_run = bool(self.config.get("dry_run", False))
+
+        # dry_run 下模拟撮合不受交易所真实限制约束，可强制使用目标杠杆
+        if is_dry_run:
             actual = target
             logger.warning(
                 f"{GRID_TAG} 干跑模式强制杠杆 | Pair={pair} | "
                 f"目标={target}x | 交易所限制={max_leverage}x | 强制应用={actual}x"
             )
-        elif max_leverage <= 1.0:
-            # 实盘模式下如果交易所限制为1x，尝试通过修改市场数据来解除限制
-            actual = target
-            logger.warning(
-                f"{GRID_TAG} 交易所限制为1x，尝试强制使用目标杠杆 | Pair={pair} | "
-                f"目标={target}x | 强制应用={actual}x"
+            logger.info(
+                f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
+                f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
+                f"最终应用={actual}x"
             )
-            # 尝试动态修改市场数据
-            try:
-                if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
-                    exchange = self.dp.exchange
-                    for markets_attr in ['markets', '_markets']:
-                        markets_dict = getattr(exchange, markets_attr, None)
-                        if markets_dict and isinstance(markets_dict, dict):
-                            market = markets_dict.get(pair)
-                            if market and isinstance(market, dict):
-                                limits = market.setdefault('limits', {})
-                                lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
-                                lev_limits['max'] = max(75.0, target)
-                                logger.info(f"{GRID_TAG} 已动态修改 {pair} 杠杆上限为 {lev_limits['max']}x")
-            except Exception as e:
-                logger.warning(f"{GRID_TAG} 动态修改杠杆上限失败: {e}")
-        else:
-            actual = min(target, max_leverage)
+            return actual
 
-        logger.info(
-            f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
-            f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
-            f"最终应用={actual}x"
-        )
+        # 实盘：严格尊重交易所上限，超出则降级并告警
+        # max_leverage 来自 exchange.market(pair)['limits']['leverage']['max']，
+        # 是交易所真实允许的最大值，不能绕过
+        if max_leverage <= 0:
+            # 交易所未返回有效限制，保守按 1x 处理，避免下单被拒
+            actual = 1.0
+            logger.error(
+                f"{GRID_TAG} 实盘杠杆异常：交易所未返回有效 max_leverage={max_leverage} | "
+                f"Pair={pair} | 目标={target}x | 保守降级为 1x"
+            )
+        elif target > max_leverage:
+            actual = max_leverage
+            logger.warning(
+                f"{GRID_TAG} 实盘杠杆超过交易所上限，自动降级 | Pair={pair} | "
+                f"目标={target}x | 交易所最大={max_leverage}x | 最终应用={actual}x | "
+                f"请检查交易所账户是否已开通该交易对的杠杆权限"
+            )
+        else:
+            actual = target
+            logger.info(
+                f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
+                f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
+                f"最终应用={actual}x"
+            )
 
         return actual
 
@@ -718,35 +742,55 @@ class GridBotBase(DcaTpBotBase):
                 logger.info(f"{GRID_TAG} [{pair}] 不在当前有效白名单 {self._get_effective_whitelist()} 中，拒绝开仓")
                 return False
 
-            # 核心修复：在交易确认时，强制设置交易所杠杆
+            # 杠杆设置：dry_run 尝试设置，实盘以交易所真实限制为准
             try:
                 if hasattr(self, 'dp') and self.dp and hasattr(self.dp, 'exchange') and self.dp.exchange:
                     exchange = self.dp.exchange
                     target_lev = float(self.config.get('leverage', 5.0) or 5.0)
+                    is_dry_run = bool(self.config.get("dry_run", False))
 
-                    try:
-                        exchange.set_leverage(target_lev, pair)
-                        logger.info(f"{GRID_TAG} confirm_trade_entry: 已设置 {pair} 杠杆为 {target_lev}x")
-                    except Exception as e:
-                        logger.warning(f"{GRID_TAG} confirm_trade_entry: 设置杠杆失败: {e}")
+                    if is_dry_run:
+                        # dry_run 下尝试设置杠杆，失败不影响模拟撮合
+                        try:
+                            exchange.set_leverage(target_lev, pair)
+                            logger.info(f"{GRID_TAG} confirm_trade_entry: 干跑设置 {pair} 杠杆 {target_lev}x")
+                        except Exception as e:
+                            logger.warning(f"{GRID_TAG} confirm_trade_entry: 干跑设置杠杆失败: {e}")
 
-                    try:
-                        for markets_attr in ['markets', '_markets']:
-                            markets_dict = getattr(exchange, markets_attr, None)
-                            if markets_dict and isinstance(markets_dict, dict):
-                                market = markets_dict.get(pair)
-                                if market and isinstance(market, dict):
-                                    limits = market.setdefault('limits', {})
-                                    lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
-                                    old_max = lev_limits.get('max', 1)
-                                    if old_max < target_lev:
-                                        lev_limits['max'] = max(75.0, target_lev)
-                                        logger.info(
-                                            f"{GRID_TAG} confirm_trade_entry: 修改 {pair} 杠杆上限 {old_max}x -> {lev_limits['max']}x")
-                    except Exception as e:
-                        logger.warning(f"{GRID_TAG} confirm_trade_entry: 修改市场数据失败: {e}")
+                        try:
+                            for markets_attr in ['markets', '_markets']:
+                                markets_dict = getattr(exchange, markets_attr, None)
+                                if markets_dict and isinstance(markets_dict, dict):
+                                    market = markets_dict.get(pair)
+                                    if market and isinstance(market, dict):
+                                        limits = market.setdefault('limits', {})
+                                        lev_limits = limits.setdefault('leverage', {'min': 1, 'max': 75})
+                                        old_max = lev_limits.get('max', 1)
+                                        if old_max < target_lev:
+                                            lev_limits['max'] = max(75.0, target_lev)
+                                            logger.info(
+                                                f"{GRID_TAG} confirm_trade_entry: 干跑修改 {pair} 杠杆上限 "
+                                                f"{old_max}x -> {lev_limits['max']}x"
+                                            )
+                        except Exception as e:
+                            logger.warning(f"{GRID_TAG} confirm_trade_entry: 干跑修改市场数据失败: {e}")
+                    else:
+                        # 实盘：不修改本地市场数据，不强制 set_leverage
+                        # 真实杠杆由交易所决定，策略层通过 leverage() 读取 max_leverage 自适应
+                        try:
+                            market = exchange.market(pair) if hasattr(exchange, "market") else None
+                            real_max = None
+                            if isinstance(market, dict):
+                                real_max = (market.get("limits") or {}).get("leverage", {}).get("max")
+                            if real_max is not None and target_lev > float(real_max):
+                                logger.warning(
+                                    f"{GRID_TAG} confirm_trade_entry: 实盘目标杠杆 {target_lev}x "
+                                    f"超过交易所上限 {real_max}x | Pair={pair} | 将以实际上限开仓"
+                                )
+                        except Exception:
+                            pass
             except Exception as e:
-                logger.warning(f"{GRID_TAG} confirm_trade_entry: 杠杆设置检查失败: {e}")
+                logger.warning(f"{GRID_TAG} confirm_trade_entry: 杠杆检查失败: {e}")
 
             candle_str = self._get_candle_str(current_time)
             if self._last_candle_str.get(pair) == candle_str:
@@ -981,6 +1025,50 @@ class GridBotBase(DcaTpBotBase):
                     pass
 
             if to_close:
+                try:
+                    actual_amount_chk = float(getattr(trade, "amount", 0) or 0)
+                except (TypeError, ValueError):
+                    actual_amount_chk = 0.0
+
+                total_pos_qty = 0.0
+                for _, v_all in positions.items():
+                    try:
+                        q_all = float(v_all.get("qty", 0.0) or 0.0)
+                        if q_all > 0 and np.isfinite(q_all):
+                            total_pos_qty += q_all
+                    except (TypeError, ValueError):
+                        pass
+
+                if actual_amount_chk > 0 and total_pos_qty > actual_amount_chk * 1.015:
+                    scale = actual_amount_chk / total_pos_qty
+                    logger.warning(
+                        f"{GRID_TAG} 检测到网格账本数量({total_pos_qty:.6f})大于实际持仓({actual_amount_chk:.6f})，"
+                        f"按比例 {scale:.4f} 对齐各格数量（保留原建仓价与止盈价）"
+                    )
+                    scaled_positions = {}
+                    for k_all, v_all in positions.items():
+                        try:
+                            e_all = float(v_all.get("entry", 0.0) or 0.0)
+                            q_all = float(v_all.get("qty", 0.0) or 0.0)
+                            if e_all > 0 and q_all > 0 and np.isfinite(e_all) and np.isfinite(q_all):
+                                nv = dict(v_all)
+                                nv["qty"] = q_all * scale
+                                scaled_positions[k_all] = nv
+                        except (TypeError, ValueError):
+                            continue
+
+                    if scaled_positions:
+                        positions = scaled_positions
+                        self._set_grid_positions(trade, positions)
+                        refreshed_to_close = []
+                        for idx_c, entry_c, _ in to_close:
+                            slot = positions.get(str(int(idx_c)))
+                            if slot:
+                                refreshed_to_close.append((idx_c, entry_c, slot))
+                        to_close = refreshed_to_close
+                        if not to_close:
+                            return None
+
                 total_margin = 0.0
                 total_pnl = 0.0
                 closed = []
@@ -1340,14 +1428,13 @@ class GridBotBase(DcaTpBotBase):
             if not self._get_bool(trade, "grid_n_initialized", False) and order.ft_order_side == self._entry_order_side:
                 target_leverage = float(self.config.get("leverage", 5.0) or 5.0)
                 actual_leverage = float(getattr(trade, "leverage", 1.0) or 1.0)
+                is_dry_run = bool(self.config.get("dry_run", False))
 
-                # ★ 核心修复：自动纠正 trade.leverage 为配置目标杠杆，确保后续浮盈、清算价和保证金计算正确
-                if abs(actual_leverage - target_leverage) > 0.01:
+                if is_dry_run and abs(actual_leverage - target_leverage) > 0.01:
+                    # dry_run 下模拟撮合不受交易所限制，强制对齐到目标杠杆
                     logger.warning(
-                        f"{GRID_TAG} ⚠️ 杠杆不一致！已自动强制对齐 | "
-                        f"Pair={trade.pair} | "
-                        f"配置目标={target_leverage}x | "
-                        f"原始成交={actual_leverage}x"
+                        f"{GRID_TAG} ⚠️ 干跑模式杠杆不一致，强制对齐 | "
+                        f"Pair={trade.pair} | 目标={target_leverage}x | 原始={actual_leverage}x"
                     )
                     trade.leverage = target_leverage
                     try:
@@ -1355,14 +1442,20 @@ class GridBotBase(DcaTpBotBase):
                     except Exception:
                         pass
                     lev = target_leverage
+                elif not is_dry_run and abs(actual_leverage - target_leverage) > 0.01:
+                    # 实盘：以交易所真实杠杆为准，不篡改 trade.leverage
+                    logger.warning(
+                        f"{GRID_TAG} ⚠️ 实盘杠杆与配置不一致，以交易所实际为准 | "
+                        f"Pair={trade.pair} | 配置={target_leverage}x | 实际={actual_leverage}x | "
+                        f"所有保证金/清算价计算将基于实际杠杆"
+                    )
+                    lev = actual_leverage
                 else:
                     lev = actual_leverage
                     logger.info(
-                        f"{GRID_TAG} ✅ 首仓杠杆正常 | "
-                        f"{trade.pair} | {actual_leverage}x"
+                        f"{GRID_TAG} ✅ 首仓杠杆正常 | {trade.pair} | {actual_leverage}x"
                     )
 
-                # 重新计算修正后的保证金
                 margin = (entry_price * qty) / lev
 
                 # 由于是动态网格，用时间戳作为首仓 ID
@@ -1664,30 +1757,125 @@ class GridBotBase(DcaTpBotBase):
                 )
             elif is_manual_exit and order.ft_order_side == self._exit_order_side:
                 trade_amount = float(getattr(trade, "amount", 0) or 0)
-                is_full_exit = trade_amount > 0 and qty >= trade_amount * 0.99
+                # 注意：order_filled 触发时 trade.amount 可能已是平仓后剩余数量，
+                # 也可能尚未完全刷新，因此全平判定兼顾 trade_amount <= 1e-12 或 qty >= (trade_amount + qty) * 0.99
+                pre_close_est = max(trade_amount + qty, trade_amount)
+                is_full_exit = (
+                        trade_amount <= 1e-12
+                        or (pre_close_est > 0 and qty >= pre_close_est * 0.99)
+                )
+
                 self._record_chart_marker(
                     event_type="manual_exit" if is_full_exit else "manual_reduce",
-                    pair=pair, trade_id=trade.id,
-                    side=self._side_str, price=entry_price, amount=margin,
+                    pair=pair,
+                    trade_id=trade.id,
+                    side=self._side_str,
+                    price=entry_price,
+                    amount=margin,
                     current_time=current_time,
                     message="手动平仓" if is_full_exit else "手动减仓",
-                    candle_time=current_time
+                    candle_time=current_time,
                 )
-                # ★ 修复：手动全仓平仓后设置重启标志并触发动态白名单扫描
+
                 if is_full_exit:
                     logger.info(f"{GRID_TAG} 🏁 检测到手动全仓平仓完成，触发重启和动态白名单扫描")
                     self._set(trade, "grid_allow_restart", True)
                     self._set(trade, "grid_cleanup_pending", False)
-                    # 清理网格状态
                     self._set_grid_positions(trade, {})
                     self._set(trade, "grid_pending_reduce", [])
                     self._set(trade, "grid_pending_add", None)
-                    # 触发动态白名单扫描（如果启用）
+                    self._pending_reduce.pop(trade.id, None)
+                    self._pending_add.pop(trade.id, None)
+                    self._clear_full_reduce_retry(trade)
+
                     g = self._grid_cfg()
                     if bool(g.get("dynamic_whitelist", False)):
                         self._trigger_dynamic_whitelist_scan(trade)
                     else:
                         logger.info(f"{GRID_TAG} 动态白名单未启用，手动平仓后等待下次信号")
+                else:
+                    # ★ 手动部分减仓：按 FIFO 扣减 grid_positions，保留剩余格位原 entry 以维持原网格止盈价
+                    rem_to_deduct = max(0.0, float(qty))
+                    positions = self._get_grid_positions(trade)
+                    if positions and rem_to_deduct > 0:
+                        sorted_keys = sorted(positions.keys(), key=lambda x: int(x))
+                        updated_positions = {}
+                        for k in sorted_keys:
+                            v = positions[k]
+                            try:
+                                p_entry = float(v.get("entry", 0.0))
+                                p_qty = float(v.get("qty", 0.0))
+                            except (TypeError, ValueError):
+                                continue
+                            if p_entry <= 0 or p_qty <= 0:
+                                continue
+
+                            if rem_to_deduct <= 0:
+                                new_v = dict(v)
+                                new_v["entry"] = p_entry
+                                new_v["qty"] = p_qty
+                                updated_positions[k] = new_v
+                            elif rem_to_deduct >= p_qty - 1e-12:
+                                rem_to_deduct = max(0.0, rem_to_deduct - p_qty)
+                                # 该格已扣完，移除
+                            else:
+                                left_qty = max(0.0, p_qty - rem_to_deduct)
+                                rem_to_deduct = 0.0
+                                if left_qty > 1e-12:
+                                    new_v = dict(v)
+                                    new_v["entry"] = p_entry
+                                    new_v["qty"] = left_qty
+                                    updated_positions[k] = new_v
+
+                        # 若扣完后交易所实际持仓仍大于 0 但格位字典变空，兜底挂一个以当前均价/首格为锚点的格位，避免后续走进 empty positions 分支
+                        # 如果 trade.amount 还没减掉本次成交的 qty（即 trade_amount 仍约等于扣减前总量），则剩余量应为 trade_amount - qty
+                        raw_after = float(getattr(trade, "amount", 0) or 0)
+                        total_before_deduct = sum(float(v.get("qty", 0) or 0) for v in positions.values())
+                        if raw_after > 0 and total_before_deduct > 0 and abs(
+                                raw_after - total_before_deduct) <= total_before_deduct * 0.02:
+                            actual_after = max(0.0, raw_after - float(qty))
+                        else:
+                            actual_after = raw_after
+
+                        if not updated_positions and actual_after > 0:
+                            fallback_entry = (
+                                entry_price
+                                if entry_price > 0
+                                else float(getattr(trade, "open_rate", 0.0) or 0.0)
+                            )
+                            if fallback_entry > 0:
+                                updated_positions[str(int(current_time.timestamp()))] = {
+                                    "entry": fallback_entry,
+                                    "qty": actual_after,
+                                }
+                        self._set_grid_positions(trade, updated_positions)
+
+                        # 清理可能残留的待减仓状态，让下一根 K 线按最新 positions 重新评估止盈
+                        self._pending_reduce.pop(trade.id, None)
+                        self._set(trade, "grid_pending_reduce", [])
+                        self._clear_full_reduce_retry(trade)
+
+                        runtime_lower = self._get_float(
+                            trade,
+                            "grid_dyn_lower",
+                            self._cfg_float(self._grid_cfg(), "lower_price", 0.0),
+                        )
+                        runtime_upper = self._get_float(
+                            trade,
+                            "grid_dyn_upper",
+                            self._cfg_float(self._grid_cfg(), "upper_price", 0.0),
+                        )
+                        self._set_bot_grid_runtime(
+                            runtime_lower,
+                            runtime_upper,
+                            last_fill_price=entry_price,
+                            fill_token=f"{int(current_time.timestamp())}:{getattr(order, 'order_id', '')}",
+                            **self._runtime_action_levels(trade, runtime_lower, runtime_upper),
+                        )
+                        logger.info(
+                            f"{GRID_TAG} 手动部分减仓已同步网格账本 | 减仓数量={qty:.6f} | "
+                            f"剩余格位数={len(updated_positions)} | 实际持仓={actual_after:.6f}"
+                        )
         except Exception:
             logger.exception(f"{GRID_TAG} order_filled 网格记录失败")
 
