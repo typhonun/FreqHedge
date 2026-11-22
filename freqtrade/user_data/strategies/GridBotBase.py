@@ -175,70 +175,25 @@ class GridBotBase(DcaTpBotBase):
         # 启动时若网格边界缺失且启用 smart_range_mode，立即后台预取各币区间
         self._maybe_fetch_grid_bounds()
 
-    def leverage(
-            self,
-            pair: str,
-            current_time,
-            current_rate: float,
-            proposed_leverage: float,
-            max_leverage: float,
-            entry_tag: str | None,
-            side: str,
-            **kwargs,
-    ) -> float:
+    def leverage(self, pair, current_time, current_rate, proposed_leverage, max_leverage, entry_tag, side, **kwargs):
         cfg = self.get_runtime_config() or {}
         grid_cfg = self._grid_cfg()
+        target = max(1.0, float(grid_cfg.get("leverage", cfg.get("leverage", self.config.get("leverage", 1.0))) or 1.0))
 
-        target = float(
-            grid_cfg.get(
-                "leverage",
-                cfg.get("leverage", self.config.get("leverage", 1.0))
-            ) or 1.0
-        )
-        target = max(1.0, target)
+        # ★ 核心修改：不管 dry_run 还是实盘，都以交易所真实上限为准
+        if max_leverage is None or max_leverage <= 0:
+            logger.warning(f"{GRID_TAG} 交易所未返回 {pair} 的有效杠杆限制，保守降级为 1x")
+            return 1.0
 
-        is_dry_run = bool(self.config.get("dry_run", False))
-
-        # dry_run 下模拟撮合不受交易所真实限制约束，可强制使用目标杠杆
-        if is_dry_run:
-            actual = target
+        if target > max_leverage:
             logger.warning(
-                f"{GRID_TAG} 干跑模式强制杠杆 | Pair={pair} | "
-                f"目标={target}x | 交易所限制={max_leverage}x | 强制应用={actual}x"
+                f"{GRID_TAG} 杠杆降级 | Pair={pair} | 目标={target}x | 交易所上限={max_leverage}x | "
+                f"实际应用={max_leverage}x（这会影响该交易对的保证金和最小名义价值计算）"
             )
-            logger.info(
-                f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
-                f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
-                f"最终应用={actual}x"
-            )
-            return actual
+            return float(max_leverage)
 
-        # 实盘：严格尊重交易所上限，超出则降级并告警
-        # max_leverage 来自 exchange.market(pair)['limits']['leverage']['max']，
-        # 是交易所真实允许的最大值，不能绕过
-        if max_leverage <= 0:
-            # 交易所未返回有效限制，保守按 1x 处理，避免下单被拒
-            actual = 1.0
-            logger.error(
-                f"{GRID_TAG} 实盘杠杆异常：交易所未返回有效 max_leverage={max_leverage} | "
-                f"Pair={pair} | 目标={target}x | 保守降级为 1x"
-            )
-        elif target > max_leverage:
-            actual = max_leverage
-            logger.warning(
-                f"{GRID_TAG} 实盘杠杆超过交易所上限，自动降级 | Pair={pair} | "
-                f"目标={target}x | 交易所最大={max_leverage}x | 最终应用={actual}x | "
-                f"请检查交易所账户是否已开通该交易对的杠杆权限"
-            )
-        else:
-            actual = target
-            logger.info(
-                f"{GRID_TAG} 杠杆设置 | Pair={pair} | "
-                f"前端目标杠杆={target}x | 交易所允许最大={max_leverage}x | "
-                f"最终应用={actual}x"
-            )
-
-        return actual
+        logger.info(f"{GRID_TAG} 杠杆设置 | Pair={pair} | 目标={target}x | 交易所上限={max_leverage}x | 实际={target}x")
+        return float(target)
 
     # ============================================================
     # 工具函数
@@ -810,36 +765,58 @@ class GridBotBase(DcaTpBotBase):
             if rate < lower or rate > upper:
                 return False
 
-            # ★★★ 新增：最小名义价值预校验，拦截类似 INTW 这样资金过小被底层拒绝的情况 ★★★
+            # ★★★ 新增：最小名义价值预校验
             try:
-                # 1. 计算单格分配的保证金（复用你原有的资金计算逻辑）
-                planned_stake = self._calc_grid_amount(trade=None, price=rate)
-                lev = float(self.leverage(pair, current_time, rate, 1.0, 100.0, entry_tag, side) or 1.0)
-
-                # 2. 计算名义价值 (保证金 * 杠杆)
-                planned_notional = planned_stake * lev
-
-                # 3. 获取交易所对该交易对的最小名义价值要求 (通常是 5.0 USDT)
                 market = self.dp.market(pair) if hasattr(self, 'dp') else None
+
+                # 1. 获取交易所对该交易对的真实杠杆上限（和 Freqtrade 内部调用 leverage() 时传的值一致）
+                real_max_leverage = 100.0  # 默认兜底
                 min_notional = 5.0
                 if market:
-                    cost_limits = market.get("limits", {}).get("cost", {})
-                    if cost_limits.get("min"):
+                    lev_limits = (market.get("limits") or {}).get("leverage") or {}
+                    if lev_limits.get("max") is not None:
+                        real_max_leverage = float(lev_limits["max"])
+                    cost_limits = (market.get("limits") or {}).get("cost") or {}
+                    if cost_limits.get("min") is not None:
                         min_notional = float(cost_limits["min"])
 
-                # 4. 如果名义价值不够，直接拒绝开仓，返回 False 拦截请求
+                # 2. 用真实上限调用 leverage()，拿到真正会应用的杠杆（降级后的值）
+                lev = float(self.leverage(
+                    pair=pair,
+                    current_time=current_time,
+                    current_rate=rate,
+                    proposed_leverage=1.0,
+                    max_leverage=real_max_leverage,   # ★ 关键：传真实上限，而不是 100.0
+                    entry_tag=entry_tag,
+                    side=side,
+                ) or 1.0)
+
+                # 3. 计算单格保证金 × 真实杠杆 = 名义价值
+                planned_stake = self._calc_grid_amount(trade=None, price=rate)
+                planned_notional = planned_stake * lev
+
+                # 4. 名义价值不足 → 直接拒绝开仓，避免污染全局 Wallets
                 if planned_notional < min_notional:
                     logger.warning(
                         f"{GRID_TAG} [安全拦截] {pair} 计划保证金 {planned_stake:.2f} USDT "
-                        f"× {lev}x = {planned_notional:.2f} 名义价值，"
-                        f"低于交易所最低要求 {min_notional:.2f} USDT。"
+                        f"× 真实杠杆 {lev:.2f}x（交易所上限 {real_max_leverage:.0f}x）"
+                        f"= {planned_notional:.2f} 名义价值，低于交易所最低要求 {min_notional:.2f} USDT。"
                         f"已阻止该交易对开仓，避免污染全局资金账本。"
                     )
                     return False
+
+                # 5. 杠杆被降级时，额外打一条 info，方便用户看到"为什么这个币的止盈/仓位跟预期不一样"
+                target_lev = float(self.config.get("leverage", 1.0) or 1.0)
+                if lev < target_lev - 0.01:
+                    logger.warning(
+                        f"{GRID_TAG} [杠杆降级提示] {pair} 配置杠杆 {target_lev}x，"
+                        f"但交易所实际最大 {real_max_leverage:.0f}x，将使用 {lev:.2f}x 开仓。"
+                        f"该交易对的保证金、止盈价、强平价都会按 {lev:.2f}x 重新计算。"
+                    )
+
             except Exception as e:
-                logger.error(f"{GRID_TAG} [安全拦截] 最小名义价值校验异常: {e}，强制拒绝开仓以防崩坏")
+                logger.exception(f"{GRID_TAG} [安全拦截] 名义价值校验异常: {e}，强制拒绝开仓以防崩坏")
                 return False
-            # ======================================================================
 
             self._last_candle_str[pair] = candle_str
             return True
@@ -920,23 +897,29 @@ class GridBotBase(DcaTpBotBase):
                 return None
 
             try:
-                lev = float(self.leverage(trade.pair) or 1.0)
-            except Exception:
+                lev = float(getattr(trade, "leverage", 1.0) or 1.0)
+            except (TypeError, ValueError):
                 lev = 1.0
+            if lev <= 0 or not np.isfinite(lev):
+                try:
+                    market = self.dp.market(trade.pair)
+                    real_max = 100.0
+                    if market:
+                        real_max = float((market.get("limits") or {}).get("leverage", {}).get("max") or 100.0)
+                    lev = float(self.leverage(
+                        pair=trade.pair, current_time=current_time, current_rate=current_rate,
+                        proposed_leverage=1.0, max_leverage=real_max,
+                        entry_tag=None, side=self._side_str
+                    ) or 1.0)
+                except Exception:
+                    lev = 1.0
 
             if not positions:
                 trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
-                # Only submit a cleanup exit while an exchange position
-                # actually remains. Once the position is flat, a cleanup
-                # request would consume the candle and prevent the configured
-                # post-close restart entry.
                 if actual_amount > 0 and trade_stake > 0 and np.isfinite(trade_stake):
                     self._last_candle_str[trade.pair] = candle_str
                     self._set(trade, "grid_pending_reduce", [])
                     self._set(trade, "grid_cleanup_pending", True)
-                    # A negative stake is converted to an exit quantity by
-                    # Freqtrade. Using the complete stake here makes that
-                    # conversion target the complete current trade amount.
                     return -trade_stake, "grid_reduce_cleanup"
 
                 restart = bool(g.get("restart_after_all_tp", False))
@@ -1998,18 +1981,32 @@ class GridBotBase(DcaTpBotBase):
                 grid_count = max(1, self._cfg_int(g, "grid_count", 20))
                 per_grid = wallet / grid_count
 
+        # ★ 修改：传交易所真实杠杆上限，避免 min_margin_needed 被低估
+        pair = trade.pair if trade is not None else (
+            (self.config.get("exchange", {}).get("pair_whitelist") or [""])[0]
+        )
+        real_max_leverage = 100.0
+        try:
+            market = self.dp.market(pair) if pair else None
+            if market:
+                lev_limits = (market.get("limits") or {}).get("leverage") or {}
+                if lev_limits.get("max") is not None:
+                    real_max_leverage = float(lev_limits["max"])
+        except Exception:
+            pass
+
         leverage = float(self.leverage(
-            pair=trade.pair,
+            pair=pair,
             current_time=None,
             current_rate=price,
             proposed_leverage=1.0,
-            max_leverage=100.0,
+            max_leverage=real_max_leverage,
             entry_tag=None,
             side=self._side_str
         ) or 1.0)
 
         try:
-            market = self.dp.market(trade.pair)
+            market = self.dp.market(pair) if pair else None
             min_notional = float(market["limits"]["cost"]["min"] or 5.0) if market else 5.0
         except Exception:
             min_notional = 5.0

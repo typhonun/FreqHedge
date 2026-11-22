@@ -122,42 +122,23 @@ class GridScanner:
         return selected
 
     def scan(self, target_long=3, target_short=0, top_n=100):
-        # 1. 加载交易所完整市场数据
         markets = self.exchange.load_markets()
         tickers = self.exchange.fetch_tickers()
 
         usdt_futures = []
         for s, market in markets.items():
-            # ★ 核心精准过滤条件：
-            # ① 必须是 USDT 永续合约（linear 线性合约，结算货币为 USDT）
+            # ① 必须是 USDT 永续合约
             if market.get('linear') is not True or market.get('quote') != 'USDT':
                 continue
-
-            # ② 必须处于激活状态 (active)
+            # ② 必须处于激活状态
             if not market.get('active', True):
                 continue
-
-            # ③ 过滤掉非传统加密货币分类（如 ETF、股票映射、指数类标签）
-            # 检查 info 字段或交易所原生分类中是否包含 traditional/stock/etf 属性
-            info = market.get('info', {})
-            category = str(info.get('category', '')).lower()
-            if 'etf' in category or 'stock' in category or 'index' in category:
-                continue
-
-            # ④ 额外双保险：排除常见的美股/指数基础币种白名单（防止交易所未打标签）
-            base_currency = market.get('base', '').upper()
-            if base_currency in self._stock_blacklist:
-                continue
-
-            # ⑤ 必须在 tickers 中有成交量数据
+            # ③ 必须在 tickers 中有成交量
             t = tickers.get(s)
             if not t or not t.get('quoteVolume'):
                 continue
-
-            usdt_futures.append({
-                'symbol': s,
-                'volume': t['quoteVolume']
-            })
+            # ★ 删掉黑名单和 ETF 过滤，所有交易对都进入候选池
+            usdt_futures.append({'symbol': s, 'volume': t['quoteVolume']})
 
         # 按 24 小时成交量从大到小排序，取前 top_n 个主流币
         usdt_futures.sort(key=lambda x: x['volume'], reverse=True)
