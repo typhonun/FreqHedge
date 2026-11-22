@@ -503,6 +503,17 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
         except Exception as e:
             print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
 
+        # ★ 新增：重启前清理旧的动态区间 KV，防止重启后回退到历史区间
+        for runtime_key in (
+                f"grid_runtime_lower_{bot_id}_{side}",
+                f"grid_runtime_upper_{bot_id}_{side}",
+                f"grid_runtime_state_{bot_id}_{side}",
+        ):
+            try:
+                ConfigManager.set_bot_kv(runtime_key, None)
+            except Exception as e:
+                print(f"[API] 清理 {runtime_key} 失败（非致命）: {e}")
+
         # 5) 让新配置/白名单真正生效：若机器人正在运行，执行重启使其加载新白名单
         restarted = False
         latest_bot = BotManager.get(bot_id)

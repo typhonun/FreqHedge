@@ -397,7 +397,7 @@ class ConfigService:
             if freqtrade_url:
                 FreqtradeClient.reload_config(freqtrade_url)
                 print(f"[config] 热更新白名单成功: bot_id={bot_id}, side={side}, pairs={new_pairs}")
-                return True
         except Exception as e:
-            print(f"[config] 热更新白名单失败: {e}")
-            return False
+            # 数据库和 json 配置文件已经落盘，热重载失败交给上层 restart 兜底，不能 return False
+            print(f"[config] 热更新白名单失败（将由重启生效）: {e}")
+        return True

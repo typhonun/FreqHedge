@@ -379,7 +379,20 @@ class GridBotBase(DcaTpBotBase):
         cfg_wl = ((self.config or {}).get("exchange") or {}).get("pair_whitelist") or []
         return [str(p) for p in cfg_wl if p]
 
+    def _get_replacing_pair(self) -> str:
+        try:
+            from core.config_manager import ConfigManager
+            lock_info = ConfigManager.get_bot_kv(self._whitelist_lock_key())
+            if isinstance(lock_info, dict) and lock_info.get("scanning"):
+                expire_at = float(lock_info.get("expire_at") or 0.0)
+                if expire_at <= 0 or time.time() < expire_at:
+                    return str(lock_info.get("closed_pair") or "")
+        except Exception:
+            pass
+        return ""
+
     def _is_pair_in_whitelist(self, pair: str) -> bool:
+        # 扫描锁期间由门禁 1 统一拦截；扫描结束后完全以最新有效白名单为准（允许重新选中刚平仓的币）
         wl = self._get_effective_whitelist()
         if not wl:
             return True
@@ -1512,19 +1525,11 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_dyn_lower", runtime_lower)
                 self._set(trade, "grid_dyn_upper", runtime_upper)
                 step = self._get_grid_step_for_bounds(runtime_lower, runtime_upper)
-                if step > 0:
-                    next_add = entry_price + step if self._is_short else entry_price - step
-                    self._set(trade, "grid_next_add_price", next_add)
-                runtime_lower = self._get_float(
-                    trade, "grid_dyn_lower",
-                    self._cfg_float(self._grid_cfg(), "lower_price", 0.0),
+                next_add = (
+                    (entry_price + step if self._is_short else entry_price - step)
+                    if step > 0
+                    else entry_price
                 )
-                runtime_upper = self._get_float(
-                    trade, "grid_dyn_upper",
-                    self._cfg_float(self._grid_cfg(), "upper_price", 0.0),
-                )
-                step = self._get_grid_step_for_bounds(runtime_lower, runtime_upper)
-                next_add = entry_price + step if self._is_short else entry_price - step
                 self._set(trade, "grid_next_add_price", next_add)
                 self._set_bot_grid_runtime(
                     runtime_lower,
@@ -1669,14 +1674,16 @@ class GridBotBase(DcaTpBotBase):
 
                 if not positions:
                     actual_amount = float(getattr(trade, "amount", 0) or 0)
-                    if actual_amount <= 0:
+                    remaining_after = max(0.0, actual_amount - float(qty))
+                    is_trade_closed = not bool(getattr(trade, "is_open", True))
+                    order_status = str(getattr(order, "status", "") or "").lower()
+                    is_order_closed = order_status in ("closed", "filled") and remaining_after <= 1e-8
+
+                    if actual_amount <= 1e-12 or remaining_after <= 1e-8 or is_trade_closed or is_order_closed:
                         logger.info(f"{GRID_TAG} 🏁 当前所有网格已平仓，等待后续 K 线继续操作。")
                         self._set(trade, "grid_allow_restart", True)
                         self._set(trade, "grid_cleanup_pending", False)
 
-                        # ★ 修复：网格自动全平后，与手动全平一样触发动态白名单扫描
-                        # 否则 restart_after_all_tp=True 会在同一 pair 上无限重启，
-                        # dynamic_whitelist 永远不生效。
                         _g = self._grid_cfg()
                         if bool(_g.get("dynamic_whitelist", False)):
                             logger.info(
@@ -1784,12 +1791,20 @@ class GridBotBase(DcaTpBotBase):
                 )
             elif is_manual_exit and order.ft_order_side == self._exit_order_side:
                 trade_amount = float(getattr(trade, "amount", 0) or 0)
-                # 注意：order_filled 触发时 trade.amount 可能已是平仓后剩余数量，
-                # 也可能尚未完全刷新，因此全平判定兼顾 trade_amount <= 1e-12 或 qty >= (trade_amount + qty) * 0.99
-                pre_close_est = max(trade_amount + qty, trade_amount)
+                positions_before = self._get_grid_positions(trade)
+                grid_qty_before = sum(
+                    float(v.get("qty", 0) or 0) for v in positions_before.values()
+                )
+                order_status = str(getattr(order, "status", "") or "").lower()
+                is_trade_closed = not bool(getattr(trade, "is_open", True))
+
+                # 全平判定：交易已关闭、剩余持仓接近 0，或本次成交量覆盖了原网格总数量
+                remaining_after_fill = max(0.0, trade_amount - float(qty))
                 is_full_exit = (
-                        trade_amount <= 1e-12
-                        or (pre_close_est > 0 and qty >= pre_close_est * 0.99)
+                        is_trade_closed
+                        or trade_amount <= 1e-12
+                        or (order_status in ("closed", "filled") and remaining_after_fill <= 1e-8)
+                        or (grid_qty_before > 0 and qty >= grid_qty_before * 0.99)
                 )
 
                 self._record_chart_marker(
