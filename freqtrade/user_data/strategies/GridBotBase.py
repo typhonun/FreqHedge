@@ -810,6 +810,37 @@ class GridBotBase(DcaTpBotBase):
             if rate < lower or rate > upper:
                 return False
 
+            # ★★★ 新增：最小名义价值预校验，拦截类似 INTW 这样资金过小被底层拒绝的情况 ★★★
+            try:
+                # 1. 计算单格分配的保证金（复用你原有的资金计算逻辑）
+                planned_stake = self._calc_grid_amount(trade=None, price=rate)
+                lev = float(self.leverage(pair, current_time, rate, 1.0, 100.0, entry_tag, side) or 1.0)
+
+                # 2. 计算名义价值 (保证金 * 杠杆)
+                planned_notional = planned_stake * lev
+
+                # 3. 获取交易所对该交易对的最小名义价值要求 (通常是 5.0 USDT)
+                market = self.dp.market(pair) if hasattr(self, 'dp') else None
+                min_notional = 5.0
+                if market:
+                    cost_limits = market.get("limits", {}).get("cost", {})
+                    if cost_limits.get("min"):
+                        min_notional = float(cost_limits["min"])
+
+                # 4. 如果名义价值不够，直接拒绝开仓，返回 False 拦截请求
+                if planned_notional < min_notional:
+                    logger.warning(
+                        f"{GRID_TAG} [安全拦截] {pair} 计划保证金 {planned_stake:.2f} USDT "
+                        f"× {lev}x = {planned_notional:.2f} 名义价值，"
+                        f"低于交易所最低要求 {min_notional:.2f} USDT。"
+                        f"已阻止该交易对开仓，避免污染全局资金账本。"
+                    )
+                    return False
+            except Exception as e:
+                logger.error(f"{GRID_TAG} [安全拦截] 最小名义价值校验异常: {e}，强制拒绝开仓以防崩坏")
+                return False
+            # ======================================================================
+
             self._last_candle_str[pair] = candle_str
             return True
         except Exception:
@@ -1384,8 +1415,21 @@ class GridBotBase(DcaTpBotBase):
             )
             return float(buy_usdt_per), f"grid_add_multi_{new_idx}"
 
-        except Exception:
-            logger.exception(f"{GRID_TAG} adjust_trade_position 异常")
+        except Exception as e:
+            logger.error(
+                f"{GRID_TAG} [交易对异常隔离] {trade.pair} 加减仓发生底层异常: {e} | "
+                f"已自动清理挂起状态，不影响其他交易对。"
+            )
+            # 清理挂起的减仓状态（避免下一根 K 线进入 pending 死循环）
+            if trade.id in self._pending_reduce:
+                self._pending_reduce.pop(trade.id, None)
+            self._set(trade, "grid_pending_reduce", [])
+            # 清理挂起的加仓状态
+            if trade.id in self._pending_add:
+                self._pending_add.pop(trade.id, None)
+            self._set(trade, "grid_pending_add", None)
+            # 清理碎片全平重试锁
+            self._clear_full_reduce_retry(trade)
             return None
 
     # ============================================================

@@ -468,6 +468,7 @@ const minGridCapital = computed(() => {
 
   // 每格最低保证金 = 最小名义价值 / 杠杆
   const minPerGrid = minNotional / leverage
+  // 单币总资金需求 = 每格最低保证金 * 网格数量
   return minPerGrid * count
 })
 

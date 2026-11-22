@@ -182,12 +182,24 @@ def _validate_grid_capital(data: dict):
     # 单币最低总资金 = (最小名义价值 / 杠杆) * 网格数量
     min_total_capital = (min_notional / leverage) * count
 
+    # ★★★ 新增：如果单币所需的最低资金 > 实际分配给单币的资金，直接报错，不允许保存
     if actual_capital < min_total_capital:
         mode_str = f"多因子并发 {max_open} 个币，分摊后单币" if is_scanner else "当前"
         raise HTTPException(
             400,
             f"资金不足：{mode_str}可用资金 {actual_capital:.2f} USDT，"
             f"而当前杠杆 {leverage}x 下 {count} 格网格最低需要 {min_total_capital:.2f} USDT。"
+            f"【强烈建议】增加总资金，或减少【最大持仓数】，或增加【单格分配资金】！"
+        )
+
+    # ★★★ 新增：校验每格保证金是否满足最小下单名义价值 ★★★
+    per_grid_capital = actual_capital / count
+    per_grid_notional = per_grid_capital * leverage
+    if per_grid_notional < min_notional:
+        raise HTTPException(
+            400,
+            f"单格资金过低：每个网格分配 {per_grid_capital:.2f} USDT，乘以 {leverage}x 杠杆后为 {per_grid_notional:.2f} USDT，"
+            f"低于该交易对的最低要求 {min_notional:.2f} USDT。请减少网格数量（count={count}）或增加资金！"
         )
 
 
