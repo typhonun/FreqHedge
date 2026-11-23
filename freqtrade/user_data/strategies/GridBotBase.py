@@ -1098,109 +1098,54 @@ class GridBotBase(DcaTpBotBase):
                         if not to_close:
                             return None
 
+                # 减仓批次先做可成交性校验；无法形成有效订单时，优先把保证金
+                # 最小的碎片格并入相邻格（只动账本，不提前卖出邻格仓位），
+                # 全部并入后仍不可成交才回退到整仓平掉的兜底逻辑。
                 total_margin = 0.0
                 total_pnl = 0.0
                 closed = []
-                for idx, entry, v in to_close:
-                    qty = float(v.get("qty", 0.0))
-                    margin = (entry * qty) / lev if lev > 0 else 0.0
-                    pnl = (entry - close_price) * qty if self._is_short else (close_price - entry) * qty
-                    if pd.isna(margin) or np.isinf(margin): margin = 0.0
-                    if pd.isna(pnl) or np.isinf(pnl): pnl = 0.0
-                    total_margin += margin
-                    total_pnl += pnl
-                    closed.append((idx, entry, qty, margin, pnl))
+                exec_info = None
+                merge_attempts = 0
+                while True:
+                    total_margin, total_pnl, closed = self._build_grid_reduce_closed(
+                        to_close, lev, close_price
+                    )
+                    if total_margin <= 0 or not np.isfinite(total_margin):
+                        return None
+                    exec_info = self._eval_grid_reduce_executability(
+                        trade,
+                        total_margin,
+                        closed,
+                        lev,
+                        close_price,
+                        kwargs.get("min_exit_stake", 0.0),
+                    )
+                    if exec_info["ok"]:
+                        break
+                    merged_idx = self._merge_smallest_reduce_slot(trade, positions, to_close)
+                    if merged_idx is None:
+                        break
+                    to_close = [item for item in to_close if int(item[0]) != merged_idx]
+                    if not to_close:
+                        # 可减格全部并入相邻格，本轮没有可成交的减仓单
+                        return None
+                    merge_attempts += 1
+                    if merge_attempts > len(positions) + 1:
+                        break
 
-                if total_margin <= 0 or not np.isfinite(total_margin):
-                    return None
-
-                # Freqtrade converts the returned stake amount back to a position
-                # quantity before applying exchange precision. Check that result,
-                # not only the quantity stored in each grid slot.
-                requested_qty = sum(item[2] for item in closed)
-                min_qty = 0.001
-                amount_step = min_qty
-                try:
-                    market = self.dp.market(trade.pair)
-                    if market and market.get("limits", {}).get("amount", {}).get("min"):
-                        min_qty = float(market["limits"]["amount"]["min"])
-                    precision = (market or {}).get("precision", {}).get("amount")
-                    if precision is not None:
-                        precision = float(precision)
-                        # CCXT uses decimal places for DECIMAL_PLACES and a
-                        # step size for TICK_SIZE markets.
-                        amount_step = (
-                            10.0 ** (-precision)
-                            if precision >= 1 or precision == 0
-                            else precision
-                        )
-                except Exception:
-                    pass
-                if not np.isfinite(amount_step) or amount_step <= 0:
-                    amount_step = min_qty
-
-                try:
-                    actual_amount = float(getattr(trade, "amount", 0) or 0)
-                    trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
-                except (TypeError, ValueError):
-                    actual_amount = 0.0
-                    trade_stake = 0.0
-
-                # This is the same conversion used by Freqtrade when it handles
-                # a negative adjustment. A tiny grid leg can otherwise become 0
-                # after precision conversion and never create an exit order.
-                converted_qty = (
-                    total_margin * actual_amount / trade_stake
-                    if trade_stake > 0 else 0.0
-                )
-                executable_qty = (
-                        np.floor((converted_qty + amount_step * 1e-9) / amount_step)
-                        * amount_step
-                )
-                min_exit_stake = kwargs.get("min_exit_stake", 0.0) or 0.0
-                try:
-                    min_exit_stake = float(min_exit_stake)
-                except (TypeError, ValueError):
-                    min_exit_stake = 0.0
-                remaining_stake = max(trade_stake - total_margin, 0.0)
-                would_leave_unexitable_remainder = (
-                        remaining_stake > 0
-                        and min_exit_stake > 0
-                        and remaining_stake < min_exit_stake
-                )
-                remaining_qty = max(actual_amount - executable_qty, 0.0)
-                remaining_stake_after_precision = (
-                    remaining_qty * close_price / lev if lev > 0 else 0.0
-                )
-                would_leave_precision_remainder = (
-                        remaining_qty > 0
-                        and (
-                                remaining_qty < min_qty
-                                or (
-                                        min_exit_stake > 0
-                                        and remaining_stake_after_precision < min_exit_stake
-                                )
-                        )
-                )
-
-                if (
-                        requested_qty < min_qty
-                        or executable_qty < min_qty
-                        or would_leave_unexitable_remainder
-                        or would_leave_precision_remainder
-                ):
+                if not exec_info["ok"]:
                     logger.warning(
                         f"{GRID_TAG} 减仓无法形成可成交数量 | "
-                        f"网格数量={requested_qty:.6f} | 换算数量={converted_qty:.6f} | "
-                        f"可成交数量={executable_qty:.6f} | 最小数量={min_qty:.6f} | "
-                        f"精度后剩余数量={remaining_qty:.6f} | "
-                        f"精度后剩余保证金={remaining_stake_after_precision:.6f} | "
-                        f"剩余保证金={remaining_stake:.6f}，"
+                        f"网格数量={exec_info['requested_qty']:.6f} | 换算数量={exec_info['converted_qty']:.6f} | "
+                        f"可成交数量={exec_info['executable_qty']:.6f} | 最小数量={exec_info['min_qty']:.6f} | "
+                        f"精度后剩余数量={exec_info['remaining_qty']:.6f} | "
+                        f"精度后剩余保证金={exec_info['remaining_stake_after_precision']:.6f} | "
+                        f"剩余保证金={exec_info['remaining_stake']:.6f}，"
                         f"将整笔平掉剩余仓位，防止碎片订单锁死！"
                     )
                     # Do not clear local positions before the exchange confirms
                     # the close. order_filled() is the source of truth.
-                    full_close_stake = trade_stake
+                    full_close_stake = exec_info["trade_stake"]
                     if full_close_stake <= 0 or not np.isfinite(full_close_stake):
                         return None
 
@@ -2253,6 +2198,193 @@ class GridBotBase(DcaTpBotBase):
         positions = self._get_grid_positions(trade)
         positions[str(int(idx))] = {"entry": float(entry), "qty": float(qty)}
         self._set_grid_positions(trade, positions)
+
+    def _get_amount_limits(self, trade):
+        """Return (min_qty, amount_step) for the pair's market limits."""
+        min_qty = 0.001
+        amount_step = min_qty
+        try:
+            market = self.dp.market(trade.pair)
+            if market and market.get("limits", {}).get("amount", {}).get("min"):
+                min_qty = float(market["limits"]["amount"]["min"])
+            precision = (market or {}).get("precision", {}).get("amount")
+            if precision is not None:
+                precision = float(precision)
+                # CCXT uses decimal places for DECIMAL_PLACES and a
+                # step size for TICK_SIZE markets.
+                amount_step = (
+                    10.0 ** (-precision)
+                    if precision >= 1 or precision == 0
+                    else precision
+                )
+        except Exception:
+            pass
+        if not np.isfinite(amount_step) or amount_step <= 0:
+            amount_step = min_qty
+        return min_qty, amount_step
+
+    def _build_grid_reduce_closed(self, to_close, lev, close_price):
+        total_margin = 0.0
+        total_pnl = 0.0
+        closed = []
+        for idx, entry, v in to_close:
+            qty = float(v.get("qty", 0.0))
+            margin = (entry * qty) / lev if lev > 0 else 0.0
+            pnl = (entry - close_price) * qty if self._is_short else (close_price - entry) * qty
+            if pd.isna(margin) or np.isinf(margin):
+                margin = 0.0
+            if pd.isna(pnl) or np.isinf(pnl):
+                pnl = 0.0
+            total_margin += margin
+            total_pnl += pnl
+            closed.append((idx, entry, qty, margin, pnl))
+        return total_margin, total_pnl, closed
+
+    def _eval_grid_reduce_executability(self, trade, total_margin, closed, lev, close_price, min_exit_stake):
+        # Freqtrade converts the returned stake amount back to a position
+        # quantity before applying exchange precision. Check that result,
+        # not only the quantity stored in each grid slot.
+        requested_qty = sum(item[2] for item in closed)
+        min_qty, amount_step = self._get_amount_limits(trade)
+        try:
+            actual_amount = float(getattr(trade, "amount", 0) or 0)
+            trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
+        except (TypeError, ValueError):
+            actual_amount = 0.0
+            trade_stake = 0.0
+
+        # This is the same conversion used by Freqtrade when it handles
+        # a negative adjustment. A tiny grid leg can otherwise become 0
+        # after precision conversion and never create an exit order.
+        converted_qty = (
+            total_margin * actual_amount / trade_stake
+            if trade_stake > 0 else 0.0
+        )
+        executable_qty = (
+                np.floor((converted_qty + amount_step * 1e-9) / amount_step)
+                * amount_step
+        )
+        try:
+            min_exit_stake = float(min_exit_stake or 0.0)
+        except (TypeError, ValueError):
+            min_exit_stake = 0.0
+        remaining_stake = max(trade_stake - total_margin, 0.0)
+        would_leave_unexitable_remainder = (
+                remaining_stake > 0
+                and min_exit_stake > 0
+                and remaining_stake < min_exit_stake
+        )
+        remaining_qty = max(actual_amount - executable_qty, 0.0)
+        remaining_stake_after_precision = (
+            remaining_qty * close_price / lev if lev > 0 else 0.0
+        )
+        would_leave_precision_remainder = (
+                remaining_qty > 0
+                and (
+                        remaining_qty < min_qty
+                        or (
+                                min_exit_stake > 0
+                                and remaining_stake_after_precision < min_exit_stake
+                        )
+                )
+        )
+        ok = not (
+                requested_qty < min_qty
+                or executable_qty < min_qty
+                or would_leave_unexitable_remainder
+                or would_leave_precision_remainder
+        )
+        return {
+            "ok": ok,
+            "requested_qty": requested_qty,
+            "min_qty": min_qty,
+            "amount_step": amount_step,
+            "converted_qty": converted_qty,
+            "executable_qty": executable_qty,
+            "actual_amount": actual_amount,
+            "trade_stake": trade_stake,
+            "remaining_stake": remaining_stake,
+            "remaining_qty": remaining_qty,
+            "remaining_stake_after_precision": remaining_stake_after_precision,
+        }
+
+    def _merge_smallest_reduce_slot(self, trade, positions, to_close):
+        """Merge the smallest-margin slot in the reduce batch into its nearest
+        non-batch neighbor. Ledger-only: the neighbor is NOT sold early."""
+        try:
+            to_close_idxs = {int(item[0]) for item in to_close}
+
+            def _slot_margin(item):
+                _, entry, v = item
+                try:
+                    q = float(v.get("qty", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    q = 0.0
+                return abs(float(entry)) * max(q, 0.0)
+
+            idx, _, _ = min(to_close, key=_slot_margin)
+            idx = int(idx)
+            src_key = str(idx)
+            src = positions.get(src_key)
+            if not isinstance(src, dict):
+                return None
+            try:
+                src_entry = float(src.get("entry", 0.0) or 0.0)
+                src_qty = float(src.get("qty", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                return None
+            if src_entry <= 0 or src_qty <= 0:
+                return None
+
+            best_key = None
+            best_diff = None
+            for k, v in positions.items():
+                try:
+                    n_idx = int(k)
+                except (TypeError, ValueError):
+                    continue
+                if n_idx == idx or n_idx in to_close_idxs:
+                    continue
+                if not isinstance(v, dict):
+                    continue
+                try:
+                    n_entry = float(v.get("entry", 0.0) or 0.0)
+                    n_qty = float(v.get("qty", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if n_entry <= 0 or n_qty <= 0:
+                    continue
+                diff = abs(n_entry - src_entry)
+                if best_diff is None or diff < best_diff:
+                    best_diff = diff
+                    best_key = k
+            if best_key is None:
+                return None
+
+            dst = positions[best_key]
+            d_entry = float(dst.get("entry", 0.0) or 0.0)
+            d_qty = float(dst.get("qty", 0.0) or 0.0)
+            total_qty = src_qty + d_qty
+            if total_qty <= 0 or not np.isfinite(total_qty):
+                return None
+            new_entry = (src_entry * src_qty + d_entry * d_qty) / total_qty
+            if new_entry <= 0 or not np.isfinite(new_entry):
+                return None
+            new_dst = dict(dst)
+            new_dst["entry"] = float(new_entry)
+            new_dst["qty"] = float(total_qty)
+            positions[best_key] = new_dst
+            positions.pop(src_key, None)
+            self._set_grid_positions(trade, positions)
+            logger.info(
+                f"{GRID_TAG} 碎片格并入相邻格 | {trade.pair} | "
+                f"并入建仓={src_entry:.4f} 数量={src_qty:.6f} -> "
+                f"邻格={best_key} 新建仓={new_entry:.4f} 新数量={total_qty:.6f}"
+            )
+            return idx
+        except Exception as e:
+            logger.warning(f"{GRID_TAG} 碎片格并入失败 | {trade.pair} | {e}")
+            return None
 
     def _log_reduce(self, trade, price, closed, total_margin, total_pnl):
         try:
