@@ -45,9 +45,9 @@ GRID_DEFAULTS = {
     "grid_count": 20,
     "spacing_algo": "arithmetic",
     "tp_per_grid_pct": 0.5,
-    "stop_below_lower": True,
+    "stop_below_lower": False,
     "stop_above_upper": False,
-    "start_mode": "wait",
+    "start_mode": "grid",          # 'grid' | 'trigger' | 'immediate'
     # ★ 默认 = grid_count（不额外限制，对齐币安；调小可作风控）
     "max_open_grids": 20,
     # ★ 保留旧字段：老数据兼容
@@ -57,7 +57,16 @@ GRID_DEFAULTS = {
     "trailing_up": False,
     "trailing_down": False,
     "min_notional_value": 10,
-    "dynamic_whitelist": False,  # ★ 动态白名单开关
+    "dynamic_whitelist": False,    # ★ 动态白名单开关
+
+    # ★ 单币止盈默认值兜底
+    "pair_tp_enabled": False,
+    "pair_tp_mode": "ratio",       # 'ratio' | 'amount'
+    "pair_tp_ratio": 3.0,
+    "pair_tp_amount": 10,
+
+    # ★ 多因子区间策略默认值兜底
+    "smart_range_mode": "moderate",  # 'aggressive' | 'moderate' | 'conservative'
 }
 
 

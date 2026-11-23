@@ -1718,6 +1718,7 @@ const exitReasonLabel = (reason) => {
   // ★ 新增：网格相关
   if (s === 'grid_stop_lower') return '网格跌破下沿'
   if (s === 'grid_stop_upper') return '网格涨破上沿'
+  if (s === 'grid_pair_tp') return '单币止盈全平'
   if (s.startsWith('grid_reduce_lv')) return `网格减仓 格${s.slice(14)}`
   if (s.startsWith('grid_add_lv')) return `网格加仓 格${s.slice(11)}`
   if (s.startsWith('grid_tp_lv')) return `网格止盈 格${s.slice(10)}`
@@ -1756,6 +1757,10 @@ const buildPayload = () => {
   } else if (strategyConfig.grid) {
     // ★ 手动网格模式下，清掉 smart_range_mode，避免误判
     delete strategyConfig.grid.smart_range_mode
+    // ★ 手动模式不支持单币止盈（与机器人风控止盈重复），强制关闭
+    if (strategyConfig.grid.pair_tp_enabled) {
+      strategyConfig.grid.pair_tp_enabled = false
+    }
   }
 
   // ★ 计算 stakeAmount（带兜底）
@@ -2080,32 +2085,36 @@ const onTimeframeChange = async (newTf) => {
 const syncing = ref(false)
 const configDirtyDuringBacktest = ref(false)
 
-const syncConfig = async () => {
-  if (!botId.value) return
-  if (!loaded.value) return   // ★ 新增：没加载完不准同步
+const syncConfig = async ({ silent = true } = {}) => {
+  if (!botId.value || !loaded.value) return false
   if (botBaseInfo.value.capital == null || Number(botBaseInfo.value.capital) <= 0) return false
   if (!isDryRun.value && !botBaseInfo.value.exchangeAccountId) return false
 
-  // ★ 新增：如果是网格，确保 core 参数有效再提交
-  if (strategyType.value === 'grid' && minGridCapital.value === 0) {
-    ElMessage.warning('网格最低资金尚未计算完成，请稍等片刻再保存')
-    return false
-  }
-  if (botBaseInfo.value.capital < minGridCapital.value) {
-    console.warn(`[syncConfig] 资金不足，未提交。capital=${botBaseInfo.value.capital}, min=${minGridCapital.value}`)
-    return false
+  if (strategyType.value === 'grid') {
+    if (minGridCapital.value <= 0) {
+      if (!silent) {
+        ElMessage.warning('网格最低资金尚未计算完成，请稍等片刻再试')
+      }
+      return false
+    }
+    if (Number(botBaseInfo.value.capital) < minGridCapital.value) {
+      console.warn(
+        `[syncConfig] 资金不足，未提交。capital=${botBaseInfo.value.capital}, min=${minGridCapital.value}`
+      )
+      return false
+    }
   }
 
   try {
     syncing.value = true
     const payload = buildPayload()
 
-    // 如果 stakeAmount 是非法的（比如 NaN/0），也不发
-    if (payload.base.stakeAmount <= 0) {
-      return
+    if (!Number.isFinite(Number(payload.base.stakeAmount)) || Number(payload.base.stakeAmount) <= 0) {
+      return false
     }
 
     await axios.put(`${API}/bots/${botId.value}`, payload)
+    return true
   } catch (e) {
     const detail = e?.response?.data?.detail
     let msg = '同步配置失败'
@@ -2120,6 +2129,7 @@ const syncConfig = async () => {
       msg = detail
     }
     console.error('[syncConfig] failed:', msg, 'payload=', buildPayload())
+    return false
   } finally {
     syncing.value = false
   }
@@ -2441,14 +2451,14 @@ const handleBacktest = async () => {
     backtestRange.value = defaultRange()
   }
 
+  const synced = await syncConfig({ silent: false })
+  if (!synced) {
+    ElMessage.warning('配置尚未同步成功，请检查资金与参数后再试')
+    return
+  }
+
   const [startStr, endStr] = backtestRange.value
   const timerange = `${startStr}-${endStr}`
-
-  try {
-    await syncConfig()
-  } catch (e) {
-    console.error(e)
-  }
 
   saveRange(botId.value, backtestRange.value)
 
@@ -2508,14 +2518,14 @@ const handleDownloadData = async () => {
     return
   }
 
+  const synced = await syncConfig({ silent: false })
+  if (!synced) {
+    ElMessage.warning('配置尚未同步成功，请检查资金与参数后再试')
+    return
+  }
+
   const [startStr, endStr] = backtestRange.value
   const timerange = `${startStr}-${endStr}`
-
-  try {
-    await syncConfig()
-  } catch (e) {
-    console.error(e)
-  }
 
   saveRange(botId.value, backtestRange.value)
 
@@ -3311,12 +3321,6 @@ onUnmounted(() => {
   .bt-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-.bt-summary {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
 }
 
 .bt-metric {

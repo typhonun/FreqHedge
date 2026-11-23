@@ -212,7 +212,9 @@ class GridBotBase(DcaTpBotBase):
 
     def _grid_cfg(self):
         cfg = self.get_runtime_config() or {}
-        return self._cfg(cfg, "grid", default={}) or {}
+        if isinstance(cfg, dict) and isinstance(cfg.get("grid"), dict):
+            return cfg["grid"]
+        return cfg if isinstance(cfg, dict) else {}
 
     def _amount_mode(self) -> str:
         cfg = self.get_runtime_config() or {}
@@ -1438,8 +1440,14 @@ class GridBotBase(DcaTpBotBase):
             pass
 
         try:
-            if order.ft_order_side not in (self._entry_order_side, self._exit_order_side): return
-            reason = str(getattr(order, "ft_order_tag", None) or getattr(order, "ft_order_reason", None) or "")
+            if order.ft_order_side not in (self._entry_order_side, self._exit_order_side):
+                return
+            raw_reason = (
+                    getattr(order, "ft_order_reason", None)
+                    or getattr(order, "ft_order_tag", None)
+                    or ""
+            )
+            reason = str(raw_reason).strip().lower()
             entry_price = float(getattr(order, "average", None) or trade.open_rate or 0.0)
             qty = self._order_filled_quantity(order)
 
@@ -1519,6 +1527,7 @@ class GridBotBase(DcaTpBotBase):
                 self._set(trade, "grid_pending_reduce", [])
                 self._set(trade, "grid_allow_restart", False)
                 self._set(trade, "grid_trailing_candle", None)
+                self._set(trade, "grid_realized_profit", 0.0)
                 g = self._grid_cfg()
                 # 动态白名单新币优先使用后端预取的专属区间
                 runtime_lower, runtime_upper = self._runtime_grid_bounds(trade.pair)
@@ -1628,12 +1637,23 @@ class GridBotBase(DcaTpBotBase):
                 self._clear_full_reduce_retry(trade)
                 self._set(trade, "grid_pending_reduce", [])
                 self._set_grid_positions(trade, {})
+
                 actual_amount = float(getattr(trade, "amount", 0) or 0)
-                is_flat = actual_amount <= 0
+                remaining_after = max(0.0, actual_amount - float(qty))
+                is_trade_closed = not bool(getattr(trade, "is_open", True))
+                order_status = str(getattr(order, "status", "") or "").lower()
+                is_order_closed = order_status in ("closed", "filled") and remaining_after <= 1e-8
+
+                is_flat = (
+                        actual_amount <= 1e-12
+                        or remaining_after <= 1e-8
+                        or is_trade_closed
+                        or is_order_closed
+                )
+
                 self._set(trade, "grid_allow_restart", is_flat)
                 self._set(trade, "grid_cleanup_pending", not is_flat)
 
-                # ★ 新增：碎片尾仓整笔平掉后若已 flat，同样触发扫描
                 if is_flat:
                     _g = self._grid_cfg()
                     if bool(_g.get("dynamic_whitelist", False)):
@@ -1642,23 +1662,13 @@ class GridBotBase(DcaTpBotBase):
                             f"closed_pair={trade.pair}"
                         )
                         self._trigger_dynamic_whitelist_scan(trade)
-
-                logger.info(
-                    f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 碎片尾仓整笔平仓成交 | "
-                    f"价格={filled_price:.4f} | 金额={margin:.2f} | "
-                    f"剩余数量={actual_amount:.8f}"
-                )
-                self._record_chart_marker(
-                    event_type="grid_reduce",
-                    pair=pair,
-                    trade_id=trade.id,
-                    side=self._side_str,
-                    price=filled_price,
-                    amount=margin,
-                    current_time=current_time,
-                    message=f"碎片尾仓整笔平仓 价格{filled_price:.2f}",
-                    candle_time=current_time,
-                )
+                else:
+                    logger.warning(
+                        f"{GRID_TAG} 碎片尾仓整笔平仓已提交，但暂未确认完全 flat | "
+                        f"pair={trade.pair} | actual_amount={actual_amount:.8f} | "
+                        f"qty={qty:.8f} | remaining_after={remaining_after:.8f} | "
+                        f"is_open={getattr(trade, 'is_open', True)} | status={order_status}"
+                    )
 
             elif reason.startswith("grid_reduce_multi"):
                 self._clear_full_reduce_retry(trade)
@@ -1666,8 +1676,57 @@ class GridBotBase(DcaTpBotBase):
                 filled_price = entry_price
 
                 positions = self._get_grid_positions(trade)
+                # 在 grid_reduce_multi 分支中，遍历 pending_reduce_set 移除格位时同步累计已实现利润：
+                batch_realized_pnl = 0.0
+                fee_rate = float(getattr(trade, "fee_close", 0.0005) or 0.0005) + float(
+                    getattr(trade, "fee_open", 0.0005) or 0.0005
+                )
+
+                # ★ 按实际成交数量占待平格子总数量的比例扣减。
+                # 减仓数量由 stake→qty 换算并经交易所精度截断，通常与格子记账数量
+                # 不完全一致；整格移除会造成账本数量漂移，比例扣减可保留残差格位。
+                pending_slots = {}
+                total_slot_qty = 0.0
                 for idx in pending_reduce_set:
-                    positions.pop(str(int(idx)), None)
+                    slot = positions.get(str(int(idx)))
+                    if isinstance(slot, dict):
+                        s_qty = float(slot.get("qty", 0.0) or 0.0)
+                        if s_qty > 0 and np.isfinite(s_qty):
+                            pending_slots[int(idx)] = slot
+                            total_slot_qty += s_qty
+                try:
+                    filled_qty = float(qty)
+                except (TypeError, ValueError):
+                    filled_qty = 0.0
+                if total_slot_qty > 0 and filled_qty > 0:
+                    scale = min(filled_qty / total_slot_qty, 1.0)
+                else:
+                    scale = 1.0
+                if not np.isfinite(scale) or scale <= 0:
+                    scale = 1.0
+
+                for idx, slot in pending_slots.items():
+                    s_entry = float(slot.get("entry", 0.0) or 0.0)
+                    s_qty = float(slot.get("qty", 0.0) or 0.0)
+                    if s_entry <= 0 or s_qty <= 0:
+                        positions.pop(str(idx), None)
+                        continue
+                    closed_qty = s_qty * scale
+                    remaining_qty = s_qty - closed_qty
+                    gross = (s_entry - filled_price) * closed_qty if self._is_short else (
+                                                                                                    filled_price - s_entry) * closed_qty
+                    est_fee = (s_entry + filled_price) * closed_qty * (fee_rate / 2.0)
+                    batch_realized_pnl += (gross - est_fee)
+                    if remaining_qty <= 1e-12:
+                        positions.pop(str(idx), None)
+                    else:
+                        new_slot = dict(slot)
+                        new_slot["qty"] = remaining_qty
+                        positions[str(idx)] = new_slot
+
+                prev_realized = self._get_float(trade, "grid_realized_profit", 0.0)
+                self._set(trade, "grid_realized_profit", prev_realized + batch_realized_pnl)
+
                 self._set_grid_positions(trade, positions)
                 self._set(trade, "grid_pending_reduce", [])
                 self._pending_reduce.pop(trade.id, None)
@@ -1721,7 +1780,8 @@ class GridBotBase(DcaTpBotBase):
 
                 logger.info(
                     f"[STRATEGY] [REDUCE] {GRID_TAG} ▼ 真实减仓成交 | 价格={filled_price:.4f} | "
-                    f"金额={margin:.2f} | 已移除: {sorted(pending_reduce_set)}"
+                    f"金额={margin:.2f} | 格位={sorted(pending_reduce_set)} | "
+                    f"扣减比例={scale:.4f} | 已实现(分格口径)={batch_realized_pnl:+.4f} USDT"
                 )
 
                 # ★ 新增：记录网格减仓的图表标记
@@ -1768,6 +1828,60 @@ class GridBotBase(DcaTpBotBase):
                     current_time=current_time, message="网格平仓",
                     candle_time=current_time
                 )
+
+                # ---- E1. 单交易对整体止盈全平 ----
+            elif reason == "grid_pair_tp":
+                self._clear_full_reduce_retry(trade)
+                self._pending_reduce.pop(trade.id, None)
+                self._pending_add.pop(trade.id, None)
+                self._set(trade, "grid_pending_reduce", [])
+                self._set(trade, "grid_pending_add", None)
+
+                actual_amount = float(getattr(trade, "amount", 0) or 0)
+                remaining_after = max(0.0, actual_amount - float(qty))
+                is_trade_closed = not bool(getattr(trade, "is_open", True))
+                order_status = str(getattr(order, "status", "") or "").lower()
+                is_order_closed = order_status in ("closed", "filled") and remaining_after <= 1e-8
+                is_flat = (
+                        actual_amount <= 1e-12
+                        or remaining_after <= 1e-8
+                        or is_trade_closed
+                        or is_order_closed
+                )
+
+                if is_flat:
+                    self._set_grid_positions(trade, {})
+                    self._set(trade, "grid_realized_profit", 0.0)
+                    self._set(trade, "grid_allow_restart", True)
+                    self._set(trade, "grid_cleanup_pending", False)
+                else:
+                    # 仅部分成交/未完全 flat 时：保留清理标记，不提前丢掉已实现利润统计
+                    self._set(trade, "grid_allow_restart", False)
+                    self._set(trade, "grid_cleanup_pending", True)
+
+                self._record_chart_marker(
+                    event_type="exit_fill",
+                    pair=pair,
+                    trade_id=trade.id,
+                    side=self._side_str,
+                    price=entry_price,
+                    amount=margin,
+                    current_time=current_time,
+                    message=f"单币止盈全平 价格{entry_price:.4f}",
+                    candle_time=current_time,
+                )
+                logger.info(
+                    f"[STRATEGY] [PAIR_TP] {GRID_TAG} 🎯 单交易对止盈全平成交 | "
+                    f"{trade.pair} | 价格={entry_price:.4f} | flat={is_flat} | status={order_status}"
+                )
+
+                if is_flat:
+                    _g = self._grid_cfg()
+                    if bool(_g.get("dynamic_whitelist", False)):
+                        logger.info(
+                            f"{GRID_TAG} 🎯 单币止盈全平完成，触发动态白名单扫描 | closed_pair={trade.pair}"
+                        )
+                        self._trigger_dynamic_whitelist_scan(trade)
 
             # ---- E. 整体止损 ----
             elif reason.startswith("grid_stop"):
@@ -1956,22 +2070,87 @@ class GridBotBase(DcaTpBotBase):
     def custom_exit(self, pair, trade, current_time, current_rate, current_profit, **kwargs):
         try:
             g = self._grid_cfg()
-            lower = self._cfg_float(g, "lower_price", 0.0)
-            upper = self._cfg_float(g, "upper_price", 0.0)
+            rate = float(current_rate or 0.0)
+            if rate <= 0:
+                return None
 
-            # ★ 如果开启了追踪，默认禁用上下沿止损
+            # 1) 单交易对整体止盈检测（优先于区间止损）
+            # 单币止盈仅多因子筛选模式可用：手动模式下 BotConfig.buildPayload
+            # 会移除 smart_range_mode 字段，此处以此作为 scanner 模式判据，
+            # 手动模式统一由机器人风控止盈兜底，避免两套止盈重复触发。
+            is_scanner_mode = bool(g.get("smart_range_mode"))
+            if (
+                    is_scanner_mode
+                    and bool(g.get("pair_tp_enabled", False))
+                    and self._get_bool(trade, "grid_n_initialized", False)
+            ):
+                positions = self._get_grid_positions(trade)
+                actual_amount = float(getattr(trade, "amount", 0) or 0)
+                if positions and actual_amount > 0:
+                    # 统一使用 Freqtrade 加权均价口径：
+                    # realized_profit = 已平仓订单的真实累计盈亏(USDT，含手续费，
+                    # 由 recalc_trade_from_orders 在每次成交后刷新)
+                    # calculate_profit(rate) = 未实现盈亏，同样基于 trade.open_rate
+                    # 两者相加才是该交易对的真实总盈亏，避免分格账本与均价账本混算。
+                    realized_usdt = float(getattr(trade, "realized_profit", 0.0) or 0.0)
+                    try:
+                        prof = trade.calculate_profit(rate)
+                        unrealized_usdt = float(prof.profit_abs or 0.0)
+                        total_pair_profit_usdt = float(prof.total_profit or 0.0)
+                    except Exception:
+                        unrealized_usdt = 0.0
+                        total_pair_profit_usdt = realized_usdt + float(
+                            trade.calc_profit(rate) or 0.0
+                        )
+
+                    tp_mode = str(g.get("pair_tp_mode", "ratio")).lower()
+                    if tp_mode == "amount":
+                        target_usdt = self._cfg_float(g, "pair_tp_amount", 0.0)
+                        if target_usdt > 0 and total_pair_profit_usdt >= target_usdt:
+                            logger.info(
+                                f"{GRID_TAG} 🎯 触发单币金额止盈 | {pair} | "
+                                f"累计净利={total_pair_profit_usdt:.2f} USDT (已实现={realized_usdt:.2f}, "
+                                f"浮盈={unrealized_usdt:.2f}) >= 目标={target_usdt:.2f} USDT"
+                            )
+                            return "grid_pair_tp"
+                    else:
+                        target_pct = self._cfg_float(g, "pair_tp_ratio", 0.0)
+                        if target_pct > 0:
+                            # 资金基准：取该交易对分配的网格总资金（单格保证金 * 网格数），兜底用当前保证金
+                            grid_count = max(1, self._cfg_int(g, "grid_count", 20))
+                            per_grid_stake = self._calc_grid_amount(trade, rate)
+                            allocated_capital = per_grid_stake * grid_count
+                            if allocated_capital <= 0:
+                                allocated_capital = float(getattr(trade, "stake_amount", 0) or 0)
+
+                            if allocated_capital > 0:
+                                total_pair_profit_pct = (total_pair_profit_usdt / allocated_capital) * 100.0
+                                if total_pair_profit_pct >= target_pct:
+                                    logger.info(
+                                        f"{GRID_TAG} 🎯 触发单币比例止盈 | {pair} | "
+                                        f"累计收益率={total_pair_profit_pct:.2f}% "
+                                        f"({total_pair_profit_usdt:.2f}/{allocated_capital:.2f} USDT) "
+                                        f">= 目标={target_pct:.2f}%"
+                                    )
+                                    return "grid_pair_tp"
+
+            # 2) 原有上下沿区间止损逻辑（优先读取动态区间，兜底配置区间）
+            lower = self._get_float(trade, "grid_dyn_lower", self._cfg_float(g, "lower_price", 0.0))
+            upper = self._get_float(trade, "grid_dyn_upper", self._cfg_float(g, "upper_price", 0.0))
+
+            # 如果开启了追踪，默认禁用上下沿止损
             stop_below = bool(g.get("stop_below_lower", True)) and not bool(g.get("trailing_down", False))
             stop_above = bool(g.get("stop_above_upper", False)) and not bool(g.get("trailing_up", False))
 
-            rate = float(current_rate or 0.0)
-            if rate <= 0: return None
-
             if not self._is_short:
-                if stop_below and lower > 0 and rate <= lower: return "grid_stop_lower"
+                if stop_below and lower > 0 and rate <= lower:
+                    return "grid_stop_lower"
             else:
-                if stop_above and upper > 0 and rate >= upper: return "grid_stop_upper"
+                if stop_above and upper > 0 and rate >= upper:
+                    return "grid_stop_upper"
             return None
         except Exception:
+            logger.exception(f"{GRID_TAG} custom_exit 异常 | pair={pair}")
             return None
 
 

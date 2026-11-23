@@ -98,16 +98,30 @@
         </div>
       </div>
 
-      <!-- ── 3. 止损 ── -->
+<!-- ── 3. 止盈止损 ── -->
       <div class="section-block">
         <div class="section-header">
-          <div class="section-title">止损</div>
+          <div class="section-title">止盈止损</div>
         </div>
+
         <div class="form-row">
-          <!-- 做多：跌破下沿止损 -->
-          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-full" label-width="110px">
+          <!-- 单交易对整体止盈开关（仅多因子筛选模式显示，手动模式由机器人风控止盈兜底） -->
+          <el-form-item v-if="isScanner" label="单币止盈" class="form-item-half" label-width="110px">
             <div class="input-with-icon">
-              <!-- 删掉 :disabled -->
+              <el-switch v-model="config.grid.pair_tp_enabled" />
+              <el-tooltip
+                placement="top"
+                effect="dark"
+                content="单个交易对本轮累计净利（已实现网格利润 + 当前浮盈）达到阈值时，市价全平该币种仓位；若开启动态白名单，将自动扫描切换新币种"
+              >
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+
+          <!-- 做多：跌破下沿止损 -->
+          <el-form-item v-if="direction === 'long'" label="跌破下沿止损" class="form-item-half" label-width="110px">
+            <div class="input-with-icon">
               <el-switch v-model="config.grid.stop_below_lower" />
               <el-tooltip placement="top" effect="dark" content="价格跌破下沿时，清空所有持仓并停止机器人">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
@@ -116,15 +130,57 @@
           </el-form-item>
 
           <!-- 做空：突破上沿止损 -->
-          <el-form-item v-else label="突破上沿止损" class="form-item-full" label-width="110px">
+          <el-form-item v-else label="突破上沿止损" class="form-item-half" label-width="110px">
             <div class="input-with-icon">
-              <!-- 删掉 :disabled -->
               <el-switch v-model="config.grid.stop_above_upper" />
               <el-tooltip placement="top" effect="dark" content="价格突破上沿时，清空所有持仓并停止机器人">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
               </el-tooltip>
             </div>
           </el-form-item>
+        </div>
+
+        <!-- 开启单币止盈后的阈值配置区（仅多因子筛选模式） -->
+        <div v-if="isScanner && config.grid.pair_tp_enabled" class="pair-tp-subbox">
+          <div class="pair-tp-row">
+            <el-radio-group v-model="config.grid.pair_tp_mode" size="small">
+              <el-radio-button value="ratio">收益率 (%)</el-radio-button>
+              <el-radio-button value="amount">金额 (USDT)</el-radio-button>
+            </el-radio-group>
+
+            <div class="pair-tp-input-group">
+              <span class="smart-label">止盈阈值：</span>
+              <el-input-number
+                v-if="config.grid.pair_tp_mode === 'amount'"
+                v-model="config.grid.pair_tp_amount"
+                :min="0.1"
+                :step="1"
+                :precision="2"
+                controls-position="right"
+                class="num-input"
+              />
+              <el-input-number
+                v-else
+                v-model="config.grid.pair_tp_ratio"
+                :min="0.1"
+                :step="0.5"
+                :precision="2"
+                controls-position="right"
+                class="num-input"
+              />
+              <span class="unit-text">
+                {{ config.grid.pair_tp_mode === 'amount' ? 'USDT' : '%' }}
+              </span>
+            </div>
+
+            <span v-if="isPairTpTooLow" class="grid-preview-warn">
+              <el-icon><WarningFilled /></el-icon>
+              止盈阈值过低，可能无法覆盖市价全平手续费
+            </span>
+            <span v-else class="current-price-tip">
+              {{ pairTpHintText }}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -338,8 +394,6 @@ const previewUpper = ref(0)
 const runtimeGrid = ref({ active: false })
 const manualPreviewOverride = ref(false)
 const runtimeSyncReady = ref(false)
-let lastRuntimeFillToken = ''
-let manualRuntimeFillToken = ''
 let runtimeGridTimer = null
 
 const perGrid = computed(() => {
@@ -484,7 +538,7 @@ const initDefaultRange = async () => {
 
   try {
     const { data } = await axios.get(`${API}/chart/candles`, {
-      params: { pair: props.pair, timeframe: '5m' }
+      params: { pair: props.pair, timeframe: props.config?.timeframe || '5m' }
     })
     if (!Array.isArray(data) || !data.length) return
     const price = Number(data[data.length - 1].close)
@@ -553,7 +607,6 @@ const applyManualGridPreview = () => {
 
   // 只要用户手动修改了价格，就覆盖后端的追踪预览，以用户的输入为准
   manualPreviewOverride.value = true
-  manualRuntimeFillToken = lastRuntimeFillToken
   runtimeGrid.value = { active: false }
   resetTrailingPreview()
 }
@@ -653,13 +706,6 @@ watch(() => props.config.grid.stop_below_lower, (val) => {
   }
 })
 
-
-watch(() => props.pair, async (newPair) => {
-  priceRequestId += 1
-  currentPrice.value = null
-  if (newPair) await refreshCurrentPrice()
-}, { immediate: true })
-
 onMounted(async () => {
   await initDefaultRange()
   await refreshCurrentPrice()
@@ -745,27 +791,12 @@ const gridPreview = computed(() => {
 
   const formatLv = (lv) => lv.toFixed(2)
 
-  const runtimeAddLevels = runtimeGrid.value.active && Array.isArray(runtimeGrid.value.add_levels)
-    ? runtimeGrid.value.add_levels.map(Number).filter(Number.isFinite)
-    : (runtimeGrid.value.active && Number.isFinite(Number(runtimeGrid.value.next_add_price))
-      ? [Number(runtimeGrid.value.next_add_price)]
-      : [])
-  const runtimeReduceLevels = runtimeGrid.value.active && Array.isArray(runtimeGrid.value.reduce_levels)
-    ? runtimeGrid.value.reduce_levels.map(Number).filter(Number.isFinite)
-    : (runtimeGrid.value.active && Number.isFinite(Number(runtimeGrid.value.next_reduce_price))
-      ? [Number(runtimeGrid.value.next_reduce_price)]
-      : [])
   let topLevels = []
   let bottomLevels = []
   let topLabel = ''
   let bottomLabel = ''
 
-  // 把原来的：
-  // if (runtimeAddLevels.length || runtimeReduceLevels.length) { ... }
-  // else if (props.direction === 'long') { ... }
-  // 改为：只在没有手动输入区间时，才展示真实挂单；否则永远展示网格线。
-
-  // 如果你希望界面永远展示满 35 个格子：
+  // 界面永远展示满 35 个格子：
   if (props.direction === 'long') {
     topLevels = levels.slice(splitIdx).map(formatLv).reverse()
     bottomLevels = levels.slice(0, splitIdx).map(formatLv).reverse()
@@ -817,6 +848,61 @@ const isProfitTooLow = computed(() => {
 
   // 如果利润 <= 预估手续费，则提示
   return worstProfit <= feeCost
+})
+
+// 手动模式（非多因子筛选）不支持单币止盈：隐藏开关并强制关闭，
+// 避免与机器人风控止盈重复触发
+watch(
+  () => props.isScanner,
+  (scanner) => {
+    if (!scanner && props.config?.grid) {
+      props.config.grid.pair_tp_enabled = false
+    }
+  },
+  { immediate: true }
+)
+
+// 兼容旧配置：自动补全单币止盈默认字段
+watch(
+  () => props.config?.grid,
+  (g) => {
+    if (!g) return
+    if (g.pair_tp_enabled === undefined) g.pair_tp_enabled = false
+    if (!g.pair_tp_mode) g.pair_tp_mode = 'ratio'
+    if (g.pair_tp_ratio === undefined) g.pair_tp_ratio = 3.0
+    if (g.pair_tp_amount === undefined) g.pair_tp_amount = 10
+  },
+  { immediate: true }
+)
+
+// 单币止盈阈值过低提示（对比双边 Taker 手续费）
+const isPairTpTooLow = computed(() => {
+  const g = props.config?.grid
+  if (!g?.pair_tp_enabled) return false
+  const lev = Number(props.leverage || 1)
+  if (g.pair_tp_mode === 'ratio') {
+    // 占用保证金对应的最低手续费率 ≈ FEE_RATE * leverage * 100%
+    return Number(g.pair_tp_ratio || 0) <= FEE_RATE * lev * 100 * 0.2
+  }
+  const singleNotional = perGrid.value * lev
+  return Number(g.pair_tp_amount || 0) <= singleNotional * FEE_RATE
+})
+
+// 实时换算参考提示文案
+const pairTpHintText = computed(() => {
+  const g = props.config?.grid
+  if (!g?.pair_tp_enabled) return ''
+  const cap = Number(props.capital || 0)
+  const suffix = props.isScanner && g.dynamic_whitelist ? '，平仓后自动扫描换币' : ''
+  if (g.pair_tp_mode === 'ratio' && cap > 0) {
+    const estUsdt = (cap * Number(g.pair_tp_ratio || 0)) / 100
+    return `单币累计净利达 ≈ ${estUsdt.toFixed(2)} USDT 时全平${suffix}`
+  }
+  if (g.pair_tp_mode === 'amount' && cap > 0) {
+    const estPct = (Number(g.pair_tp_amount || 0) / cap) * 100
+    return `约占单币分配资金的 ${estPct.toFixed(2)}%${suffix}`
+  }
+  return `到达阈值后市价全平该交易对${suffix}`
 })
 </script>
 
@@ -950,7 +1036,9 @@ const isProfitTooLow = computed(() => {
 .grid-preview-title {
   display: flex;
   align-items: center;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--el-text-color-primary);
@@ -1038,5 +1126,31 @@ const isProfitTooLow = computed(() => {
   font-weight: 600;
   margin-bottom: 6px;
   color: var(--el-text-color-regular);
+}
+
+.pair-tp-subbox {
+  background: var(--el-fill-color-extra-light);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-top: -4px;
+}
+
+.pair-tp-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.pair-tp-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unit-text {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>

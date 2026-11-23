@@ -237,9 +237,11 @@ python -m pip install --upgrade pip
 python -m pip install -r freqtrade\requirements.txt
 python -m pip install -e .\freqtrade
 
-# 确认当前虚拟环境使用的是项目内的 Freqtrade
-python -m freqtrade --version
-python -c "import freqtrade; print(freqtrade.__file__)"
+[//]: # (# 确认当前虚拟环境使用的是项目内的 Freqtrade)
+
+[//]: # (python -m freqtrade --version)
+
+[//]: # (python -c "import freqtrade; print&#40;freqtrade.__file__&#41;")
 
 cd frontend
 pnpm install
