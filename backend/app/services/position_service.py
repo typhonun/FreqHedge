@@ -339,6 +339,111 @@ class PositionService:
         return roi
 
     # =========================================================
+    # 网格机器人：目标止盈 = 预计下次减仓价对应的收益率
+    # =========================================================
+
+    @staticmethod
+    def _f(value, default=0.0):
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return default
+        if f != f or f in (float("inf"), float("-inf")):
+            return default
+        return f
+
+    @staticmethod
+    def _stored_json(value):
+        """trade_custom_data 里的值可能是 JSON 字符串、Python repr 或已解析对象"""
+        if isinstance(value, str):
+            s = value.strip()
+            if s.startswith("[") or s.startswith("{"):
+                try:
+                    return json.loads(s)
+                except Exception:
+                    return s
+            return s
+        return value
+
+    @staticmethod
+    def _grid_cfg(bot):
+        cfg = (bot or {}).get("gridConfig") or {}
+        if not isinstance(cfg, dict):
+            return {}
+        inner = cfg.get("grid")
+        return inner if isinstance(inner, dict) else cfg
+
+    @staticmethod
+    def _grid_step(lower, upper, count, algo):
+        """与 GridBotBase._get_grid_step_for_bounds 保持一致"""
+        if count <= 0 or upper <= lower or lower <= 0:
+            return 0.0
+        if algo == "geometric":
+            try:
+                ratio = (upper / lower) ** (1.0 / count)
+                return lower * (ratio - 1.0)
+            except Exception:
+                return 0.0
+        return (upper - lower) / count
+
+    @staticmethod
+    def _grid_tp_roi(trade: dict, custom: dict, bot: dict, side: str):
+        """网格持仓的下次减仓价 = 各格 entry ± 一个网格步长中离当前最近的那一档。
+        收益率按 freqtrade profit_pct 口径估算：(减仓价/open_rate - 1) * 杠杆。"""
+        try:
+            positions = PositionService._stored_json(custom.get("grid_positions"))
+            if not isinstance(positions, dict) or not positions:
+                return None
+
+            pending = PositionService._stored_json(custom.get("grid_pending_reduce")) or []
+            try:
+                pending_idx = {int(x) for x in pending}
+            except (TypeError, ValueError):
+                pending_idx = set()
+
+            g = PositionService._grid_cfg(bot)
+            lower = PositionService._f(custom.get("grid_dyn_lower"))
+            upper = PositionService._f(custom.get("grid_dyn_upper"))
+            if not (lower > 0 and upper > lower):
+                lower = PositionService._f(g.get("lower_price"))
+                upper = PositionService._f(g.get("upper_price"))
+            count = int(PositionService._f(g.get("grid_count"), 0))
+            step = PositionService._grid_step(
+                lower, upper, count, str(g.get("spacing_algo", "arithmetic"))
+            )
+            if step <= 0:
+                return None
+
+            is_short = side == "short"
+            tp_prices = []
+            for key, val in positions.items():
+                try:
+                    idx = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if idx in pending_idx or not isinstance(val, dict):
+                    continue
+                entry = PositionService._f(val.get("entry"))
+                if entry <= 0:
+                    continue
+                tp = entry - step if is_short else entry + step
+                if tp > 0:
+                    tp_prices.append(tp)
+            if not tp_prices:
+                return None
+
+            next_reduce = max(tp_prices) if is_short else min(tp_prices)
+            open_rate = PositionService._f(trade.get("open_rate"))
+            if open_rate <= 0:
+                return None
+            leverage = PositionService._f(trade.get("leverage"), 1.0) or 1.0
+            if is_short:
+                return (1.0 - next_reduce / open_rate) * leverage * 100.0
+            return (next_reduce / open_rate - 1.0) * leverage * 100.0
+        except Exception:
+            return None
+
+    # =========================================================
     # 时间计算
     # =========================================================
 
@@ -397,6 +502,9 @@ class PositionService:
 
         snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
 
+        bot = BotManager.get(bot_id)
+        is_grid = ((bot or {}).get("strategyType") or "dca") == "grid"
+
         long_roi_levels = PositionService._get_roi_levels(bot_id, "long")
         short_roi_levels = PositionService._get_roi_levels(bot_id, "short")
 
@@ -440,7 +548,7 @@ class PositionService:
                     pass
             return trade.get("open_date")
 
-        def _enrich(trades, roi_levels):
+        def _enrich(trades, roi_levels, custom_map, side):
             for t in trades:
                 base_ts = _pick_base_ts(t)
                 round_minutes = (
@@ -451,11 +559,16 @@ class PositionService:
                 total_minutes = PositionService._holding_minutes(t.get("open_date"))
                 t["holding_minutes"] = total_minutes
                 t["round_minutes"] = round_minutes
-                t["tp_roi"] = PositionService._current_roi(round_minutes, roi_levels)
+                if is_grid:
+                    t["tp_roi"] = PositionService._grid_tp_roi(
+                        t, custom_map.get(t.get("trade_id"), {}), bot, side
+                    )
+                else:
+                    t["tp_roi"] = PositionService._current_roi(round_minutes, roi_levels)
                 t.setdefault("bot_id", bot_id)
 
-        _enrich(long_trades, long_roi_levels)
-        _enrich(short_trades, short_roi_levels)
+        _enrich(long_trades, long_roi_levels, long_custom, "long")
+        _enrich(short_trades, short_roi_levels, short_custom, "short")
 
         return {"long": long_trades, "short": short_trades}
 

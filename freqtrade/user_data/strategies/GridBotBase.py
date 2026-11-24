@@ -1030,6 +1030,13 @@ class GridBotBase(DcaTpBotBase):
                         if not to_close:
                             return None
 
+                try:
+                    actual_amount = float(getattr(trade, "amount", 0) or 0)
+                    trade_stake = float(getattr(trade, "stake_amount", 0) or 0)
+                except (TypeError, ValueError):
+                    actual_amount = 0.0
+                    trade_stake = 0.0
+
                 # 减仓批次先做可成交性校验；无法形成有效订单时，优先把保证金
                 # 最小的碎片格并入相邻格（只动账本，不提前卖出邻格仓位），
                 # 全部并入后仍不可成交才回退到整仓平掉的兜底逻辑。
@@ -1037,6 +1044,7 @@ class GridBotBase(DcaTpBotBase):
                 total_pnl = 0.0
                 closed = []
                 exec_info = None
+                return_stake = 0.0
                 merge_attempts = 0
                 while True:
                     total_margin, total_pnl, closed = self._build_grid_reduce_closed(
@@ -1044,9 +1052,32 @@ class GridBotBase(DcaTpBotBase):
                     )
                     if total_margin <= 0 or not np.isfinite(total_margin):
                         return None
+
+                    requested_qty = sum(item[2] for item in closed)
+                    # 待减格覆盖全部实际持仓时直接整仓平仓，走统一的 flat 清理与扫描
+                    if (
+                            actual_amount > 0
+                            and trade_stake > 0
+                            and requested_qty >= actual_amount - 1e-9
+                    ):
+                        self._pending_reduce.pop(trade.id, None)
+                        self._set(trade, "grid_pending_reduce", [])
+                        self._set(trade, "grid_cleanup_pending", True)
+                        return -float(trade_stake), "grid_reduce_full"
+
+                    # Freqtrade 按 stake*amount/stake_amount 折算卖出数量。
+                    # 按目标数量反推 stake，避免格子 entry 偏离混合成本时超卖/少卖。
+                    if actual_amount > 0:
+                        target_qty = min(requested_qty, actual_amount)
+                    else:
+                        target_qty = requested_qty
+                    if trade_stake > 0 and actual_amount > 0:
+                        return_stake = target_qty * trade_stake / actual_amount
+                    else:
+                        return_stake = total_margin
                     exec_info = self._eval_grid_reduce_executability(
                         trade,
-                        total_margin,
+                        return_stake,
                         closed,
                         lev,
                         close_price,
@@ -1103,7 +1134,7 @@ class GridBotBase(DcaTpBotBase):
                 self._log_reduce(trade, close_price, closed, total_margin, total_pnl)
                 self._log_state_detail(trade, close_price)
 
-                return -float(total_margin), f"grid_reduce_multi_{len(closed)}"
+                return -float(return_stake), f"grid_reduce_multi_{len(closed)}"
 
             # ---- 2) 检查加仓（动态运行网格）----
             pending_add = getattr(self, "_pending_add", {}).get(trade.id)
@@ -2172,7 +2203,7 @@ class GridBotBase(DcaTpBotBase):
             closed.append((idx, entry, qty, margin, pnl))
         return total_margin, total_pnl, closed
 
-    def _eval_grid_reduce_executability(self, trade, total_margin, closed, lev, close_price, min_exit_stake):
+    def _eval_grid_reduce_executability(self, trade, close_stake, closed, lev, close_price, min_exit_stake):
         # Freqtrade converts the returned stake amount back to a position
         # quantity before applying exchange precision. Check that result,
         # not only the quantity stored in each grid slot.
@@ -2189,7 +2220,7 @@ class GridBotBase(DcaTpBotBase):
         # a negative adjustment. A tiny grid leg can otherwise become 0
         # after precision conversion and never create an exit order.
         converted_qty = (
-            total_margin * actual_amount / trade_stake
+            close_stake * actual_amount / trade_stake
             if trade_stake > 0 else 0.0
         )
         executable_qty = (
@@ -2200,7 +2231,7 @@ class GridBotBase(DcaTpBotBase):
             min_exit_stake = float(min_exit_stake or 0.0)
         except (TypeError, ValueError):
             min_exit_stake = 0.0
-        remaining_stake = max(trade_stake - total_margin, 0.0)
+        remaining_stake = max(trade_stake - close_stake, 0.0)
         would_leave_unexitable_remainder = (
                 remaining_stake > 0
                 and min_exit_stake > 0
@@ -2223,6 +2254,7 @@ class GridBotBase(DcaTpBotBase):
         ok = not (
                 requested_qty < min_qty
                 or executable_qty < min_qty
+                or executable_qty > actual_amount + amount_step
                 or would_leave_unexitable_remainder
                 or would_leave_precision_remainder
         )
