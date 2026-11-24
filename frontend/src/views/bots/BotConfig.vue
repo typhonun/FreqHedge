@@ -80,7 +80,7 @@
                     <div style="margin-bottom: 8px;">
                       <el-radio-group v-model="pairSelectMode" size="small">
                         <el-radio-button value="manual">手动选择</el-radio-button>
-                        <el-radio-button value="scanner" :disabled="strategyType !== 'grid'">多因子筛选</el-radio-button>
+                        <el-radio-button value="scanner">多因子筛选</el-radio-button>
                       </el-radio-group>
                     </div>
 
@@ -1144,8 +1144,13 @@ const loadBotDetail = async () => {
       : (data.exchangeAccountId || modeAccounts[0]?.id || null)
 
     const persistedGridConfig = parseCfg(data.gridConfig)
-    const persistedScannerMode = strategyType.value === 'grid'
-      && !!persistedGridConfig?.grid?.smart_range_mode
+    // DCA 多因子模式：从 longConfig/shortConfig 的 pair_switch.mode 识别
+    const persistedDcaScanner = strategyType.value === 'dca' &&
+      [parseCfg(data.longConfig), parseCfg(data.shortConfig)]
+        .some(c => c?.pair_switch?.mode === 'scanner')
+    const persistedScannerMode =
+      (strategyType.value === 'grid' && !!persistedGridConfig?.grid?.smart_range_mode) ||
+      persistedDcaScanner
 
     botBaseInfo.value = {
       name: isCopy.value ? '' : data.name,
@@ -1743,6 +1748,19 @@ const buildPayload = () => {
 
   // ★ 核心修复：先补齐多因子标识，再构造基础配置
   const isGridScanner = pairSelectMode.value === 'scanner' && strategyType.value === 'grid'
+  const isScannerMode = pairSelectMode.value === 'scanner' && ['grid', 'dca'].includes(strategyType.value)
+
+  // ★ DCA 多因子模式：把选币模式写进策略配置，并强制止盈全平（保证换币时仓位清零）
+  if (strategyType.value === 'dca') {
+    if (!strategyConfig.pair_switch || typeof strategyConfig.pair_switch !== 'object') {
+      strategyConfig.pair_switch = { mode: 'manual', dynamic_whitelist: false }
+    }
+    strategyConfig.pair_switch.mode = pairSelectMode.value
+    if (pairSelectMode.value === 'scanner') {
+      if (strategyConfig.loss_tp) strategyConfig.loss_tp.is_partial = false
+      if (strategyConfig.tp) strategyConfig.tp.rebuy_enable = false
+    }
+  }
 
   if (isGridScanner) {
     if (strategyConfig.grid) {
@@ -1785,7 +1803,7 @@ const buildPayload = () => {
   // ★ maxOpenTrades 兜底
   const pairLen = Array.isArray(botBaseInfo.value.pair) ? botBaseInfo.value.pair.length : 0
   let maxOpenTrades = Math.max(1, Number(botBaseInfo.value.maxOpenTrades) || 1)
-  if (isGridScanner && pairLen > 0 && maxOpenTrades > pairLen) {
+  if (isScannerMode && pairLen > 0 && maxOpenTrades > pairLen) {
     maxOpenTrades = pairLen  // 并发数不能超过币种数
   }
 
@@ -1815,7 +1833,7 @@ const buildPayload = () => {
     marginMode: botBaseInfo.value.marginMode,
     strategyType: strategyType.value,
     // ★ 关键：多因子模式必须传 scanner
-    pairSelectionMode: isGridScanner ? 'scanner' : 'manual',
+    pairSelectionMode: isScannerMode ? 'scanner' : 'manual',
   }
 
   return {

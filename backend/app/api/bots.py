@@ -421,18 +421,31 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
     bot = BotManager.get(bot_id)
     if not bot:
         raise HTTPException(404, "bot not found")
-    if bot.get("strategyType") != "grid":
-        raise HTTPException(400, "动态白名单仅支持网格策略")
 
-    grid_config = (bot.get("gridConfig") or {}).get("grid") or {}
-    if not grid_config.get("dynamic_whitelist", False):
-        raise HTTPException(400, "该机器人未启用动态白名单模式")
+    strategy_type = bot.get("strategyType") or "dca"
+    if strategy_type not in ("grid", "dca"):
+        raise HTTPException(400, f"动态白名单暂不支持策略类型: {strategy_type}")
 
     side = "short" if payload.direction.upper() == "SHORT" else "long"
     if side == "long" and not bot.get("enableLong"):
         return {"success": False, "error": "多头未启用"}
     if side == "short" and not bot.get("enableShort"):
         return {"success": False, "error": "空头未启用"}
+
+    # 按策略类型读取各自的动态白名单开关
+    if strategy_type == "grid":
+        grid_config = (bot.get("gridConfig") or {}).get("grid") or {}
+        whitelist_enabled = bool(grid_config.get("dynamic_whitelist", False))
+    else:
+        side_cfg = bot.get(f"{side}Config") or bot.get("longConfig") or {}
+        ps_cfg = side_cfg.get("pair_switch") or {}
+        whitelist_enabled = (
+            str(ps_cfg.get("mode", "manual")).lower() == "scanner"
+            and bool(ps_cfg.get("dynamic_whitelist", False))
+        )
+
+    if not whitelist_enabled:
+        raise HTTPException(400, "该机器人未启用动态白名单模式")
 
     lock_key = _whitelist_lock_key(bot_id, side)
     state_key = _whitelist_state_key(bot_id, side)
@@ -462,15 +475,17 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
         new_pair = best_pair_info["name"]
         print(f"[API] 扫描到最优币: {new_pair}")
 
-        # 3) 计算新币区间
-        days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
-        days = days_map.get(
-            str(grid_config.get("smart_range_mode", "moderate")).lower(), 30
-        )
-        new_pair_range = await asyncio.to_thread(
-            scanner.get_range, new_pair, days
-        )
-        print(f"[API] 新币 {new_pair} 区间: {new_pair_range}")
+        # 3) 计算新币区间（仅网格需要；DCA 换币不消费区间数据）
+        new_pair_range = None
+        if strategy_type == "grid":
+            days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
+            days = days_map.get(
+                str(grid_config.get("smart_range_mode", "moderate")).lower(), 30
+            )
+            new_pair_range = await asyncio.to_thread(
+                scanner.get_range, new_pair, days
+            )
+            print(f"[API] 新币 {new_pair} 区间: {new_pair_range}")
 
         # 4) 生成并写入新白名单配置
         current_pairs = bot.get("pair") or []
@@ -493,26 +508,28 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
             ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
             return {"success": False, "error": "白名单更新失败"}
 
-        # 同步新币区间到 prefetch kv
-        try:
-            kv_key = f"grid_prefetch_range_{bot_id}_{side}"
-            kv_data = ConfigManager.get_bot_kv(kv_key) or {"days": days, "pairs": {}}
-            kv_data.setdefault("pairs", {})[new_pair] = new_pair_range
-            kv_data["generated_at"] = _time.time()
-            ConfigManager.set_bot_kv(kv_key, kv_data)
-        except Exception as e:
-            print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
-
-        # ★ 新增：重启前清理旧的动态区间 KV，防止重启后回退到历史区间
-        for runtime_key in (
-                f"grid_runtime_lower_{bot_id}_{side}",
-                f"grid_runtime_upper_{bot_id}_{side}",
-                f"grid_runtime_state_{bot_id}_{side}",
-        ):
+        # 同步新币区间到 prefetch kv（仅网格需要）
+        if strategy_type == "grid":
             try:
-                ConfigManager.set_bot_kv(runtime_key, None)
+                kv_key = f"grid_prefetch_range_{bot_id}_{side}"
+                kv_data = ConfigManager.get_bot_kv(kv_key) or {"days": days, "pairs": {}}
+                kv_data.setdefault("pairs", {})[new_pair] = new_pair_range
+                kv_data["generated_at"] = _time.time()
+                ConfigManager.set_bot_kv(kv_key, kv_data)
             except Exception as e:
-                print(f"[API] 清理 {runtime_key} 失败（非致命）: {e}")
+                print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
+
+        # ★ 新增：重启前清理旧的动态区间 KV，防止重启后回退到历史区间（仅网格）
+        if strategy_type == "grid":
+            for runtime_key in (
+                    f"grid_runtime_lower_{bot_id}_{side}",
+                    f"grid_runtime_upper_{bot_id}_{side}",
+                    f"grid_runtime_state_{bot_id}_{side}",
+            ):
+                try:
+                    ConfigManager.set_bot_kv(runtime_key, None)
+                except Exception as e:
+                    print(f"[API] 清理 {runtime_key} 失败（非致命）: {e}")
 
         # 5) 让新配置/白名单真正生效：若机器人正在运行，执行重启使其加载新白名单
         restarted = False

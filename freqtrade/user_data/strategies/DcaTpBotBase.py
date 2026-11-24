@@ -26,7 +26,9 @@ RED = "\033[31m"
 GREEN = "\033[32m"
 BLUE = "\033[34m"
 YELLOW = "\033[33m"
+CYAN = "\033[36m"
 RESET = "\033[0m"
+PAIR_SWITCH_TAG = f"{CYAN}[PairSwitch]{RESET}"
 logger = logging.getLogger(__name__)
 
 # 支持的 HTF 周期集合（用来做合法性校验）
@@ -500,6 +502,171 @@ class DcaTpBotBase(IStrategy):
         return None
 
     # ============================================================
+    # 动态白名单 / 多因子换币（DCA 与 GridBotBase 共用）
+    # ============================================================
+    @property
+    def _bot_id(self):
+        return self._get_bot_id()
+
+    def _pair_switch_cfg(self) -> dict:
+        """DCA 侧配置中的选币/换币配置（pair_switch 段）"""
+        cfg = self.get_runtime_config() or {}
+        ps = cfg.get("pair_switch")
+        return ps if isinstance(ps, dict) else {}
+
+    def _pair_switch_mode(self) -> str:
+        return str(self._pair_switch_cfg().get("mode", "manual")).lower()
+
+    def _dynamic_whitelist_enabled(self) -> bool:
+        """是否启用「平仓后多因子扫描换币」。
+        GridBotBase 会覆盖并额外检查 grid.dynamic_whitelist。"""
+        ps = self._pair_switch_cfg()
+        return (
+            self._pair_switch_mode() == "scanner"
+            and bool(ps.get("dynamic_whitelist", False))
+        )
+
+    def _whitelist_lock_key(self) -> str:
+        return f"grid_whitelist_scan_lock_{self._bot_id}_{self._side_str}"
+
+    def _whitelist_state_key(self) -> str:
+        return f"grid_whitelist_state_{self._bot_id}_{self._side_str}"
+
+    def _set_whitelist_scanning_lock(self, scanning: bool, closed_pair: str = "", ttl_sec: int = 240):
+        now_ts = _time.time()
+        self._local_whitelist_scanning = bool(scanning)
+        self._local_whitelist_lock_until = (now_ts + ttl_sec) if scanning else 0.0
+        try:
+            from core.config_manager import ConfigManager
+            ConfigManager.set_bot_kv(self._whitelist_lock_key(), {
+                "scanning": bool(scanning),
+                "updated_at": now_ts,
+                "expire_at": (now_ts + ttl_sec) if scanning else 0.0,
+                "closed_pair": closed_pair,
+            })
+        except Exception as e:
+            logger.warning(f"{PAIR_SWITCH_TAG} 写入动态白名单锁失败: {e}")
+
+    def _is_whitelist_scanning(self) -> bool:
+        now_ts = _time.time()
+        if getattr(self, "_local_whitelist_scanning", False):
+            if now_ts < getattr(self, "_local_whitelist_lock_until", 0.0):
+                return True
+            self._local_whitelist_scanning = False
+
+        try:
+            from core.config_manager import ConfigManager
+            lock_info = ConfigManager.get_bot_kv(self._whitelist_lock_key())
+            if isinstance(lock_info, dict) and lock_info.get("scanning"):
+                expire_at = float(lock_info.get("expire_at") or 0.0)
+                if expire_at <= 0 or now_ts < expire_at:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _get_effective_whitelist(self) -> list:
+        try:
+            from core.config_manager import ConfigManager
+            state = ConfigManager.get_bot_kv(self._whitelist_state_key())
+            if isinstance(state, dict) and isinstance(state.get("whitelist"), list):
+                wl = [str(p) for p in state["whitelist"] if p]
+                if wl:
+                    return wl
+        except Exception:
+            pass
+        cfg_wl = ((self.config or {}).get("exchange") or {}).get("pair_whitelist") or []
+        return [str(p) for p in cfg_wl if p]
+
+    def _get_replacing_pair(self) -> str:
+        try:
+            from core.config_manager import ConfigManager
+            lock_info = ConfigManager.get_bot_kv(self._whitelist_lock_key())
+            if isinstance(lock_info, dict) and lock_info.get("scanning"):
+                expire_at = float(lock_info.get("expire_at") or 0.0)
+                if expire_at <= 0 or _time.time() < expire_at:
+                    return str(lock_info.get("closed_pair") or "")
+        except Exception:
+            pass
+        return ""
+
+    def _is_pair_in_whitelist(self, pair: str) -> bool:
+        # 扫描锁期间由门禁 1 统一拦截；扫描结束后完全以最新有效白名单为准（允许重新选中刚平仓的币）
+        wl = self._get_effective_whitelist()
+        if not wl:
+            return True
+        return pair in wl
+
+    def _trigger_dynamic_whitelist_scan(self, trade):
+        """
+        动态白名单模式：平仓后先上锁阻止开仓，再触发扫描 -> 写配置 -> 生效 -> 解锁
+        """
+        try:
+            if not self._dynamic_whitelist_enabled():
+                logger.info(f"{PAIR_SWITCH_TAG} 动态白名单未启用，跳过扫描")
+                return
+
+            # ★ 第一步：立即上锁，阻断扫描与配置生效期间的新开仓
+            self._set_whitelist_scanning_lock(True, closed_pair=trade.pair, ttl_sec=300)
+
+            logger.info(f"{PAIR_SWITCH_TAG} ========== 触发动态白名单扫描 ==========")
+            logger.info(f"{PAIR_SWITCH_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={trade.pair}")
+
+            open_trades = Trade.get_open_trades()
+            existing_pairs = set(t.pair for t in open_trades if t.pair != trade.pair)
+            logger.info(f"{PAIR_SWITCH_TAG} 当前持仓交易对: {list(existing_pairs)}")
+
+            import os
+            import threading
+
+            api_base = os.environ.get('DCATP_API_URL', 'http://localhost:9000')
+            direction = 'SHORT' if self._is_short else 'LONG'
+            payload = {
+                'bot_id': self._bot_id,
+                'side': self._side_str,
+                'direction': direction,
+                'exclude_pairs': list(existing_pairs),
+                'closed_pair': trade.pair
+            }
+
+            logger.info(f"{PAIR_SWITCH_TAG} 调用后端 API: {api_base}/bots/{self._bot_id}/dynamic-whitelist-scan")
+            logger.info(f"{PAIR_SWITCH_TAG} 请求参数: {payload}")
+
+            def async_scan():
+                try:
+                    response = requests.post(
+                        f"{api_base}/bots/{self._bot_id}/dynamic-whitelist-scan",
+                        json=payload,
+                        timeout=240
+                    )
+
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('success'):
+                            logger.info(
+                                f"{PAIR_SWITCH_TAG} ✅ 动态白名单扫描并生效 | "
+                                f"新币={result.get('new_pair')} | "
+                                f"新白名单={result.get('new_whitelist')}"
+                            )
+                        else:
+                            logger.warning(f"{PAIR_SWITCH_TAG} ❌ 动态白名单扫描失败: {result.get('error')}")
+                            self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                    else:
+                        logger.warning(f"{PAIR_SWITCH_TAG} ❌ 动态白名单扫描请求失败: {response.status_code} | {response.text}")
+                        self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                except Exception as e:
+                    logger.warning(f"{PAIR_SWITCH_TAG} ❌ 动态白名单扫描异常: {e}")
+                    self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+
+            thread = threading.Thread(target=async_scan, daemon=True)
+            thread.start()
+            logger.info(f"{PAIR_SWITCH_TAG} 后台扫描线程已启动（已开启开仓门禁锁）")
+
+        except Exception as e:
+            self._set_whitelist_scanning_lock(False, closed_pair=getattr(trade, "pair", ""))
+            logger.exception(f"{PAIR_SWITCH_TAG} _trigger_dynamic_whitelist_scan 异常")
+
+    # ============================================================
     # 时间止损：realized + unrealized 统一算法（多空通用）
     # ============================================================
     def _time_stop_triggered(self, trade, current_time, current_rate) -> bool:
@@ -733,6 +900,21 @@ class DcaTpBotBase(IStrategy):
                     candle_time=candle_ts
                 )
 
+        # ★ 动态白名单换币：退出侧成交且确认仓位已 flat 时触发扫描（部分减仓不触发）
+        # GridBotBase 有自己的触发时机（record_base_marker=False 时跳过，避免重复扫描）
+        if (
+            record_base_marker
+            and order.ft_order_side == self._exit_order_side
+            and self._dynamic_whitelist_enabled()
+        ):
+            try:
+                remaining_qty = abs(float(getattr(trade, "amount", 0) or 0))
+                trade_open = bool(getattr(trade, "is_open", True))
+                if (not trade_open) or remaining_qty <= 1e-8:
+                    self._trigger_dynamic_whitelist_scan(trade)
+            except Exception as e:
+                logger.warning(f"[{pair}] 动态白名单 flat 检测失败: {e}")
+
         # =========================
         # 初始化（一次）
         # =========================
@@ -906,6 +1088,16 @@ class DcaTpBotBase(IStrategy):
         cfg = self.get_runtime_config()
         entry_cfg = self._cfg(cfg, "entry", default={}) or {}
 
+        # ★ 立即开仓（仅多因子模式）：跳过 RSI/MACD/BB 信号，选中即进场
+        if (
+            self._pair_switch_mode() == "scanner"
+            and bool(entry_cfg.get("immediate", False))
+        ):
+            col = "enter_short" if self._is_short else "enter_long"
+            dataframe[col] = 1
+            dataframe["enter_tag"] = "immediate_entry"
+            return dataframe
+
         rsi_cfg  = self._cfg(entry_cfg, "rsi",  default={}) or {}
         bb_cfg   = self._cfg(entry_cfg, "bb",   default={}) or {}
         macd_cfg = self._cfg(entry_cfg, "macd", default={}) or {}
@@ -969,6 +1161,18 @@ class DcaTpBotBase(IStrategy):
 
     def confirm_trade_entry(self, pair, order_type, amount, rate, time_in_force,
                             current_time, entry_tag, side, **kwargs):
+
+        # ★ 门禁 1：动态白名单扫描/生效期间，禁止新开仓
+        if self._dynamic_whitelist_enabled() and self._is_whitelist_scanning():
+            logger.info(f"[{pair}] 动态白名单扫描/生效中，暂缓新开仓")
+            return False
+
+        # ★ 门禁 2：开仓前校验交易对是否在最新有效白名单内
+        if self._dynamic_whitelist_enabled() and not self._is_pair_in_whitelist(pair):
+            logger.info(
+                f"[{pair}] 不在当前有效白名单 {self._get_effective_whitelist()} 中，拒绝开仓"
+            )
+            return False
 
         entry_tag_str = str(entry_tag or "").lower()
         is_manual = (
@@ -1855,6 +2059,9 @@ class DcaTpBotBase(IStrategy):
         tp_cfg = self._cfg(cfg, "tp", default={}) or {}
         dca_tp_cfg = self._cfg(cfg, "loss_tp", default={}) or {}
 
+        # ★ 多因子选币模式：止盈统一全平，保证仓位清零后才能换币
+        force_full_close = self._pair_switch_mode() == "scanner"
+
         if not bool(tp_cfg.get("enable", True)):
             return None
 
@@ -1917,8 +2124,8 @@ class DcaTpBotBase(IStrategy):
             margin_val = margin
             collateral_total = self._collateral_total()
 
-            # ★ 读取新字段，默认 False（全平）
-            is_partial = bool(dca_tp_cfg.get("is_partial", False))
+            # ★ 读取新字段，默认 False（全平）；多因子模式强制全平
+            is_partial = bool(dca_tp_cfg.get("is_partial", False)) and not force_full_close
 
             # ★ 语义：is_partial = False → 全平；True → 部分减仓
             if not is_partial:
@@ -1990,7 +2197,7 @@ class DcaTpBotBase(IStrategy):
             return float(-sell_usdt_capped), "tp_afterDCA_sell_keep_target"
 
         # ---- 浮盈 TP 减仓 ----
-        rebuy_enable = bool(tp_cfg.get("rebuy_enable", True))
+        rebuy_enable = bool(tp_cfg.get("rebuy_enable", True)) and not force_full_close
         reduce_percent = 100.0
 
         if not rebuy_enable:
@@ -2015,7 +2222,7 @@ class DcaTpBotBase(IStrategy):
         self._set(trade, 'dca_done', False)
         self._set(trade, 'last_tp_time', self._safe_int(current_time.timestamp()))
         self._set(trade, 'last_tp_margin', float(margin))
-        self._set(trade, 'need_rebuy', bool(tp_cfg.get("rebuy_enable", True)))
+        self._set(trade, 'need_rebuy', rebuy_enable)
 
         logger.info(
             f"[STRATEGY] [TP] [{trade.pair}] {GREEN}[浮盈减仓 {reduce_text}]{RESET}, "

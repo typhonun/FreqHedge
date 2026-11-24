@@ -326,79 +326,11 @@ class GridBotBase(DcaTpBotBase):
         self._full_reduce_retry_after.pop(trade.id, None)
         self._set(trade, "grid_full_reduce_retry_until", None)
 
-    # ============================================================
-    # 动态白名单门禁 & 白名单校验
-    # ============================================================
-    def _whitelist_lock_key(self) -> str:
-        return f"grid_whitelist_scan_lock_{self._bot_id}_{self._side_str}"
-
-    def _whitelist_state_key(self) -> str:
-        return f"grid_whitelist_state_{self._bot_id}_{self._side_str}"
-
-    def _set_whitelist_scanning_lock(self, scanning: bool, closed_pair: str = "", ttl_sec: int = 240):
-        now_ts = time.time()
-        self._local_whitelist_scanning = bool(scanning)
-        self._local_whitelist_lock_until = (now_ts + ttl_sec) if scanning else 0.0
-        try:
-            from core.config_manager import ConfigManager
-            ConfigManager.set_bot_kv(self._whitelist_lock_key(), {
-                "scanning": bool(scanning),
-                "updated_at": now_ts,
-                "expire_at": (now_ts + ttl_sec) if scanning else 0.0,
-                "closed_pair": closed_pair,
-            })
-        except Exception as e:
-            logger.warning(f"{GRID_TAG} 写入动态白名单锁失败: {e}")
-
-    def _is_whitelist_scanning(self) -> bool:
-        now_ts = time.time()
-        if getattr(self, "_local_whitelist_scanning", False):
-            if now_ts < getattr(self, "_local_whitelist_lock_until", 0.0):
-                return True
-            self._local_whitelist_scanning = False
-
-        try:
-            from core.config_manager import ConfigManager
-            lock_info = ConfigManager.get_bot_kv(self._whitelist_lock_key())
-            if isinstance(lock_info, dict) and lock_info.get("scanning"):
-                expire_at = float(lock_info.get("expire_at") or 0.0)
-                if expire_at <= 0 or now_ts < expire_at:
-                    return True
-        except Exception:
-            pass
-        return False
-
-    def _get_effective_whitelist(self) -> list[str]:
-        try:
-            from core.config_manager import ConfigManager
-            state = ConfigManager.get_bot_kv(self._whitelist_state_key())
-            if isinstance(state, dict) and isinstance(state.get("whitelist"), list):
-                wl = [str(p) for p in state["whitelist"] if p]
-                if wl:
-                    return wl
-        except Exception:
-            pass
-        cfg_wl = ((self.config or {}).get("exchange") or {}).get("pair_whitelist") or []
-        return [str(p) for p in cfg_wl if p]
-
-    def _get_replacing_pair(self) -> str:
-        try:
-            from core.config_manager import ConfigManager
-            lock_info = ConfigManager.get_bot_kv(self._whitelist_lock_key())
-            if isinstance(lock_info, dict) and lock_info.get("scanning"):
-                expire_at = float(lock_info.get("expire_at") or 0.0)
-                if expire_at <= 0 or time.time() < expire_at:
-                    return str(lock_info.get("closed_pair") or "")
-        except Exception:
-            pass
-        return ""
-
-    def _is_pair_in_whitelist(self, pair: str) -> bool:
-        # 扫描锁期间由门禁 1 统一拦截；扫描结束后完全以最新有效白名单为准（允许重新选中刚平仓的币）
-        wl = self._get_effective_whitelist()
-        if not wl:
+    def _dynamic_whitelist_enabled(self) -> bool:
+        """网格策略：多因子模式下读取 grid.dynamic_whitelist（DCA 走 pair_switch 配置）"""
+        if super()._dynamic_whitelist_enabled():
             return True
-        return pair in wl
+        return bool(self._grid_cfg().get("dynamic_whitelist", False))
 
     def _build_grid_levels(self, lower=None, upper=None):
         g = self._grid_cfg()
@@ -703,7 +635,7 @@ class GridBotBase(DcaTpBotBase):
         try:
             g = self._grid_cfg()
             # ★ 门禁 1：动态白名单扫描/配置生效期间，禁止新开仓
-            if bool(g.get("dynamic_whitelist", False)) and self._is_whitelist_scanning():
+            if self._dynamic_whitelist_enabled() and self._is_whitelist_scanning():
                 logger.info(f"{GRID_TAG} [{pair}] 动态白名单扫描/生效中，暂缓新开仓")
                 return False
 
@@ -945,7 +877,7 @@ class GridBotBase(DcaTpBotBase):
                     # ★ 修复：动态白名单扫描/生效期间禁止同 pair 重启，
                     # 否则会绕过 _trigger_dynamic_whitelist_scan 的门禁锁，
                     # 导致"平了又开"永远不换币。
-                    if bool(g.get("dynamic_whitelist", False)) and self._is_whitelist_scanning():
+                    if self._dynamic_whitelist_enabled() and self._is_whitelist_scanning():
                         logger.info(
                             f"{GRID_TAG} [{trade.pair}] 动态白名单扫描/生效中，暂缓网格重启"
                         )
@@ -958,7 +890,7 @@ class GridBotBase(DcaTpBotBase):
                         return None
 
                     # ★ 修复：即使扫描锁已释放，也要校验当前 pair 是否仍在有效白名单内
-                    if bool(g.get("dynamic_whitelist", False)) and not self._is_pair_in_whitelist(trade.pair):
+                    if self._dynamic_whitelist_enabled() and not self._is_pair_in_whitelist(trade.pair):
                         logger.info(
                             f"{GRID_TAG} [{trade.pair}] 已不在有效白名单 "
                             f"{self._get_effective_whitelist()} 中，跳过重启"
@@ -1601,7 +1533,7 @@ class GridBotBase(DcaTpBotBase):
 
                 if is_flat:
                     _g = self._grid_cfg()
-                    if bool(_g.get("dynamic_whitelist", False)):
+                    if self._dynamic_whitelist_enabled():
                         logger.info(
                             f"{GRID_TAG} 🏁 碎片尾仓整笔平仓后已 flat，触发动态白名单扫描 | "
                             f"closed_pair={trade.pair}"
@@ -1689,7 +1621,7 @@ class GridBotBase(DcaTpBotBase):
                         self._set(trade, "grid_cleanup_pending", False)
 
                         _g = self._grid_cfg()
-                        if bool(_g.get("dynamic_whitelist", False)):
+                        if self._dynamic_whitelist_enabled():
                             logger.info(
                                 f"{GRID_TAG} 🏁 网格自动全平完成，触发动态白名单扫描 | "
                                 f"closed_pair={trade.pair}"
@@ -1757,7 +1689,7 @@ class GridBotBase(DcaTpBotBase):
                 # ★ 新增：清理残余仓位后若已 flat，触发扫描
                 if is_flat:
                     _g = self._grid_cfg()
-                    if bool(_g.get("dynamic_whitelist", False)):
+                    if self._dynamic_whitelist_enabled():
                         logger.info(
                             f"{GRID_TAG} 🏁 清理残余仓位完成并已 flat，触发动态白名单扫描 | "
                             f"closed_pair={trade.pair}"
@@ -1822,7 +1754,7 @@ class GridBotBase(DcaTpBotBase):
 
                 if is_flat:
                     _g = self._grid_cfg()
-                    if bool(_g.get("dynamic_whitelist", False)):
+                    if self._dynamic_whitelist_enabled():
                         logger.info(
                             f"{GRID_TAG} 🎯 单币止盈全平完成，触发动态白名单扫描 | closed_pair={trade.pair}"
                         )
@@ -1890,7 +1822,7 @@ class GridBotBase(DcaTpBotBase):
                     self._clear_full_reduce_retry(trade)
 
                     g = self._grid_cfg()
-                    if bool(g.get("dynamic_whitelist", False)):
+                    if self._dynamic_whitelist_enabled():
                         self._trigger_dynamic_whitelist_scan(trade)
                     else:
                         logger.info(f"{GRID_TAG} 动态白名单未启用，手动平仓后等待下次信号")
@@ -2420,10 +2352,6 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             pass
 
-    @property
-    def _bot_id(self):
-        return self._get_bot_id()
-
     def _grid_kv_key(self, suffix: str) -> str:
         return f"grid_{suffix}_{self._bot_id}_{self._side_str}"
 
@@ -2450,77 +2378,6 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             pass
 
-    def _trigger_dynamic_whitelist_scan(self, trade):
-        """
-        动态白名单模式：平仓后先上锁阻止开仓，再触发扫描 -> 写配置 -> 生效 -> 解锁
-        """
-        try:
-            g = self._grid_cfg()
-            is_dynamic = bool(g.get("dynamic_whitelist", False))
-            if not is_dynamic:
-                logger.info(f"{GRID_TAG} 动态白名单未启用，跳过扫描")
-                return
-
-            # ★ 第一步：立即上锁，阻断扫描与配置生效期间的新开仓
-            self._set_whitelist_scanning_lock(True, closed_pair=trade.pair, ttl_sec=300)
-
-            logger.info(f"{GRID_TAG} ========== 触发动态白名单扫描 ==========")
-            logger.info(f"{GRID_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={trade.pair}")
-
-            open_trades = Trade.get_open_trades()
-            existing_pairs = set(t.pair for t in open_trades if t.pair != trade.pair)
-            logger.info(f"{GRID_TAG} 当前持仓交易对: {list(existing_pairs)}")
-
-            import requests
-            import os
-            import threading
-
-            api_base = os.environ.get('DCATP_API_URL', 'http://localhost:9000')
-            direction = 'SHORT' if self._is_short else 'LONG'
-            payload = {
-                'bot_id': self._bot_id,
-                'side': self._side_str,
-                'direction': direction,
-                'exclude_pairs': list(existing_pairs),
-                'closed_pair': trade.pair
-            }
-
-            logger.info(f"{GRID_TAG} 调用后端 API: {api_base}/bots/{self._bot_id}/dynamic-whitelist-scan")
-            logger.info(f"{GRID_TAG} 请求参数: {payload}")
-
-            def async_scan():
-                try:
-                    response = requests.post(
-                        f"{api_base}/bots/{self._bot_id}/dynamic-whitelist-scan",
-                        json=payload,
-                        timeout=240
-                    )
-
-                    if response.status_code == 200:
-                        result = response.json()
-                        if result.get('success'):
-                            logger.info(
-                                f"{GRID_TAG} ✅ 动态白名单扫描并生效 | "
-                                f"新币={result.get('new_pair')} | "
-                                f"新白名单={result.get('new_whitelist')}"
-                            )
-                        else:
-                            logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描失败: {result.get('error')}")
-                            self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
-                    else:
-                        logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描请求失败: {response.status_code} | {response.text}")
-                        self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
-                except Exception as e:
-                    logger.warning(f"{GRID_TAG} ❌ 动态白名单扫描异常: {e}")
-                    self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
-
-            thread = threading.Thread(target=async_scan, daemon=True)
-            thread.start()
-            logger.info(f"{GRID_TAG} 后台扫描线程已启动（已开启开仓门禁锁）")
-
-        except Exception as e:
-            self._set_whitelist_scanning_lock(False, closed_pair=getattr(trade, "pair", ""))
-            logger.exception(f"{GRID_TAG} _trigger_dynamic_whitelist_scan 异常")
 
 
 class GridBotLong(GridBotBase):

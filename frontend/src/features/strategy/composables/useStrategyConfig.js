@@ -81,6 +81,11 @@ const buildTradeInfo = (side, config) => {
 
         // 开仓逻辑
         entrySignal: (() => {
+            // 多因子模式 + 立即开仓：跳过指标信号
+            if (config.pair_switch?.mode === "scanner" && config.entry?.immediate) {
+                return "立即开仓（多因子模式，跳过指标信号）"
+            }
+
             const signals = []
 
             if (config.entry?.bb?.enable) {
@@ -262,6 +267,9 @@ const createDefaultStrategyConfig = (side = "long") => ({
 
         condition: "and",
 
+        // 立即开仓（仅多因子模式生效）：跳过 RSI/MACD/BB 信号
+        immediate: false,
+
         rsi:{
             enable:true,
 
@@ -423,6 +431,11 @@ const createDefaultStrategyConfig = (side = "long") => ({
         is_partial: false,
         target_wallet_percent:5,
         target_wallet_amount: 50.0
+    },
+    // 选币/换币模式：manual=手动白名单，scanner=多因子筛选（止盈固定全平）
+    pair_switch: {
+        mode: "manual",
+        dynamic_whitelist: false
     },
     grid: {
         enable: false,
@@ -643,6 +656,17 @@ const normalizeAmountMode = (config) => {
     if (config.htf_trend_filter.protect_rebuy == null) config.htf_trend_filter.protect_rebuy = false
     if (config.htf_trend_filter.protect_trend == null) config.htf_trend_filter.protect_trend = false
 
+    // pair_switch 兜底（多因子选币/动态白名单换币）
+    if (!config.pair_switch || typeof config.pair_switch !== "object") {
+        config.pair_switch = { mode: "manual", dynamic_whitelist: false }
+    }
+    if (!config.pair_switch.mode) {
+        config.pair_switch.mode = "manual"
+    }
+    if (config.pair_switch.dynamic_whitelist == null) {
+        config.pair_switch.dynamic_whitelist = false
+    }
+
     // timeframe 兜底
     if (!config.timeframe) {
         // 如果是网格策略，默认 5m；否则默认 30m
@@ -656,6 +680,9 @@ const normalizeEntry = (config) => {
     if (!config.entry) return config
     if (!config.entry.condition) {
         config.entry.condition = "and"
+    }
+    if (config.entry.immediate == null) {
+        config.entry.immediate = false
     }
 
     // 新增：Pump 保护兜底

@@ -230,7 +230,13 @@
       </template>
 
       <el-form class="compact-form" label-width="100px" size="small">
-        <el-form-item label="条件模式">
+        <!-- 立即开仓（仅多因子模式）：跳过 RSI/MACD/BB 信号，选中即进场 -->
+        <el-form-item v-if="isScanner" label="立即开仓">
+          <el-switch v-model="config.entry.immediate" />
+          <span class="field-hint-inline">开启后隐藏指标信号，扫描选中币种即进场</span>
+        </el-form-item>
+
+        <el-form-item v-if="!(isScanner && config.entry.immediate)" label="条件模式">
           <el-select v-model="config.entry.condition" class="field-input">
             <el-option label="全部满足 AND" value="and" />
             <el-option label="任意满足 OR"  value="or" />
@@ -239,7 +245,7 @@
         </el-form-item>
       </el-form>
 
-      <div class="entry-grid">
+      <div class="entry-grid" v-if="!(isScanner && config.entry.immediate)">
         <section class="signal-card">
           <div class="signal-head">
             <div>
@@ -327,13 +333,14 @@
 
       <el-form class="compact-form" label-width="140px" size="small">
 
-        <!-- ★ 1. 自动补仓开关 -->
-        <el-form-item :label="config.tp.rebuy_enable ? '自动补仓' : '全部平仓'">
-          <el-switch v-model="config.tp.rebuy_enable" @change="onRebuyChange" />
+        <!-- ★ 1. 自动补仓开关（多因子模式固定全平） -->
+        <el-form-item :label="(config.tp.rebuy_enable && !isScanner) ? '自动补仓' : '全部平仓'">
+          <el-switch v-model="config.tp.rebuy_enable" :disabled="isScanner" />
+          <span v-if="isScanner" class="field-hint-inline">多因子模式止盈固定为全平</span>
         </el-form-item>
 
-        <!-- ★ 2. 只有开启「自动补仓」时，才显示减仓参数和目标仓位 -->
-        <template v-if="config.tp.rebuy_enable">
+        <!-- ★ 2. 只有开启「自动补仓」且非多因子模式时，才显示减仓参数和目标仓位 -->
+        <template v-if="config.tp.rebuy_enable && !isScanner">
 
           <el-form-item :label="config.amount_mode === 'amount' ? '减仓金额(USDT)' : '减仓比例%'">
             <el-input-number v-if="config.amount_mode === 'amount'"
@@ -354,6 +361,13 @@
           </el-form-item>
 
         </template>
+
+        <!-- ★ 动态白名单换币（仅多因子模式） -->
+        <el-form-item v-if="isScanner" label="动态白名单">
+          <el-switch v-model="config.pair_switch.dynamic_whitelist" />
+          <span class="field-hint-inline">仓位清零后自动扫描最优币并替换白名单</span>
+        </el-form-item>
+
       </el-form>
     </ToggleSection>
 
@@ -512,9 +526,10 @@
       <!-- DCA止盈 -->
       <el-form class="compact-form" label-width="140px" size="small">
 
-        <!-- ★ 修改点：将开关放上面，占满整行 -->
-        <el-form-item :label="config.loss_tp.is_partial ? '部分减仓' : '全部平仓'">
-          <el-switch v-model="config.loss_tp.is_partial" />
+        <!-- ★ 修改点：将开关放上面，占满整行（多因子模式固定全平） -->
+        <el-form-item :label="(config.loss_tp.is_partial && !isScanner) ? '部分减仓' : '全部平仓'">
+          <el-switch v-model="config.loss_tp.is_partial" :disabled="isScanner" />
+          <span v-if="isScanner" class="field-hint-inline">多因子模式止盈固定为全平</span>
         </el-form-item>
 
         <!-- ★ 修改点：止盈收益率放到下面 -->
@@ -523,9 +538,9 @@
             controls-position="right" :min="0" :max="100" :step="0.1" :precision="2" />
         </el-form-item>
 
-        <!-- 只有部分减仓时才显示目标仓位输入 -->
+        <!-- 只有部分减仓且非多因子模式时才显示目标仓位输入 -->
         <el-form-item
-          v-if="config.loss_tp.is_partial"
+          v-if="config.loss_tp.is_partial && !isScanner"
           :label="config.amount_mode === 'amount' ? '减仓至(USDT)' : '调整仓位至总资金%'"
         >
           <el-input-number v-if="config.amount_mode === 'amount'"
@@ -868,7 +883,7 @@
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { InfoFilled, Close, Plus } from '@element-plus/icons-vue'
 import ToggleSection from './ToggleSection.vue'
-import { reactive } from 'vue'
+import { reactive, watch } from 'vue'
 
 const panelOpen = reactive({
   indicator: false,   // 指标配置：默认收起
@@ -879,8 +894,36 @@ const panelOpen = reactive({
 
 const props = defineProps({
     config: Object,
-    tradeInfo: Object
+    tradeInfo: Object,
+    isScanner: { type: Boolean, default: false }
 })
+
+// 多因子模式：止盈统一收敛为全平（保证仓位清零后才能触发换币）
+// 进入时暂存手动模式的 TP 偏好，退出时恢复，避免切回手动后配置被永久改写
+let stashedManualTp = null
+watch(() => props.isScanner, (val) => {
+    if (!props.config) return
+    if (val) {
+        stashedManualTp = {
+            rebuy_enable: props.config.tp?.rebuy_enable ?? null,
+            is_partial: props.config.loss_tp?.is_partial ?? null,
+        }
+        if (props.config.tp) props.config.tp.rebuy_enable = false
+        if (props.config.loss_tp) props.config.loss_tp.is_partial = false
+        if (props.config.pair_switch) props.config.pair_switch.mode = 'scanner'
+    } else {
+        if (props.config.pair_switch) props.config.pair_switch.mode = 'manual'
+        if (stashedManualTp) {
+            if (props.config.tp && stashedManualTp.rebuy_enable != null) {
+                props.config.tp.rebuy_enable = stashedManualTp.rebuy_enable
+            }
+            if (props.config.loss_tp && stashedManualTp.is_partial != null) {
+                props.config.loss_tp.is_partial = stashedManualTp.is_partial
+            }
+            stashedManualTp = null
+        }
+    }
+}, { immediate: true })
 
 const emit = defineEmits(['save', 'timeframe-change'])
 
