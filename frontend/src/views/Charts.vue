@@ -156,12 +156,22 @@ const loadBots = async (force = false) => {
     const selectedBot = botList.value.find(b => b.id === (queryBotId || botList.value[0].id))
 
     if (selectedBot) {
-        // 直接判断 type
-        const isGrid = String(selectedBot.strategyType || '').toLowerCase().includes('grid')
-        timeframe.value = isGrid ? '1m' : '30m'
+        applyBotTimeframe(selectedBot)
     }
 
     await loadPairs()
+}
+
+// 网格机器人默认使用其配置的 K 线周期，DCA 默认 30m
+const applyBotTimeframe = (bot) => {
+    if (!bot) return
+    const isGrid = String(bot.strategyType || '').toLowerCase().includes('grid')
+    if (isGrid) {
+        const tf = bot.gridConfig?.timeframe
+        timeframe.value = tf && timeframes.includes(tf) ? tf : '1m'
+    } else {
+        timeframe.value = '30m'
+    }
 }
 
 const onBotChange = async () => {
@@ -169,6 +179,7 @@ const onBotChange = async () => {
     pairs.value = []
     pair.value = ""
     strategyPositions.value = []
+    applyBotTimeframe(botList.value.find(b => b.id === botId.value))
     if (candleSeries) candleSeries.setData([])
     if (markerApi) markerApi.setMarkers([])
 

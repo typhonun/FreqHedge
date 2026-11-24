@@ -186,6 +186,10 @@ def sync_to_bots(
                 "dryRun": bot.get("dryRun", True),
                 "enableLong": bot.get("enableLong", True),
                 "enableShort": bot.get("enableShort", False),
+                "hedgeMode": bot.get("hedgeMode", False),
+                "tradingMode": bot.get("tradingMode", "futures"),
+                "marginMode": bot.get("marginMode", "cross"),
+                "strategyType": bot.get("strategyType") or "dca",
                 "exchangeAccountId": bot.get("exchangeAccountId"),
                 "exchangeAccount": new_json,
             },
@@ -210,6 +214,7 @@ def sync_to_bots(
             },
             "longConfig": bot.get("longConfig"),
             "shortConfig": bot.get("shortConfig"),
+            "gridConfig": bot.get("gridConfig"),
         }
 
         # 2. 更新 bot 表 + 重新生成 config

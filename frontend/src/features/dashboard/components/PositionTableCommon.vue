@@ -388,7 +388,8 @@ const amountStep = computed(() => {
 const emit = defineEmits(["selectPair"])
 
 const goToChart = (row) => {
-    const strategy = row.side === "SHORT" ? "DcaTpShort" : "DcaTpLong"
+    const prefix = row.strategy_type === "grid" ? "GridBot" : "DcaTp"
+    const strategy = `${prefix}${row.side === "SHORT" ? "Short" : "Long"}`
     emit("selectPair", { pair: row.pair, strategy })
     router.push({ path: "/charts", query: { pair: row.pair, strategy } })
 }

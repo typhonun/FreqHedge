@@ -201,7 +201,13 @@ class ConfigService:
         cfg["bot_name"] = f"{base['name']}-{side}"
 
         meta = get_strategy(strategy_type)
-        if meta.get("timeframe"):
+        # 优先使用策略参数里用户配置的 K 线周期（如 gridConfig.timeframe），
+        # 其次才用注册表元信息；freqtrade StrategyResolver 最终会以
+        # strategy.timeframe（property/类属性）回写 config["timeframe"]。
+        cfg_tf = (strategy_params or {}).get("timeframe")
+        if cfg_tf:
+            cfg["timeframe"] = cfg_tf
+        elif meta.get("timeframe"):
             cfg["timeframe"] = meta["timeframe"]
 
         cfg.setdefault("exchange", {})

@@ -323,7 +323,8 @@ class PositionService:
         if not bot:
             return []
 
-        cfg = bot.get(f"{side}Config") or {}
+        # DCA 前端只提交 longConfig（shortConfig 恒为空），空侧回退到 longConfig
+        cfg = bot.get(f"{side}Config") or bot.get("longConfig") or {}
         if not isinstance(cfg, dict):
             return []
 
@@ -565,6 +566,7 @@ class PositionService:
                     )
                 else:
                     t["tp_roi"] = PositionService._current_roi(round_minutes, roi_levels)
+                t["strategy_type"] = (bot or {}).get("strategyType") or "dca"
                 t.setdefault("bot_id", bot_id)
 
         _enrich(long_trades, long_roi_levels, long_custom, "long")
