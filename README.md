@@ -2,236 +2,238 @@
 
 # FreqHedge
 
-用一个 Web 界面管理多个交易机器人：配置动态网格或 DCA 策略、运行回测、监控持仓、追踪交易事件，并执行统一风控与机器人间联合止盈。
+Manage multiple trading bots from a single web UI: configure dynamic grid or DCA strategies, run backtests, monitor positions, track trade events, and enforce unified risk control with cross-bot take-profit.
 
-[快速了解](#freqhedge-是什么) · [功能预览](#-功能预览) · [核心能力](#核心能力) · [开始使用](#快速开始)
+[Overview](#what-is-freqhedge) · [Preview](#-features) · [Core Capabilities](#core-capabilities) · [Get Started](#quick-start)
 
 </div>
 
 ---
 
-### FreqHedge 是什么
+### What is FreqHedge
 
-Freqtrade 负责执行交易策略，FreqHedge 负责把多个 Freqtrade 实例组织起来，让策略从“写好并运行”变成一个更容易使用的完整工作流：
+Freqtrade executes the trading strategies; FreqHedge orchestrates multiple Freqtrade instances into a complete, easy-to-use workflow:
 
 ```text
-配置策略 → 准备数据 → 回测验证 → 启动机器人 → 实时监控 → 复盘与调整
+Configure strategy → Prepare data → Backtest → Start bot → Monitor live → Review & adjust
 ```
 
-它适合希望使用 Web 界面管理量化交易的个人用户和小型团队，尤其适合同时运行多策略、多交易对或多方向机器人的场景。通过多币种、多方向的独立机器人组合，可以把资金和策略暴露分散到不同市场，再配合全局风控管理组合级风险。
+It is designed for individual users and small teams who want to manage quant trading through a web interface — especially when running multiple strategies, trading pairs, or directions at the same time. Independent bots across coins, directions, and strategies spread capital and strategy exposure across different markets, while global risk controls manage portfolio-level risk.
 
 
-### FreqHedge 可以帮你解决什么
+### Problems FreqHedge solves
 
 
-- 不再为每个机器人手动维护配置文件、端口和启动命令；
+- No more manually maintaining config files, ports, and launch commands for every bot;
 
-- 不再在多个终端和日志文件之间切换查看持仓；
+- No more switching between terminals and log files to check positions;
 
-- 不再只看最终收益，可以在 K 线上复盘每次加仓、减仓和退出；
+- No more looking only at final returns — replay every add, reduce, and exit on the K-line chart;
 
-- 不再让回测参数与运行参数分离，保存的配置可以直接用于回测和启动；
+- No more separating backtest parameters from runtime parameters — saved configs can be used directly for backtests and live runs;
 
-- 不再只依赖单笔交易止损，可以按机器人整体收益执行止盈、止损和追踪止损。
-- 不再只能单独管理每个机器人，可以按全部机器人合计收益执行联合止盈、止损和追踪止损。
-
-
-> FreqHedge 是交易管理工具，不承诺收益，也不构成投资建议。接入真实账户前，请先使用 `dry_run`，并自行验证策略、手续费、滑点和交易所配置。
-
-## 功能预览
+- No more relying only on per-trade stop loss — take profit, stop loss, and trailing stop can be enforced on overall bot returns;
+- No more managing each bot in isolation — joint take-profit, stop loss, and trailing stop can be applied to the combined returns of all bots.
 
 
-[//]: # (### 📹 视频演示)
+> FreqHedge is a trading management tool. It does not promise returns and is not investment advice. Before connecting a real account, run in `dry_run` first and verify your strategy, fees, slippage, and exchange settings yourself.
+
+## Features
 
 
-[//]: # ([![Demo Video]&#40;https://img.shields.io/badge/▶_观看演示视频-3分钟-red?style=for-the-badge&#41;]&#40;https://www.bilibili.com/video/xxxxx&#41;)
+[//]: # (### 📹 Demo Video)
 
 
-[//]: # (> 演示流程：登录 → 选择策略 → 查看实时 K 线 → 复盘交易事件 → 调整参数 → 发起回测。)
+[//]: # ([![Demo Video]&#40;https://img.shields.io/badge/▶_Watch_Demo-3min-red?style=for-the-badge&#41;]&#40;https://www.bilibili.com/video/xxxxx&#41;)
 
 
-[//]: # (### 📸 界面截图)
+[//]: # (> Demo flow: Login → Select strategy → View live K-line → Replay trade events → Adjust parameters → Start backtest.)
 
 
-#### 实时 K 线与交易事件
+[//]: # (### 📸 Screenshots)
+
+
+#### Live K-line & trade events
 
 
 [//]: # (![Chart]&#40;./screenshots/chart.png&#41;)
 
 
-K 线上集中展示信号开仓、DCA 补仓、网格加仓/减仓、止盈、止损和全局平仓等事件。不同机器人使用各自对应的事件类型，你可以直接看到策略为什么在某个时间点调整仓位，而不必从长日志中人工还原交易过程。
+The K-line chart consolidates signal entries, DCA adds, grid buys/sells, take-profit, stop-loss, and global close events. Each bot type uses its own event types, so you can see exactly why the strategy adjusted a position at a given moment — no need to reconstruct the process from long logs.
 
 
-#### 策略配置面板
+#### Strategy configuration panel
 
 
 [//]: # (![Strategy Config]&#40;./screenshots/strategy-config.png&#41;)
 
 
-根据机器人类型，通过表单配置 DCA 参数或网格区间、启动方式、止损、指标、ROI 规则和 K 线周期。保存后由 FreqHedge 自动生成对应实例的 Freqtrade 配置，无需手动编辑复杂 JSON。
+Depending on the bot type, configure DCA parameters or grid ranges, launch mode, stop loss, indicators, ROI rules, and candle timeframe through forms. FreqHedge then generates the corresponding Freqtrade configs automatically — no manual editing of complex JSON.
 
 
-#### 实时持仓监控
+#### Real-time position monitoring
 
 
 [//]: # (![Dashboard]&#40;./screenshots/dashboard.png&#41;)
 
 
-在一个仪表盘中查看多个 bot 的持仓、方向、盈亏、杠杆、保证金和“目标止盈%”，并按 bot、方向或交易对筛选。目标止盈对 DCA 机器人显示当前 ROI 档位，对网格机器人显示预计下次减仓价对应的收益率。
+View positions, direction, PnL, leverage, margin, and "target take-profit %" for multiple bots on a single dashboard, with filtering by bot, direction, or trading pair. For DCA bots the target take-profit shows the current ROI tier; for grid bots it shows the return rate at the expected next reduce price.
 
 
-#### 回测结果
+#### Backtest results
 
 
 [//]: # (![Backtest]&#40;./screenshots/backtest.png&#41;)
 
 
-使用当前策略配置发起回测，查看收益、回撤、胜率、盈亏比和退出原因，再决定是否启动模拟盘或真实交易实例。
+Run backtests with the current strategy config and review returns, drawdown, win rate, profit factor, and exit reasons before deciding whether to start a dry-run or live instance.
 
-## 核心能力
+## Core Capabilities
 
-### 多实例管理
+### Multi-instance management
 
-每个 bot 都是独立的运行单元，可以单独配置、启动、停止、重启和查看状态。一个 bot 可以按需启用 Long、Short，两个方向使用独立的 Freqtrade 进程：
+Every bot is an independent runtime unit that can be configured, started, stopped, restarted, and monitored separately. A bot can enable Long and/or Short on demand, and each direction runs as an independent Freqtrade process:
 
 ```text
 Bot #N
-├── Long  → 独立端口 → 独立配置 → 独立数据库与日志
-└── Short → 独立端口 → 独立配置 → 独立数据库与日志
+├── Long  → dedicated port → dedicated config → dedicated DB & logs
+└── Short → dedicated port → dedicated config → dedicated DB & logs
 ```
 
-- 实例之间互不覆盖，适合运行多个策略和参数组合；
-- 配置、日志、交易记录按 bot 隔离；
-- 启动后自动检查 Freqtrade RPC 是否可用；
-- 支持后台启动、状态查询、方向重启和健康监控；
-- 可按交易所账户、交易对、资金和杠杆创建不同 bot；
-- 策略类型（DCA / 网格）作为统一标识贯穿前后端：前端表单、后端存储、Freqtrade 配置生成和持仓回显保持一致。
+- Instances do not interfere with each other — ideal for running multiple strategies and parameter sets;
+- Configs, logs, and trade records are isolated per bot;
+- The Freqtrade RPC endpoint is checked automatically after startup;
+- Supports background start, status queries, per-direction restarts, and health monitoring;
+- Bots can be created per exchange account, trading pair, capital, and leverage;
+- The strategy type (DCA / grid) acts as a unified identifier across the stack: frontend forms, backend storage, Freqtrade config generation, and position reporting all stay consistent.
 
-独立机器人组合可以覆盖多个币种、多个策略和多个方向：某一币种出现单边行情时，其他币种或方向仍可能保持独立运行，从组合层面降低对单一市场的依赖。全局止盈、止损、追踪止盈和多空持仓差风控会对机器人组合进行统一约束，避免单个机器人风险无限扩大。
+Independent bot combinations can span multiple coins, strategies, and directions: when one coin trends one way, other coins or directions keep running independently, reducing reliance on any single market at the portfolio level. Global take-profit, stop-loss, trailing-stop, and long/short exposure-difference risk controls constrain the whole bot portfolio so a single bot's risk cannot grow unbounded.
 
-> **交易所持仓模式**：期货 bot 同时启用 Long 和 Short 时，配置会启用 Hedge Mode，并要求交易所账户已经处于双向持仓模式。
+> **Exchange position mode**: when a futures bot enables both Long and Short, the config enables Hedge Mode, and the exchange account must already be in dual-side position mode.
 
-### 参数可配置化
+### Configurable parameters
 
-策略参数通过 Web 表单统一管理，并保存为可复用的 bot 配置：
+Strategy parameters are managed through web forms and saved as reusable bot configs:
 
-| 配置范围 | 可配置内容                                  |
-| --- |----------------------------------------|
-| 交易基础 | 交易对、资金、单笔金额、杠杆、最大持仓、K 线周期、交易模式（现货/合约）  |
-| DCA 机器人 | 入场指标、分层补仓、每层加仓金额、金额/百分比模式、冷却时间         |
-| 退出规则 | ROI 阶梯、止损、DCA 止盈、TP/KDJ 减仓金额、时间止损      |
-| 行情保护 | 高周期趋势过滤、Pump 保护、单交易对仓位上限               |
-| 网格机器人 | 价格上下限、网格数量、等差/等比间距、每格加仓/减仓金额、启动模式、动态网格边界 |
-| 选币模式 | 手动指定交易对，或多因子扫描自动选币（网格 / DCA 均支持）       |
-| 实例风控 | bot 级止盈、止损、追踪止损和触发后自动停止                |
-| 组合风控 | 机器人止盈、止损、追踪止损、联合止盈和多空持仓差限制             |
+| Scope | Configurable content |
+| --- |----------------------|
+| Trading basics | Pairs, capital, stake amount, leverage, max open trades, candle timeframe, trading mode (spot/futures) |
+| DCA bot | Entry indicators, layered adds, per-layer add amount, amount/percent mode, cooldown |
+| Exit rules | ROI ladder, stop loss, DCA take-profit, TP/KDJ partial exits, time stop |
+| Market protection | Higher-timeframe trend filter, pump protection, per-pair position cap |
+| Grid bot | Price bounds, grid count, arithmetic/geometric spacing, per-grid buy/reduce amount, launch mode, dynamic grid bounds |
+| Pair selection | Manual pair selection, or multi-factor scanning for automatic pair selection (supported by both grid and DCA) |
+| Instance risk | Per-bot take-profit, stop-loss, trailing stop, and auto-stop after trigger |
+| Portfolio risk | Bot-level take/stop/trailing, joint take-profit, and long/short exposure difference limits |
 
-配置流程：
+Configuration flow:
 
 ```text
-Web 表单 → 保存参数 → 生成 bot/方向配置 → 回测 → 启动实例
+Web form → Save params → Generate bot/direction configs → Backtest → Start instance
 ```
 
-### DCA 机器人
+### DCA bot
 
-DCA 机器人适合希望按价格回撤分层补仓、等待反弹退出的交易场景：
+The DCA bot suits scenarios where you want to add in layers on price drawdowns and exit on a rebound:
 
-- **分层补仓**：按价格偏移触发下一层补仓，支持自动或手动层级；
-- **分层金额**：每个加仓层可独立配置金额或账户百分比，不同层可以使用不同投入规模；
-- **灵活减仓**：止盈、KDJ 减仓或风控触发时，可以按固定金额、比例或目标仓位部分减仓，也可以直接全平；
-- **仓位控制**：支持固定金额或账户百分比，配置基础金额、倍率、最大次数和冷却时间；
-- **入场过滤**：可使用 RSI、KDJ、MACD、EMA 和布林带组合条件；
-- **多级止盈**：支持 ROI 阶梯、浮亏反弹止盈、分段减仓和时间止损；
-- **高周期保护**：支持 4h、12h、1d 趋势过滤，减少逆势开仓和补仓；
-- **多因子选币**：可切换为扫描模式，由多因子选币器自动挑选交易对，并在持仓轮换时动态替换白名单。
+- **Layered adds**: each next layer triggers on a price offset; supports automatic or manual levels;
+- **Per-layer sizing**: every add layer can independently use a fixed amount or a percentage of the account, with different scales per level;
+- **Flexible exits**: on take-profit, KDJ exit, or risk triggers, positions can be partially reduced by fixed amount, ratio, or target size — or fully closed;
+- **Position control**: supports fixed amount or account percentage, with base amount, multiplier, max count, and cooldown;
+- **Entry filters**: RSI, KDJ, MACD, EMA, and Bollinger Bands combinations;
+- **Multi-level take-profit**: ROI ladder, floating-loss rebound take-profit, staged partial exits, and time stop;
+- **Higher-timeframe protection**: 4h, 12h, 1d trend filters reduce counter-trend entries and adds;
+- **Multi-factor pair selection**: can switch to scanner mode, where a multi-factor selector picks pairs automatically and dynamically replaces the whitelist on position rotation.
 
-DCA 使用限价单逻辑，模拟盘和回测按 maker 费率估算，实盘以交易所成交回报为准。Long 和 Short 方向共用一份策略配置，通过独立的 Freqtrade 进程分别执行。
+DCA uses limit-order logic; dry-run and backtests assume maker fees, while live trading follows actual exchange fills. The Long and Short directions share a single strategy config and run in separate Freqtrade processes.
 
-### 网格机器人
+### Grid bot
 
-网格机器人支持手动单币和多因子多币两种模式：手动模式在设定的绝对价格区间内自动低买高卖，适合有明确震荡区间判断的场景；多因子模式由选币器动态挑选交易对、自动计算网格区间，并按最大并发数均摊资金。
+The grid bot supports two modes — manual single-pair and multi-factor multi-pair. Manual mode automatically buys low and sells high within a configured absolute price range, suited to ranges you are confident about; multi-factor mode lets the selector pick pairs dynamically, compute grid ranges automatically, and split capital across a max concurrency count.
 
-- **价格区间**：手动模式设置网格下限价和上限价；多因子模式由扫描结果动态生成区间；
-- **网格间距**：支持等差和等比两种间距算法，网格数量可配置，K 线周期可选（1m / 3m / 5m / 15m / 30m）；
-- **动态网格**：以当前持仓和已成交网格为锚点动态推进，不依赖固定一次性挂满所有订单；价格向区间边缘运行时继续生成相邻网格，成交后更新网格状态；
-- **网格交易**：多头价格下跌触发加仓、上涨到相邻网格减仓；空头逻辑相反；
-- **启动方式**：支持网格触发、触发价启动和立即启动；
-- **仓位限制**：支持最大同时持有网格数，并按资金和网格数量计算每格规模；多因子模式下按并发数均摊资金；
-- **区间止损**：可配置价格跌破下沿时清空仓位；
-- **动态白名单**：多因子模式下支持扫描锁、预取配置和运行时热更新，平仓后自动更新交易对白名单；
-- **网格预览**：配置页面展示网格线、格距、单格预期利润和预计投入，便于启动前检查；
+- **Price range**: manual mode sets lower/upper bounds; multi-factor mode derives the range from scan results;
+- **Grid spacing**: arithmetic and geometric spacing algorithms, configurable grid count, and selectable candle timeframe (1m / 3m / 5m / 15m / 30m);
+- **Dynamic grid**: anchored on current positions and executed grids rather than pre-placing all orders; as price runs toward the range edge, adjacent grids keep being generated and grid state updates on fills;
+- **Grid trading**: longs add when price drops and reduce at the next grid level on the way up; shorts work in reverse;
+- **Launch modes**: grid-triggered, trigger-price, and immediate start;
+- **Position limits**: caps the number of simultaneously held grids and sizes each grid from capital and grid count; multi-factor mode splits capital by concurrency;
+- **Range stop-loss**: can clear positions when price breaks below the lower bound, as protection against range failure;
+- **Dynamic whitelist**: in multi-factor mode, supports scan locks, prefetched configs, and hot reloads at runtime; the pair whitelist updates automatically after a position closes;
+- **Grid preview**: the config page shows grid lines, spacing, expected per-grid profit, and estimated investment for pre-launch checks.
 
-网格使用市价单逻辑，模拟盘和回测按 taker 费率估算，实盘以交易所成交回报为准。
+Grid bots use market-order logic; dry-run and backtests assume taker fees, while live trading follows actual exchange fills.
 
-网格机器人的典型流程：
+Typical grid workflow:
 
 ```text
-选择模式（手动 / 多因子）→ 设置区间或扫描参数 → 预览网格 → 回测 → 启动机器人
+Choose mode (manual / multi-factor) → Set range or scan params → Preview grid → Backtest → Start bot
 ```
 
-### 回测与数据准备
+### Backtesting & data preparation
 
-回测和历史数据下载由 FreqHedge 统一管理：
+Backtests and historical data downloads are managed centrally by FreqHedge:
 
-- 检查本地 K 线是否覆盖交易对、周期和时间范围；
-- 缺少数据时触发下载，并显示任务进度；
-- 后台执行 Freqtrade，不阻塞 Web 请求；
-- 支持查询、取消和查看任务日志；
-- 对配置错误、数据缺失、进程异常和无回测报告明确提示；
-- 使用与机器人相同的配置，减少回测与实际运行之间的偏差。
+- Checks whether local candles cover the pair, timeframe, and timerange;
+- Triggers downloads when data is missing, with progress display;
+- Runs Freqtrade in the background without blocking web requests;
+- Supports querying, cancelling, and viewing task logs;
+- Gives clear errors for config issues, missing data, process failures, and missing reports;
+- Uses the same config as the bot, reducing divergence between backtest and live.
 
-### 实时监控与交易复盘
+### Real-time monitoring & trade review
 
-- 汇总多个 bot 的账户、持仓、已平仓收益和浮动收益；
-- 查看资金曲线、收益曲线、保证金和风险暴露；
-- 按 bot、方向和交易对筛选持仓；
-- 持仓表展示当前收益率和目标止盈率（DCA 按 ROI 档位、网格按下次减仓价估算）；
-- 支持手动开仓、平仓以及机器人启停；
-- 将交易事件保存并映射到 K 线，方便定位每次策略动作；
-- 点击持仓可跳转到对应 K 线图，按策略类型展示网格或 DCA 的交易事件。
+- Aggregates account, positions, realized PnL, and floating PnL across bots;
+- Shows equity curve, return curve, margin, and risk exposure;
+- Filter positions by bot, direction, and trading pair;
+- The position table shows current return rate and target take-profit rate (ROI tier for DCA, estimated next reduce price for grid);
+- Supports manual open/close and bot start/stop;
+- Trade events are saved and mapped onto the K-line chart for locating each strategy action;
+- Clicking a position jumps to the corresponding K-line chart with grid or DCA events rendered per strategy type.
 
-### 统一风控
+### Unified risk control
 
-风控以 bot 为单位计算“轮次收益”，同时考虑已实现收益和浮动收益：
+Risk control computes "round returns" per bot, including both realized and floating PnL:
 
-- 按金额或收益率触发止盈、止损；
-- 支持盈利回撤和亏损方向的追踪止损；
-- 触发后执行全量平仓，并等待持仓确认清空；
-- 可按配置自动停止 bot；
-- 避免同一个风控条件重复触发。
+- Trigger take-profit or stop-loss by amount or return rate;
+- Supports profit-drawdown and loss-direction trailing stops;
+- Executes a full close on trigger and waits until positions are confirmed flat;
+- Can auto-stop the bot after triggering, per config;
+- Prevents the same risk condition from triggering repeatedly.
 
-在 bot 级风控之外，FreqHedge 还支持**机器人间联合止盈**：把多个独立 bot 的已实现收益和浮动收益汇总为组合收益，达到金额目标后统一平仓。
+Beyond per-bot risk control, FreqHedge also supports **cross-bot joint take-profit**: realized and floating PnL of multiple independent bots are aggregated into a portfolio return, and all positions are closed uniformly once a target amount is reached.
 
-## 工作方式
+## How it works
 
 ```text
 ┌────────────────────┐
-│  Vue Web 控制台     │  配置 / 仪表盘 / K线 / 回测
+│  Vue Web Console    │  Config / Dashboard / K-line / Backtest
 └─────────┬──────────┘
           │ REST API
 ┌─────────▼──────────┐
-│  FastAPI 管理服务   │  bot / 配置 / 回测 / 风控 / 监控
+│  FastAPI Service    │  bot / config / backtest / risk / monitoring
 └────┬──────────┬────┘
      │          │
 ┌────▼─────┐ ┌──▼──────────────────┐
-│ 本地数据  │  │ Freqtrade 实例池    │
-│ 用户/事件 │  │ 每个 bot × 方向独立  │
+│ Local    │  │ Freqtrade Pool      │
+│ data     │  │ one process per     │
+│ (users/  │  │ bot × direction     │
+│  events) │  │                     │
 └──────────┘ └────────────────────┘
 ```
 
-FreqHedge 使用 Vue 3、FastAPI、SQLite、SQLAlchemy、APScheduler 和 Freqtrade 构建。它不替换 Freqtrade 的交易执行能力，而是提供配置、编排、观测和风控层。策略类型通过统一注册表（`backend/app/core/strategy_registry.py`）定义，新增机器人类型只需注册元信息，无需改动配置生成和持仓回显的主流程。
+FreqHedge is built with Vue 3, FastAPI, SQLite, SQLAlchemy, APScheduler, and Freqtrade. It does not replace Freqtrade's trade execution — it provides the configuration, orchestration, observability, and risk-control layer. Strategy types are defined in a unified registry (`backend/app/core/strategy_registry.py`); adding a new bot type only requires registering its metadata, without touching the config generation or position reporting pipeline.
 
-##  快速开始
+## Quick Start
 
-请按照以下步骤在本地运行 FreqHedge。
+Follow these steps to run FreqHedge locally.
 
-### 环境准备
-请先安装以下软件：
-- [Python 3.12.x](https://www.python.org/downloads/)（支持 3.11 - 3.12。安装时请勾选 `Add Python to PATH`）
-- [Node.js 20 LTS](https://nodejs.org/)（支持 18+）与 [pnpm 10](https://pnpm.io/installation)
+### Prerequisites
+Install the following software:
+- [Python 3.12.x](https://www.python.org/downloads/) (3.11 - 3.12 supported; check `Add Python to PATH` during install)
+- [Node.js 20 LTS](https://nodejs.org/) (18+ supported) and [pnpm 10](https://pnpm.io/installation)
 - [Git](https://git-scm.com/)
 
-### 安装项目依赖
+### Install dependencies
 
 ```powershell
 git clone https://github.com/typhonun/FreqHedge
@@ -247,55 +249,55 @@ cd frontend
 pnpm install
 ```
 
-### 启动服务
+### Start the services
 
-后端和前端分别使用两个终端窗口。
+Run the backend and frontend in two separate terminal windows.
 
-#### 启动后端
+#### Start the backend
 
 ```powershell
-# 在仓库根目录执行
+# From the repository root
 venv\Scripts\activate
 cd backend
 python -m uvicorn app.main:app --reload --port 9000
 ```
 
-#### 启动前端
+#### Start the frontend
 
 ```powershell
-# 在仓库根目录新开 PowerShell 窗口中执行
+# In a new PowerShell window from the repository root
 cd frontend
 pnpm dev
 ```
 
-打开浏览器访问 http://localhost:5173，即可进入 FreqHedge 控制台。创建 bot 后选择 DCA 或网格策略，配置交易对、方向、资金和策略参数。
+Open http://localhost:5173 in your browser to enter the FreqHedge console. When creating a bot, choose the DCA or grid strategy, then configure pairs, direction, capital, and strategy parameters.
 
-## 项目结构
+## Project Structure
 
 ```text
 FreqHedge/
 ├── backend/
-│   ├── app/api/                 # bot、回测、图表、持仓、风控、日志、交易所接口
-│   ├── app/services/            # 实例、进程、配置、回测、RPC、风控、网格扫描服务
-│   ├── app/core/                # 策略注册表、默认值、配置管理
-│   ├── app/models/              # 用户、交易事件、收益和资金快照
-│   └── config/settings.py       # 项目路径与运行配置
+│   ├── app/api/                 # bot, backtest, chart, position, risk, log, exchange endpoints
+│   ├── app/services/            # instance, process, config, backtest, RPC, risk, grid scanner services
+│   ├── app/core/                # strategy registry, defaults, config management
+│   ├── app/models/              # users, trade events, profit and balance snapshots
+│   └── config/settings.py       # project paths and runtime config
 ├── frontend/src/
-│   ├── features/                # dashboard、策略配置、选币器等功能模块
-│   ├── views/                   # 仪表盘、持仓、图表、bot 和设置页面
-│   ├── config/                  # 前端策略注册表与默认配置
-│   ├── api/                     # 后端接口封装
-│   └── stores/                  # Pinia 状态管理
+│   ├── features/                # dashboard, strategy config, pair selector and other feature modules
+│   ├── views/                   # dashboard, positions, charts, bot and settings pages
+│   ├── config/                  # frontend strategy registry and default configs
+│   ├── api/                     # backend API wrappers
+│   └── stores/                  # Pinia state management
 └── freqtrade/user_data/
-    ├── strategies/              # DCA/网格策略基类、方向策略和事件记录器
-    │   ├── DcaTpBotBase.py      # DCA 机器人基础策略
-    │   └── GridBotBase.py       # 网格机器人基础策略
-    ├── bots/{bot_id}/           # 实例配置、日志和交易数据库
-    └── config_template.json     # Freqtrade 配置模板
+    ├── strategies/              # DCA/grid strategy bases, direction strategies, event recorder
+    │   ├── DcaTpBotBase.py      # DCA bot base strategy
+    │   └── GridBotBase.py       # grid bot base strategy
+    ├── bots/{bot_id}/           # per-instance configs, logs and trade databases
+    └── config_template.json     # Freqtrade config template
 ```
 
-## 免责声明
+## Disclaimer
 
-FreqHedge 仅用于软件工程实践、量化研究和学习交流，不保证任何收益，也不构成投资建议。加密货币交易具有高风险，使用者应自行承担 API Key、资金、策略和交易风险。
+FreqHedge is intended for software engineering practice, quantitative research, and learning exchange. It does not guarantee any returns and is not investment advice. Cryptocurrency trading carries high risk; users bear full responsibility for their API keys, funds, strategies, and trading outcomes.
 
-如果 FreqHedge 对你有帮助，欢迎点一个 Star。
+If FreqHedge helps you, a Star is appreciated.
