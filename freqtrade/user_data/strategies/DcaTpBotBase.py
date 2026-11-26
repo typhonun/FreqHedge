@@ -386,6 +386,19 @@ class DcaTpBotBase(IStrategy):
             f"保护趋势加仓      : {_fmt(htf.get('protect_trend'))}"
         )
 
+        # ★ 启动后补扫队列：扫描触发 bot 重启会杀死本进程，
+        #   待扫描请求持久化在 KV 里，这里延迟消费，保证不丢
+        try:
+            import threading as _threading
+            def _delayed_drain():
+                try:
+                    self._drain_pending_whitelist_scans()
+                except Exception as e:
+                    logger.warning(f"{PAIR_SWITCH_TAG} 启动补扫待扫描队列异常: {e}")
+            _threading.Thread(target=lambda: (_time.sleep(8), _delayed_drain()), daemon=True).start()
+        except Exception as e:
+            logger.warning(f"{PAIR_SWITCH_TAG} 启动补扫待扫描队列失败: {e}")
+
     def _get_bot_id(self):
         """从 freqtrade config 读 bot_id（优先顶层，其次 custom_params）"""
         try:
@@ -597,6 +610,67 @@ class DcaTpBotBase(IStrategy):
             return True
         return pair in wl
 
+    # 待扫描队列：扫描进行中又发生平仓时，把平仓对挂起，
+    # 等当前扫描结束后串行补扫，避免并发读写 bot.pair 造成白名单丢失更新
+    _PENDING_SCAN_TTL = 600   # 队列项最长保留 10 分钟，防止陈旧请求迟到触发
+    _PENDING_SCAN_MAX = 5     # 队列上限，超出丢弃最旧的
+
+    def _whitelist_pending_key(self) -> str:
+        return f"grid_whitelist_pending_{self._bot_id}_{self._side_str}"
+
+    def _read_pending_scans(self) -> list:
+        try:
+            from core.config_manager import ConfigManager
+            data = ConfigManager.get_bot_kv(self._whitelist_pending_key())
+            if isinstance(data, dict) and isinstance(data.get("items"), list):
+                now_ts = _time.time()
+                return [
+                    it for it in data["items"]
+                    if isinstance(it, dict)
+                    and it.get("closed_pair")
+                    and now_ts - float(it.get("enqueued_at") or 0) < self._PENDING_SCAN_TTL
+                ]
+        except Exception:
+            pass
+        return []
+
+    def _write_pending_scans(self, items: list) -> None:
+        try:
+            from core.config_manager import ConfigManager
+            ConfigManager.set_bot_kv(self._whitelist_pending_key(), {
+                "items": items[-self._PENDING_SCAN_MAX:],
+                "updated_at": _time.time(),
+            })
+        except Exception as e:
+            logger.warning(f"{PAIR_SWITCH_TAG} 写入待扫描队列失败: {e}")
+
+    def _enqueue_pending_scan(self, closed_pair: str) -> None:
+        items = self._read_pending_scans()
+        items.append({"closed_pair": closed_pair, "enqueued_at": _time.time()})
+        self._write_pending_scans(items)
+
+    def _pop_pending_scan(self):
+        items = self._read_pending_scans()
+        if not items:
+            return None
+        item = items.pop(0)
+        self._write_pending_scans(items)
+        return item
+
+    def _drain_pending_whitelist_scans(self) -> None:
+        """每次只补发一个待扫描请求，保证扫描始终串行执行"""
+        try:
+            item = self._pop_pending_scan()
+            if not item:
+                return
+            closed_pair = str(item.get("closed_pair") or "")
+            if not closed_pair:
+                return
+            logger.info(f"{PAIR_SWITCH_TAG} 发现待扫描交易对 {closed_pair}，开始补扫")
+            self._fire_dynamic_whitelist_scan(closed_pair)
+        except Exception as e:
+            logger.warning(f"{PAIR_SWITCH_TAG} 处理待扫描队列异常: {e}")
+
     def _trigger_dynamic_whitelist_scan(self, trade):
         """
         动态白名单模式：平仓后先上锁阻止开仓，再触发扫描 -> 写配置 -> 生效 -> 解锁
@@ -606,14 +680,35 @@ class DcaTpBotBase(IStrategy):
                 logger.info(f"{PAIR_SWITCH_TAG} 动态白名单未启用，跳过扫描")
                 return
 
+            closed_pair = getattr(trade, "pair", "") or ""
+
+            # ★ 已有扫描进行中：挂入待扫描队列，等当前扫描结束后补扫，
+            #   避免两个扫描并发各自读 bot.pair 基线，互相覆盖造成白名单丢失更新
+            if self._is_whitelist_scanning():
+                self._enqueue_pending_scan(closed_pair)
+                logger.info(
+                    f"{PAIR_SWITCH_TAG} [{closed_pair}] 已有动态白名单扫描进行中，"
+                    f"已加入待扫描队列（当前扫描完成后自动补扫）"
+                )
+                return
+
+            self._fire_dynamic_whitelist_scan(closed_pair)
+
+        except Exception as e:
+            self._set_whitelist_scanning_lock(False, closed_pair=getattr(trade, "pair", ""))
+            logger.exception(f"{PAIR_SWITCH_TAG} _trigger_dynamic_whitelist_scan 异常")
+
+    def _fire_dynamic_whitelist_scan(self, closed_pair: str):
+        """实际发起一次动态白名单扫描（锁 -> 后台线程调后端 -> 结束后补扫队列）"""
+        try:
             # ★ 第一步：立即上锁，阻断扫描与配置生效期间的新开仓
-            self._set_whitelist_scanning_lock(True, closed_pair=trade.pair, ttl_sec=300)
+            self._set_whitelist_scanning_lock(True, closed_pair=closed_pair, ttl_sec=300)
 
             logger.info(f"{PAIR_SWITCH_TAG} ========== 触发动态白名单扫描 ==========")
-            logger.info(f"{PAIR_SWITCH_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={trade.pair}")
+            logger.info(f"{PAIR_SWITCH_TAG} bot_id={self._bot_id} | side={self._side_str} | pair={closed_pair}")
 
             open_trades = Trade.get_open_trades()
-            existing_pairs = set(t.pair for t in open_trades if t.pair != trade.pair)
+            existing_pairs = set(t.pair for t in open_trades if t.pair != closed_pair)
             logger.info(f"{PAIR_SWITCH_TAG} 当前持仓交易对: {list(existing_pairs)}")
 
             import os
@@ -626,7 +721,7 @@ class DcaTpBotBase(IStrategy):
                 'side': self._side_str,
                 'direction': direction,
                 'exclude_pairs': list(existing_pairs),
-                'closed_pair': trade.pair
+                'closed_pair': closed_pair
             }
 
             logger.info(f"{PAIR_SWITCH_TAG} 调用后端 API: {api_base}/bots/{self._bot_id}/dynamic-whitelist-scan")
@@ -650,21 +745,24 @@ class DcaTpBotBase(IStrategy):
                             )
                         else:
                             logger.warning(f"{PAIR_SWITCH_TAG} ❌ 动态白名单扫描失败: {result.get('error')}")
-                            self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                            self._set_whitelist_scanning_lock(False, closed_pair=closed_pair)
                     else:
                         logger.warning(f"{PAIR_SWITCH_TAG} ❌ 动态白名单扫描请求失败: {response.status_code} | {response.text}")
-                        self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                        self._set_whitelist_scanning_lock(False, closed_pair=closed_pair)
                 except Exception as e:
                     logger.warning(f"{PAIR_SWITCH_TAG} ❌ 动态白名单扫描异常: {e}")
-                    self._set_whitelist_scanning_lock(False, closed_pair=trade.pair)
+                    self._set_whitelist_scanning_lock(False, closed_pair=closed_pair)
+                finally:
+                    # ★ 当前扫描结束（无论成败）：补扫队列中挂起的平仓对，保持串行
+                    self._drain_pending_whitelist_scans()
 
             thread = threading.Thread(target=async_scan, daemon=True)
             thread.start()
             logger.info(f"{PAIR_SWITCH_TAG} 后台扫描线程已启动（已开启开仓门禁锁）")
 
         except Exception as e:
-            self._set_whitelist_scanning_lock(False, closed_pair=getattr(trade, "pair", ""))
-            logger.exception(f"{PAIR_SWITCH_TAG} _trigger_dynamic_whitelist_scan 异常")
+            self._set_whitelist_scanning_lock(False, closed_pair=closed_pair)
+            logger.exception(f"{PAIR_SWITCH_TAG} _fire_dynamic_whitelist_scan 异常")
 
     # ============================================================
     # 时间止损：realized + unrealized 统一算法（多空通用）
