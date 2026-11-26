@@ -1186,6 +1186,10 @@ const loadBotDetail = async () => {
       pairSelectMode.value = 'manual'
       // ★ 如果是手动模式，赋值给 manualPairs
       manualPairs.value = Array.isArray(data.pair) ? data.pair.map(p => typeof p === 'string' ? p : p.name) : []
+      // ★ 手动模式下 el-select 的 option value 是字符串，pair 必须保持字符串；
+      //   若保留 {name, direction} 对象，el-select 会把所有值误匹配到最后一个 option，
+      //   导致已选交易对全部显示成列表最后一项（如 龙虾/USDT:USDT）
+      botBaseInfo.value.pair = [...manualPairs.value]
     }
 
     botRisk.value = Object.fromEntries(
@@ -2282,7 +2286,8 @@ watch(pairSelectMode, (mode, oldMode) => {
     botBaseInfo.value.maxOpenTrades = 1
   } else if (mode === 'scanner' && oldMode === 'manual') {
     if (Array.isArray(botBaseInfo.value.pair)) {
-      manualPairs.value = [...botBaseInfo.value.pair]
+      // 手动模式只保存交易对名称字符串，避免对象值导致 el-select 显示错乱
+      manualPairs.value = botBaseInfo.value.pair.map(p => typeof p === 'string' ? p : p.name)
     }
     if (cachedScannerPairs.value.length > 0) {
       botBaseInfo.value.pair = JSON.parse(JSON.stringify(cachedScannerPairs.value))
@@ -2306,7 +2311,7 @@ const handleScannerConfirm = (selected) => {
   const newPairs = selected.map(s => ({ name: s.symbol, direction: s.direction }))
   if (pairSelectMode.value !== 'scanner') {
     if (Array.isArray(botBaseInfo.value.pair)) {
-      manualPairs.value = [...botBaseInfo.value.pair]
+      manualPairs.value = botBaseInfo.value.pair.map(p => typeof p === 'string' ? p : p.name)
     }
     pairSelectMode.value = 'scanner'
   }
