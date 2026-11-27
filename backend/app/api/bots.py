@@ -501,12 +501,30 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
             tail = [p for p in new_whitelist if p not in protected]
             new_whitelist = (head + tail)[:max_open]
 
-        success = await asyncio.to_thread(
-            ConfigService.update_whitelist, bot_id, side, new_whitelist
+        # ★ 定时刷新场景下大多数扫描结果与现有白名单一致：
+        #   以策略实际生效的白名单（state kv，缺省回退 bot.pair）为基线，
+        #   集合相同则跳过配置重写与进程重启，仅刷新状态时间戳。
+        baseline = list(current_pairs)
+        try:
+            prev_state = ConfigManager.get_bot_kv(state_key)
+            if isinstance(prev_state, dict) and prev_state.get("whitelist"):
+                baseline = prev_state["whitelist"]
+        except Exception:
+            pass
+        whitelist_unchanged = (
+            len(new_whitelist) == len(baseline)
+            and set(new_whitelist) == set(baseline)
         )
-        if not success:
-            ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
-            return {"success": False, "error": "白名单更新失败"}
+
+        if whitelist_unchanged:
+            success = True
+        else:
+            success = await asyncio.to_thread(
+                ConfigService.update_whitelist, bot_id, side, new_whitelist
+            )
+            if not success:
+                ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
+                return {"success": False, "error": "白名单更新失败"}
 
         # 同步新币区间到 prefetch kv（仅网格需要）
         if strategy_type == "grid":
@@ -518,6 +536,32 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
                 ConfigManager.set_bot_kv(kv_key, kv_data)
             except Exception as e:
                 print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
+
+        # ★ 白名单无变化：不清运行时 KV、不重写配置、不重启，仅刷新状态时间戳
+        if whitelist_unchanged:
+            ConfigManager.set_bot_kv(state_key, {
+                "whitelist": new_whitelist,
+                "new_pair": new_pair,
+                "restarted": False,
+                "unchanged": True,
+                "applied_at": _time.time(),
+            })
+            ConfigManager.set_bot_kv(lock_key, {
+                "scanning": False,
+                "completed_at": _time.time(),
+                "new_pair": new_pair,
+                "new_whitelist": new_whitelist,
+                "unchanged": True,
+            })
+            return {
+                "success": True,
+                "new_pair": new_pair,
+                "new_pair_range": new_pair_range,
+                "new_whitelist": new_whitelist,
+                "restarted": False,
+                "unchanged": True,
+                "message": f"白名单无变化（{new_pair} 已在有效名单内），无需重启",
+            }
 
         # ★ 新增：重启前清理旧的动态区间 KV，防止重启后回退到历史区间（仅网格）
         if strategy_type == "grid":

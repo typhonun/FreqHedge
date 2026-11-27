@@ -18,6 +18,7 @@ export const GRID_DEFAULTS = Object.freeze({
   trailing_up: false,
   trailing_down: false,
   dynamic_whitelist: false,  // 动态白名单开关
+  dynamic_whitelist_interval_hours: 2,  // 定时刷新间隔（小时），0=仅平仓触发
 
   // ★ 单币止盈默认值兜底
   pair_tp_enabled: false,

@@ -365,7 +365,16 @@
         <!-- ★ 动态白名单换币（仅多因子模式） -->
         <el-form-item v-if="isScanner" label="动态白名单">
           <el-switch v-model="config.pair_switch.dynamic_whitelist" />
-          <span class="field-hint-inline">仓位清零后自动扫描最优币并替换白名单</span>
+          <span class="field-hint-inline">仓位清零或按间隔自动扫描最优币并替换白名单</span>
+        </el-form-item>
+
+        <el-form-item v-if="isScanner && config.pair_switch.dynamic_whitelist" label="刷新间隔(h)">
+          <el-input-number
+            v-model="config.pair_switch.dynamic_whitelist_interval_hours"
+            class="field-input"
+            controls-position="right" :min="0" :max="24" :step="1" :precision="0"
+          />
+          <span class="field-hint-inline">定时重扫间隔（小时），默认 2h；0 = 仅平仓触发</span>
         </el-form-item>
 
       </el-form>
@@ -922,6 +931,14 @@ watch(() => props.isScanner, (val) => {
             }
             stashedManualTp = null
         }
+    }
+}, { immediate: true })
+
+// 开启动态白名单时补默认刷新间隔（老配置无此字段）
+watch(() => props.config?.pair_switch?.dynamic_whitelist, (val) => {
+    const ps = props.config?.pair_switch
+    if (val && ps && ps.dynamic_whitelist_interval_hours == null) {
+        ps.dynamic_whitelist_interval_hours = 2
     }
 }, { immediate: true })
 

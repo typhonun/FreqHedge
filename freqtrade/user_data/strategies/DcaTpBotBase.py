@@ -399,6 +399,61 @@ class DcaTpBotBase(IStrategy):
         except Exception as e:
             logger.warning(f"{PAIR_SWITCH_TAG} 启动补扫待扫描队列失败: {e}")
 
+    # ============================================================
+    # 定时刷新动态白名单（bot_loop_start 每轮循环检查一次）
+    # ============================================================
+    def bot_loop_start(self, current_time: datetime, **kwargs) -> None:
+        self._maybe_periodic_whitelist_scan()
+
+    def _whitelist_last_scan_ts(self) -> float:
+        """最近一次白名单扫描/生效的时间戳（KV 持久化，进程重启后仍可用作计时基准）"""
+        latest = 0.0
+        try:
+            from core.config_manager import ConfigManager
+            for key in (self._whitelist_state_key(), self._whitelist_lock_key()):
+                data = ConfigManager.get_bot_kv(key)
+                if isinstance(data, dict):
+                    for k in ("applied_at", "completed_at", "updated_at", "started_at"):
+                        try:
+                            latest = max(latest, float(data.get(k) or 0))
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        return latest
+
+    def _maybe_periodic_whitelist_scan(self) -> None:
+        try:
+            if self._bot_id is None or not self._dynamic_whitelist_enabled():
+                return
+            interval_h = self._dynamic_whitelist_interval_hours()
+            if interval_h <= 0:
+                return
+
+            now = _time.time()
+            last = getattr(self, "_last_whitelist_scan_ts", 0.0)
+            if not last:
+                # 重启后以上次扫描/生效时间为基准，避免刚重启就立刻重扫
+                last = self._whitelist_last_scan_ts() or now
+                self._last_whitelist_scan_ts = last
+            if now - last < interval_h * 3600.0:
+                return
+
+            if self._is_whitelist_scanning():
+                # 有扫描进行中（通常是平仓触发）：顺延一个周期，避免并发
+                self._last_whitelist_scan_ts = now
+                return
+
+            self._last_whitelist_scan_ts = now
+            logger.info(
+                f"{PAIR_SWITCH_TAG} 定时刷新动态白名单 | "
+                f"间隔={interval_h}h | 距上次扫描 {((now - last) / 3600.0):.1f}h"
+            )
+            # closed_pair 传空串：不移除任何币，纯粹把最优币轮换进白名单
+            self._fire_dynamic_whitelist_scan("")
+        except Exception as e:
+            logger.warning(f"{PAIR_SWITCH_TAG} 定时刷新白名单检查异常: {e}")
+
     def _get_bot_id(self):
         """从 freqtrade config 读 bot_id（优先顶层，其次 custom_params）"""
         try:
@@ -538,6 +593,15 @@ class DcaTpBotBase(IStrategy):
             self._pair_switch_mode() == "scanner"
             and bool(ps.get("dynamic_whitelist", False))
         )
+
+    def _dynamic_whitelist_interval_hours(self) -> float:
+        """定时刷新白名单间隔（小时）。<=0 表示关闭定时刷新（仅平仓触发），缺省 4h。
+        GridBotBase 覆盖为读取 grid.dynamic_whitelist_interval_hours。"""
+        try:
+            v = float(self._pair_switch_cfg().get("dynamic_whitelist_interval_hours", 2.0))
+        except Exception:
+            v = 4.0
+        return max(0.0, v)
 
     def _whitelist_lock_key(self) -> str:
         return f"grid_whitelist_scan_lock_{self._bot_id}_{self._side_str}"
@@ -701,6 +765,10 @@ class DcaTpBotBase(IStrategy):
     def _fire_dynamic_whitelist_scan(self, closed_pair: str):
         """实际发起一次动态白名单扫描（锁 -> 后台线程调后端 -> 结束后补扫队列）"""
         try:
+            # ★ 任何一次扫描（平仓触发 / 定时触发 / 补扫）都重置定时间隔基准，
+            #   保证语义为「距上次多因子扫描满 interval 才定时重扫」
+            self._last_whitelist_scan_ts = _time.time()
+
             # ★ 第一步：立即上锁，阻断扫描与配置生效期间的新开仓
             self._set_whitelist_scanning_lock(True, closed_pair=closed_pair, ttl_sec=300)
 

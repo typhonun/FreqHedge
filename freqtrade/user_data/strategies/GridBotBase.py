@@ -332,6 +332,14 @@ class GridBotBase(DcaTpBotBase):
             return True
         return bool(self._grid_cfg().get("dynamic_whitelist", False))
 
+    def _dynamic_whitelist_interval_hours(self) -> float:
+        """网格策略：定时间隔读 grid.dynamic_whitelist_interval_hours（DCA 走 pair_switch 配置）"""
+        try:
+            v = float(self._grid_cfg().get("dynamic_whitelist_interval_hours", 2.0))
+        except Exception:
+            v = 4.0
+        return max(0.0, v)
+
     def _build_grid_levels(self, lower=None, upper=None):
         g = self._grid_cfg()
         if lower is None or upper is None:

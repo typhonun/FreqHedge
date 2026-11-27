@@ -435,7 +435,8 @@ const createDefaultStrategyConfig = (side = "long") => ({
     // 选币/换币模式：manual=手动白名单，scanner=多因子筛选（止盈固定全平）
     pair_switch: {
         mode: "manual",
-        dynamic_whitelist: false
+        dynamic_whitelist: false,
+        dynamic_whitelist_interval_hours: 2
     },
     grid: {
         enable: false,
@@ -665,6 +666,9 @@ const normalizeAmountMode = (config) => {
     }
     if (config.pair_switch.dynamic_whitelist == null) {
         config.pair_switch.dynamic_whitelist = false
+    }
+    if (config.pair_switch.dynamic_whitelist_interval_hours == null) {
+        config.pair_switch.dynamic_whitelist_interval_hours = 2
     }
 
     // timeframe 兜底

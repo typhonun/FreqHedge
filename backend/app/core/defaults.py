@@ -58,6 +58,7 @@ GRID_DEFAULTS = {
     "trailing_down": False,
     "min_notional_value": 10,
     "dynamic_whitelist": False,    # ★ 动态白名单开关
+    "dynamic_whitelist_interval_hours": 2,  # ★ 定时刷新间隔（小时），0=仅平仓触发
 
     # ★ 单币止盈默认值兜底
     "pair_tp_enabled": False,

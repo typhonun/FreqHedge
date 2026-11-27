@@ -259,7 +259,23 @@
           <el-form-item v-if="isScanner" label="动态白名单" class="form-item-half" label-width="110px">
             <div class="input-with-icon">
               <el-switch v-model="config.grid.dynamic_whitelist" />
-              <el-tooltip placement="top" effect="dark" content="平仓后自动重新扫描，选择最优交易对替换白名单并开首仓">
+              <el-tooltip placement="top" effect="dark" content="平仓后或按设定间隔自动重新扫描，选择最优交易对替换白名单">
+                <el-icon class="section-label__info"><InfoFilled /></el-icon>
+              </el-tooltip>
+            </div>
+          </el-form-item>
+        </div>
+
+        <!-- 动态白名单刷新间隔（仅多因子 + 开启动态白名单时显示） -->
+        <div v-if="isScanner && config.grid.dynamic_whitelist" class="form-row">
+          <el-form-item label="刷新间隔(h)" class="form-item-half" label-width="110px">
+            <div class="input-with-icon">
+              <el-input-number
+                v-model="config.grid.dynamic_whitelist_interval_hours"
+                :min="0" :max="24" :step="1" :precision="0"
+                controls-position="right" class="num-input"
+              />
+              <el-tooltip placement="top" effect="dark" content="定时重新扫描换币的间隔（小时），默认 2h；设为 0 则仅在平仓时触发">
                 <el-icon class="section-label__info"><InfoFilled /></el-icon>
               </el-tooltip>
             </div>
@@ -862,6 +878,18 @@ watch(
   { immediate: true }
 )
 
+// 开启动态白名单时补默认刷新间隔（老配置无此字段）
+watch(
+  () => props.config?.grid?.dynamic_whitelist,
+  (val) => {
+    const g = props.config?.grid
+    if (val && g && g.dynamic_whitelist_interval_hours == null) {
+      g.dynamic_whitelist_interval_hours = 2
+    }
+  },
+  { immediate: true }
+)
+
 // 兼容旧配置：自动补全单币止盈默认字段
 watch(
   () => props.config?.grid,
@@ -871,6 +899,7 @@ watch(
     if (!g.pair_tp_mode) g.pair_tp_mode = 'ratio'
     if (g.pair_tp_ratio === undefined) g.pair_tp_ratio = 3.0
     if (g.pair_tp_amount === undefined) g.pair_tp_amount = 10
+    if (g.dynamic_whitelist_interval_hours == null) g.dynamic_whitelist_interval_hours = 2
   },
   { immediate: true }
 )
@@ -893,7 +922,7 @@ const pairTpHintText = computed(() => {
   const g = props.config?.grid
   if (!g?.pair_tp_enabled) return ''
   const cap = Number(props.capital || 0)
-  const suffix = props.isScanner && g.dynamic_whitelist ? '，平仓后自动扫描换币' : ''
+  const suffix = props.isScanner && g.dynamic_whitelist ? '，平仓或定时自动扫描换币' : ''
   if (g.pair_tp_mode === 'ratio' && cap > 0) {
     const estUsdt = (cap * Number(g.pair_tp_ratio || 0)) / 100
     return `单币累计净利达 ≈ ${estUsdt.toFixed(2)} USDT 时全平${suffix}`
