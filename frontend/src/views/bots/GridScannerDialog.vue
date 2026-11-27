@@ -60,7 +60,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
@@ -69,8 +69,23 @@ const emit = defineEmits(['confirm'])
 
 const visible = defineModel({ type: Boolean, default: false })
 
-const longCount = ref(3)
-const shortCount = ref(0)
+// 初始目标数量由父组件传入（已持久化的该机器人的配置），默认 0
+const props = defineProps({
+  initialLong: { type: Number, default: 0 },
+  initialShort: { type: Number, default: 0 },
+})
+
+const longCount = ref(props.initialLong || 0)
+const shortCount = ref(props.initialShort || 0)
+
+// 切换机器人/重新打开时同步已保存的目标数量
+watch(
+  () => [props.initialLong, props.initialShort],
+  ([l, s]) => {
+    longCount.value = l || 0
+    shortCount.value = s || 0
+  }
+)
 const loading = ref(false)
 const results = ref([])
 const selectedRows = ref([])
@@ -103,7 +118,10 @@ const handleSelectionChange = (val) => {
 }
 
 const confirm = () => {
-  emit('confirm', selectedRows.value)
+  emit('confirm', selectedRows.value, {
+    long: longCount.value,
+    short: shortCount.value,
+  })
   onClose()
 }
 

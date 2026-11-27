@@ -907,7 +907,12 @@
       </el-button>
     </div>
 
-    <GridScannerDialog v-model="scannerVisible" @confirm="handleScannerConfirm" />
+    <GridScannerDialog
+      v-model="scannerVisible"
+      :initial-long="scannerTargets.long"
+      :initial-short="scannerTargets.short"
+      @confirm="handleScannerConfirm"
+    />
   </div>
 </template>
 
@@ -968,6 +973,8 @@ const exchangeLabel = (v) => ({
 
 const pairSelectMode = ref('manual')
 const scannerVisible = ref(false)
+// 多因子扫描目标数量（随策略配置持久化，默认 0）
+const scannerTargets = ref({ long: 0, short: 0 })
 const cachedScannerPairs = ref([])
 const manualPairs = ref([])
 
@@ -1245,6 +1252,15 @@ const loadBotDetail = async () => {
       }))
 
       strategyConfig.side = configDir
+    }
+
+    // ★ 恢复已持久化的多因子目标数量（老配置无此字段时为 0）
+    const scannerCountCfg = strategyType.value === 'grid'
+      ? (strategyConfig.grid || {})
+      : (strategyConfig.pair_switch || {})
+    scannerTargets.value = {
+      long: Number(scannerCountCfg.scanner_target_long) || 0,
+      short: Number(scannerCountCfg.scanner_target_short) || 0,
     }
 
     if (!isCopy.value) {
@@ -2307,8 +2323,25 @@ watch(pairSelectMode, (mode, oldMode) => {
   }
 })
 
-const handleScannerConfirm = (selected) => {
+const handleScannerConfirm = (selected, targets = {}) => {
   const newPairs = selected.map(s => ({ name: s.symbol, direction: s.direction }))
+
+  // ★ 持久化多因子目标数量：grid 存 grid.*，DCA 存 pair_switch.*，随策略配置落库
+  const tLong = Number(targets.long) || 0
+  const tShort = Number(targets.short) || 0
+  scannerTargets.value = { long: tLong, short: tShort }
+  if (strategyType.value === 'grid') {
+    if (strategyConfig.grid) {
+      strategyConfig.grid.scanner_target_long = tLong
+      strategyConfig.grid.scanner_target_short = tShort
+    }
+  } else {
+    if (!strategyConfig.pair_switch || typeof strategyConfig.pair_switch !== 'object') {
+      strategyConfig.pair_switch = { mode: 'manual', dynamic_whitelist: false }
+    }
+    strategyConfig.pair_switch.scanner_target_long = tLong
+    strategyConfig.pair_switch.scanner_target_short = tShort
+  }
   if (pairSelectMode.value !== 'scanner') {
     if (Array.isArray(botBaseInfo.value.pair)) {
       manualPairs.value = botBaseInfo.value.pair.map(p => typeof p === 'string' ? p : p.name)

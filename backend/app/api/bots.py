@@ -488,18 +488,24 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
             print(f"[API] 新币 {new_pair} 区间: {new_pair_range}")
 
         # 4) 生成并写入新白名单配置
-        current_pairs = bot.get("pair") or []
-        max_open = int(bot.get("maxOpenTrades") or 1)
+        current_pairs = [
+            (item.get("name") if isinstance(item, dict) else item)
+            for item in (bot.get("pair") or [])
+        ]
+        current_pairs = [p for p in current_pairs if isinstance(p, str) and p]
+
+        # ★ 白名单容量 = 当前白名单长度（即多因子选币的目标数量），
+        whitelist_cap = max(len(current_pairs), 1)
 
         new_whitelist = [p for p in current_pairs if p != payload.closed_pair]
         if new_pair not in new_whitelist:
             new_whitelist.append(new_pair)
 
-        if len(new_whitelist) > max_open:
+        if len(new_whitelist) > whitelist_cap:
             protected = {new_pair} | set(payload.exclude_pairs or [])
             head = [p for p in new_whitelist if p in protected]
             tail = [p for p in new_whitelist if p not in protected]
-            new_whitelist = (head + tail)[:max_open]
+            new_whitelist = (head + tail)[:whitelist_cap]
 
         # ★ 定时刷新场景下大多数扫描结果与现有白名单一致：
         #   以策略实际生效的白名单（state kv，缺省回退 bot.pair）为基线，
