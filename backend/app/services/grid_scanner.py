@@ -219,6 +219,37 @@ class GridScanner:
             'rsi': best['rsi']
         }
 
+    def select_top_pairs(self, direction='LONG', count=5, exclude_pairs=None):
+        """
+        动态白名单模式：按评分降序返回前 count 个候选交易对
+        只扫描所需方向，exclude_pairs 排除已有持仓
+        """
+        if exclude_pairs is None:
+            exclude_pairs = []
+        count = max(0, int(count or 0))
+        if count <= 0:
+            return []
+
+        result = self.scan(
+            target_long=count if direction == 'LONG' else 0,
+            target_short=count if direction == 'SHORT' else 0,
+            top_n=100,
+        )
+        candidates = result['longs'] if direction == 'LONG' else result['shorts']
+        exclude_set = set(exclude_pairs)
+
+        picked = []
+        for c in candidates:
+            sym = c.get('symbol')
+            if not sym or sym in exclude_set:
+                continue
+            item = c.copy()
+            item.setdefault('name', sym)
+            picked.append(item)
+            if len(picked) >= count:
+                break
+        return picked
+
     # ★ 加入重试机制：遇到网络或限频错误，等待并重试 3 次
     @retry(
         stop=stop_after_attempt(3),

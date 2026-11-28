@@ -147,6 +147,25 @@ def _attach_profit_batch(bots: list[dict]) -> list[dict]:
         return list(executor.map(_attach_profit, bots))
 
 
+def _scanner_target_count(bot: dict, direction: str) -> int:
+    """读取持久化的多因子目标数量（scanner_target_long/short），未配置返回 0"""
+    key = "scanner_target_long" if direction == "LONG" else "scanner_target_short"
+    candidates = []
+    grid_cfg = (bot.get("gridConfig") or {}).get("grid") or {}
+    candidates.append(grid_cfg.get(key))
+    for cfg_key in ("longConfig", "shortConfig"):
+        ps = ((bot.get(cfg_key) or {}).get("pair_switch") or {})
+        candidates.append(ps.get(key))
+    for v in candidates:
+        try:
+            n = int(v)
+            if n > 0:
+                return n
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
 # =========================================================
 # ★ 新增：网格资金校验工具函数
 # =========================================================
@@ -460,66 +479,83 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
     })
 
     try:
-        # 2) 多因子扫描
-        scanner = GridScanner()
-        best_pair_info = await asyncio.to_thread(
-            scanner.select_best_pair,
-            payload.direction.upper(),
-            payload.exclude_pairs,
-        )
-
-        if not best_pair_info:
-            ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
-            return {"success": False, "error": "未找到符合条件的交易对"}
-
-        new_pair = best_pair_info["name"]
-        print(f"[API] 扫描到最优币: {new_pair}")
-
-        # 3) 计算新币区间（仅网格需要；DCA 换币不消费区间数据）
-        new_pair_range = None
-        if strategy_type == "grid":
-            days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
-            days = days_map.get(
-                str(grid_config.get("smart_range_mode", "moderate")).lower(), 30
-            )
-            new_pair_range = await asyncio.to_thread(
-                scanner.get_range, new_pair, days
-            )
-            print(f"[API] 新币 {new_pair} 区间: {new_pair_range}")
-
-        # 4) 生成并写入新白名单配置
+        # 2) 基线白名单：优先 state kv（按 side 独立、方向纯净），回退 bot.pair
         current_pairs = [
             (item.get("name") if isinstance(item, dict) else item)
             for item in (bot.get("pair") or [])
         ]
         current_pairs = [p for p in current_pairs if isinstance(p, str) and p]
 
-        # ★ 白名单容量 = 当前白名单长度（即多因子选币的目标数量），
-        whitelist_cap = max(len(current_pairs), 1)
-
-        new_whitelist = [p for p in current_pairs if p != payload.closed_pair]
-        if new_pair not in new_whitelist:
-            new_whitelist.append(new_pair)
-
-        if len(new_whitelist) > whitelist_cap:
-            protected = {new_pair} | set(payload.exclude_pairs or [])
-            head = [p for p in new_whitelist if p in protected]
-            tail = [p for p in new_whitelist if p not in protected]
-            new_whitelist = (head + tail)[:whitelist_cap]
-
-        # ★ 定时刷新场景下大多数扫描结果与现有白名单一致：
-        #   以策略实际生效的白名单（state kv，缺省回退 bot.pair）为基线，
-        #   集合相同则跳过配置重写与进程重启，仅刷新状态时间戳。
         baseline = list(current_pairs)
         try:
             prev_state = ConfigManager.get_bot_kv(state_key)
             if isinstance(prev_state, dict) and prev_state.get("whitelist"):
-                baseline = prev_state["whitelist"]
+                baseline = [str(p) for p in prev_state["whitelist"] if p]
         except Exception:
             pass
+
+        # 目标白名单数量 = scanner_target_*；未配置回退当前名单长度
+        target_count = _scanner_target_count(bot, payload.direction.upper())
+        whitelist_cap = target_count if target_count > 0 else max(len(baseline), 1)
+
+        # 3) 扫描候选（目标模式取满 cap 个，否则只取最优 1 个）
+        scanner = GridScanner()
+        candidates = await asyncio.to_thread(
+            scanner.select_top_pairs,
+            payload.direction.upper(),
+            whitelist_cap if target_count > 0 else 1,
+            payload.exclude_pairs,
+        )
+        if not candidates:
+            ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
+            return {"success": False, "error": "未找到符合条件的交易对"}
+
+        new_pair = candidates[0].get("name") or candidates[0].get("symbol")
+        if not new_pair:
+            ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
+            return {"success": False, "error": "候选交易对名称无效"}
+        print(f"[API] 扫描到最优币: {new_pair} | 目标白名单数={whitelist_cap}")
+
+        # 4) 组装：持仓优先 -> 评分降序候选 -> 基线成员补位 -> 截断到 cap
+        exclude_set = set(payload.exclude_pairs or [])
+        held_pairs = [p for p in baseline if p in exclude_set]
+        seen = set(held_pairs)
+        ranked = []
+        for c in candidates:
+            name = c.get("name") or c.get("symbol")
+            if name and name not in seen:
+                ranked.append(name)
+                seen.add(name)
+        backfill = [
+            p for p in baseline
+            if p != payload.closed_pair and p not in seen
+        ]
+
+        if len(held_pairs) >= whitelist_cap:
+            new_whitelist = held_pairs[:whitelist_cap]
+        else:
+            new_whitelist = (held_pairs + ranked + backfill)[:whitelist_cap]
+
+        # 5) 网格：对所有新进入白名单的币预取区间
+        pair_ranges = {}
+        days = 30
+        if strategy_type == "grid":
+            days_map = {"aggressive": 7, "moderate": 30, "conservative": 90}
+            days = days_map.get(
+                str(grid_config.get("smart_range_mode", "moderate")).lower(), 30
+            )
+            baseline_set = set(baseline)
+            for p in [p for p in new_whitelist if p not in baseline_set]:
+                try:
+                    pair_ranges[p] = await asyncio.to_thread(scanner.get_range, p, days)
+                    print(f"[API] 新币 {p} 区间: {pair_ranges[p]}")
+                except Exception as e:
+                    print(f"[API] 新币 {p} 区间计算失败（非致命）: {e}")
+        new_pair_range = pair_ranges.get(new_pair)
+
         whitelist_unchanged = (
-            len(new_whitelist) == len(baseline)
-            and set(new_whitelist) == set(baseline)
+                len(new_whitelist) == len(baseline)
+                and set(new_whitelist) == set(baseline)
         )
 
         if whitelist_unchanged:
@@ -532,18 +568,22 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
                 ConfigManager.set_bot_kv(lock_key, {"scanning": False, "updated_at": _time.time()})
                 return {"success": False, "error": "白名单更新失败"}
 
-        # 同步新币区间到 prefetch kv（仅网格需要）
-        if strategy_type == "grid":
+        # 同步所有新币区间到 prefetch kv（仅网格需要）
+        if strategy_type == "grid" and pair_ranges:
             try:
                 kv_key = f"grid_prefetch_range_{bot_id}_{side}"
                 kv_data = ConfigManager.get_bot_kv(kv_key) or {"days": days, "pairs": {}}
-                kv_data.setdefault("pairs", {})[new_pair] = new_pair_range
+                kv_data["days"] = days
+                pairs_map = kv_data.setdefault("pairs", {})
+                for p, r_info in pair_ranges.items():
+                    if r_info is not None:
+                        pairs_map[p] = r_info
                 kv_data["generated_at"] = _time.time()
                 ConfigManager.set_bot_kv(kv_key, kv_data)
             except Exception as e:
                 print(f"[API] 同步区间到 kv 失败（非致命）: {e}")
 
-        # ★ 白名单无变化：不清运行时 KV、不重写配置、不重启，仅刷新状态时间戳
+        # 白名单无变化：不清运行时 KV、不重写配置、不重启，仅刷新状态时间戳
         if whitelist_unchanged:
             ConfigManager.set_bot_kv(state_key, {
                 "whitelist": new_whitelist,
@@ -569,7 +609,7 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
                 "message": f"白名单无变化（{new_pair} 已在有效名单内），无需重启",
             }
 
-        # ★ 新增：重启前清理旧的动态区间 KV，防止重启后回退到历史区间（仅网格）
+        # 重启前清理旧的动态区间 KV，防止重启后回退到历史区间（仅网格）
         if strategy_type == "grid":
             for runtime_key in (
                     f"grid_runtime_lower_{bot_id}_{side}",
@@ -581,7 +621,7 @@ async def dynamic_whitelist_scan(bot_id: int, payload: DynamicWhitelistRequest):
                 except Exception as e:
                     print(f"[API] 清理 {runtime_key} 失败（非致命）: {e}")
 
-        # 5) 让新配置/白名单真正生效：若机器人正在运行，执行重启使其加载新白名单
+        # 6) 让新配置/白名单真正生效：若机器人正在运行，执行重启使其加载新白名单
         restarted = False
         latest_bot = BotManager.get(bot_id)
         if latest_bot and latest_bot.get("status") == "running":
