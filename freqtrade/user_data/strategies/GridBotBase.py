@@ -453,22 +453,12 @@ class GridBotBase(DcaTpBotBase):
             self._set(trade, "grid_dyn_lower", dyn_lower)
             self._set(trade, "grid_dyn_upper", dyn_upper)
 
-            positions = self._get_grid_positions(trade)
-            entries = [float(v.get("entry", 0)) for v in positions.values() if v.get("entry")]
-
-            if entries:
-                # 按现有持仓的极值算，保证下一次加仓一定能触发
-                if self._is_short:
-                    highest_entry = max(entries)
-                    self._set(trade, "grid_next_add_price", highest_entry + step)
-                else:
-                    lowest_entry = min(entries)
-                    self._set(trade, "grid_next_add_price", lowest_entry - step)
-            else:
-                if self._is_short:
-                    self._set(trade, "grid_next_add_price", dyn_upper)
-                else:
-                    self._set(trade, "grid_next_add_price", dyn_lower)
+            # 锚定跟踪网格：平移后加/减仓价位统一由最近成交价 ± step 推导
+            anchor_levels = self._grid_anchor_levels(trade, dyn_lower, dyn_upper)
+            if anchor_levels:
+                _, _, next_add_p, next_reduce_p = anchor_levels
+                self._set(trade, "grid_next_add_price", next_add_p)
+                self._set(trade, "grid_next_reduce_price", next_reduce_p)
 
             # ★ 修复：加入 fill_token 方便前端识别网格发生了平移
             self._set_bot_grid_runtime(
@@ -523,31 +513,124 @@ class GridBotBase(DcaTpBotBase):
         except Exception:
             logger.exception(f"{GRID_TAG} 保存动态网格状态失败")
 
-    def _runtime_action_levels(self, trade, lower: float, upper: float) -> dict:
-        step = self._get_grid_step_for_bounds(lower, upper)
-        if step <= 0:
-            return {"add_levels": [], "reduce_levels": []}
-        positions = self._get_grid_positions(trade)
-        entries = []
-        for value in positions.values():
+    def _grid_anchor_price(self, trade, positions=None) -> float:
+        """锚点 = 最近一次成交价；缺失时兜底取最新建仓格（idx 为时间戳，越大越新）的 entry"""
+        last_fill = self._get_float(trade, "grid_last_fill_price", 0.0)
+        if last_fill > 0 and np.isfinite(last_fill):
+            return float(last_fill)
+        if positions is None:
+            positions = self._get_grid_positions(trade)
+        best_idx = None
+        best_entry = 0.0
+        for k, v in (positions or {}).items():
             try:
-                entry = float(value.get("entry", 0))
-                if entry > 0 and np.isfinite(entry):
-                    entries.append(entry)
+                idx = int(k)
+                entry = float((v or {}).get("entry", 0.0) or 0.0)
             except (TypeError, ValueError):
                 continue
+            if entry > 0 and (best_idx is None or idx > best_idx):
+                best_idx = idx
+                best_entry = entry
+        if best_entry > 0:
+            return best_entry
+        try:
+            return float(getattr(trade, "open_rate", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    def _grid_anchor_levels(self, trade, lower=None, upper=None):
+        """锚定跟踪网格：返回 (anchor, step, next_add, next_reduce)；数据不足返回 None。
+        多头：加仓=anchor-step，减仓=anchor+step；空头镜像。"""
+        g = self._grid_cfg()
+        if lower is None or upper is None:
+            lower = self._get_float(trade, "grid_dyn_lower", self._cfg_float(g, "lower_price", 0.0))
+            upper = self._get_float(trade, "grid_dyn_upper", self._cfg_float(g, "upper_price", 0.0))
+        step = self._get_grid_step_for_bounds(lower, upper)
+        if step <= 0:
+            return None
+        positions = self._get_grid_positions(trade)
+        anchor = self._grid_anchor_price(trade, positions)
+        if anchor <= 0 or not np.isfinite(anchor):
+            return None
         if self._is_short:
-            reduce_levels = [entry - step for entry in entries]
-            add_levels = []
+            next_add = anchor + step
+            next_reduce = anchor - step
         else:
-            reduce_levels = [entry + step for entry in entries]
-            add_levels = []
-        next_add = self._get_float(trade, "grid_next_add_price", 0.0)
-        if next_add > 0 and np.isfinite(next_add):
-            add_levels.append(next_add)
+            next_add = anchor - step
+            next_reduce = anchor + step
+        return anchor, step, next_add, next_reduce
+
+    def _anchor_level_chains(self, anchor, step, lower, upper):
+        """从锚点向两侧生成预期加/减仓价位链（限制在动态区间内，最多 count+2 条）"""
+        count = self._cfg_int(self._grid_cfg(), "grid_count", 20)
+        lo = lower if lower and lower > 0 else 0.0
+        hi = upper if upper and upper > 0 else float("inf")
+        add_levels, reduce_levels = [], []
+        if self._is_short:
+            p = anchor + step
+            while p <= hi and len(add_levels) < count + 2:
+                add_levels.append(p)
+                p += step
+            p = anchor - step
+            while p >= lo and len(reduce_levels) < count + 2:
+                reduce_levels.append(p)
+                p -= step
+        else:
+            p = anchor - step
+            while p >= lo and len(add_levels) < count + 2:
+                add_levels.append(p)
+                p -= step
+            p = anchor + step
+            while p <= hi and len(reduce_levels) < count + 2:
+                reduce_levels.append(p)
+                p += step
+        return (
+            sorted(round(v, 8) for v in add_levels),
+            sorted(round(v, 8) for v in reduce_levels),
+        )
+
+    def _select_lifo_reduce_slots(self, positions, target_qty: float):
+        """最近加仓优先（idx 为时间戳，越大越新）凑满 target_qty 的减仓格位列表。
+        整格选择不截断：保证成交回调按整格移除时账本扣减严格 LIFO。"""
+        items = []
+        for k, v in (positions or {}).items():
+            if not isinstance(v, dict):
+                continue
+            try:
+                idx = int(k)
+            except (TypeError, ValueError):
+                continue
+            try:
+                entry = float(v.get("entry", 0.0) or 0.0)
+                qty = float(v.get("qty", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                continue
+            if entry > 0 and qty > 0 and np.isfinite(entry) and np.isfinite(qty):
+                items.append((idx, entry, v, qty))
+        items.sort(key=lambda x: x[0], reverse=True)
+        if not items:
+            return []
+        if target_qty <= 0 or not np.isfinite(target_qty):
+            idx, entry, v, _ = items[0]
+            return [(idx, entry, v)]
+        selected = []
+        acc = 0.0
+        for idx, entry, v, qty in items:
+            if acc >= target_qty:
+                break
+            selected.append((idx, entry, v))
+            acc += qty
+        return selected
+
+    def _runtime_action_levels(self, trade, lower: float, upper: float) -> dict:
+        levels = self._grid_anchor_levels(trade, lower, upper)
+        if not levels:
+            return {"add_levels": [], "reduce_levels": []}
+        anchor, step, _, _ = levels
+        add_levels, reduce_levels = self._anchor_level_chains(anchor, step, lower, upper)
         return {
-            "add_levels": sorted(set(round(value, 8) for value in add_levels)),
-            "reduce_levels": sorted(set(round(value, 8) for value in reduce_levels)),
+            "add_levels": add_levels,
+            "reduce_levels": reduce_levels,
         }
 
     # ★ 重写：基于动态开仓价计算止盈价
@@ -970,28 +1053,27 @@ class GridBotBase(DcaTpBotBase):
             # 使用 action_price 或 current_rate 来判断
             check_price = action_price
 
-            for k, v in positions.items():
-                try:
-                    idx = int(k)
-                    if idx in pending_reduce_set:
-                        continue
-
-                    entry = float(v.get("entry", 0.0))
-                    if entry <= 0 or pd.isna(entry) or np.isinf(entry):
-                        continue
-
-                    tp_price = self._grid_tp_price(entry, trade)
-                    if tp_price <= 0:
-                        continue
-
-                    if self._is_short:
-                        if check_price <= tp_price:
-                            to_close.append((idx, entry, v))
-                    else:
-                        if check_price >= tp_price:
-                            to_close.append((idx, entry, v))
-                except Exception:
-                    pass
+            # 锚定跟踪网格：减仓触发价 = 最近成交价 ± 一个步长（多头向上、空头向下）
+            anchor_levels = self._grid_anchor_levels(trade, dyn_lower, dyn_upper)
+            if anchor_levels:
+                _, _, next_add_p, next_reduce_p = anchor_levels
+                self._set(trade, "grid_next_add_price", next_add_p)
+                self._set(trade, "grid_next_reduce_price", next_reduce_p)
+                reduce_hit = (
+                    (not self._is_short and check_price >= next_reduce_p)
+                    or (self._is_short and check_price <= next_reduce_p)
+                )
+                if reduce_hit:
+                    # 每次减仓一格量；账本按最近加仓优先（LIFO）扣减
+                    cell_margin = self._calc_grid_amount(trade, check_price)
+                    try:
+                        cell_qty = (cell_margin * lev) / check_price if check_price > 0 else 0.0
+                    except Exception:
+                        cell_qty = 0.0
+                    to_close = self._select_lifo_reduce_slots(positions, cell_qty)
+            else:
+                # 锚点数据缺失（如旧持仓未写 last_fill 且无有效边界），回退为不触发减仓
+                pass
 
             if to_close:
                 try:
@@ -1242,9 +1324,11 @@ class GridBotBase(DcaTpBotBase):
             if len(positions) >= max_grids:
                 return None
 
-            step = self._get_grid_step_for_bounds(dyn_lower, dyn_upper)
-            if step <= 0:
+            # 锚定跟踪网格：加仓触发价 = 最近成交价 ∓ 一个步长（与减仓共用同一锚点）
+            anchor_levels = self._grid_anchor_levels(trade, dyn_lower, dyn_upper)
+            if not anchor_levels:
                 return None
+            _, step, next_add_price, _ = anchor_levels
 
             # 找出最边缘的 entry
             all_entries = [float(v.get("entry", 0)) for v in positions.values() if "entry" in v]
@@ -1257,13 +1341,10 @@ class GridBotBase(DcaTpBotBase):
             add_price = min(close_price, executable_price) if not self._is_short else max(
                 close_price, executable_price
             )
-            should_add = (
-                    (not self._is_short and bool(g.get("trailing_down", False))
-                     and add_price <= self._get_float(
-                                trade, "grid_next_add_price", dyn_lower))
-                    or (self._is_short and bool(g.get("trailing_up", False))
-                        and add_price >= self._get_float(
-                        trade, "grid_next_add_price", dyn_upper))
+            trailing_ok = bool(g.get("trailing_up" if self._is_short else "trailing_down", False))
+            should_add = trailing_ok and (
+                (not self._is_short and add_price <= next_add_price)
+                or (self._is_short and add_price >= next_add_price)
             )
             if not should_add:
                 return None
@@ -1455,7 +1536,15 @@ class GridBotBase(DcaTpBotBase):
                     if step > 0
                     else entry_price
                 )
+                self._set(trade, "grid_last_fill_price", entry_price)
                 self._set(trade, "grid_next_add_price", next_add)
+                self._set(
+                    trade,
+                    "grid_next_reduce_price",
+                    (entry_price - step if self._is_short else entry_price + step)
+                    if step > 0
+                    else entry_price,
+                )
                 self._set_bot_grid_runtime(
                     runtime_lower,
                     runtime_upper,
@@ -1516,7 +1605,15 @@ class GridBotBase(DcaTpBotBase):
                     next_add = entry_price + step if self._is_short else entry_price - step
                 else:
                     next_add = entry_price
+                self._set(trade, "grid_last_fill_price", entry_price)
                 self._set(trade, "grid_next_add_price", next_add)
+                self._set(
+                    trade,
+                    "grid_next_reduce_price",
+                    (entry_price - step if self._is_short else entry_price + step)
+                    if step > 0
+                    else entry_price,
+                )
 
                 self._set_bot_grid_runtime(
                     runtime_lower,
@@ -1686,6 +1783,17 @@ class GridBotBase(DcaTpBotBase):
                     trade, "grid_dyn_upper",
                     self._cfg_float(self._grid_cfg(), "upper_price", 0.0),
                 )
+                self._set(trade, "grid_last_fill_price", filled_price)
+                step_rt = self._get_grid_step_for_bounds(runtime_lower, runtime_upper)
+                if step_rt > 0:
+                    self._set(
+                        trade, "grid_next_add_price",
+                        filled_price + step_rt if self._is_short else filled_price - step_rt,
+                    )
+                    self._set(
+                        trade, "grid_next_reduce_price",
+                        filled_price - step_rt if self._is_short else filled_price + step_rt,
+                    )
                 self._set_bot_grid_runtime(
                     runtime_lower,
                     runtime_upper,
@@ -1937,6 +2045,17 @@ class GridBotBase(DcaTpBotBase):
                             "grid_dyn_upper",
                             self._cfg_float(self._grid_cfg(), "upper_price", 0.0),
                         )
+                        self._set(trade, "grid_last_fill_price", entry_price)
+                        step_rt = self._get_grid_step_for_bounds(runtime_lower, runtime_upper)
+                        if step_rt > 0:
+                            self._set(
+                                trade, "grid_next_add_price",
+                                entry_price + step_rt if self._is_short else entry_price - step_rt,
+                            )
+                            self._set(
+                                trade, "grid_next_reduce_price",
+                                entry_price - step_rt if self._is_short else entry_price + step_rt,
+                            )
                         self._set_bot_grid_runtime(
                             runtime_lower,
                             runtime_upper,
@@ -2363,9 +2482,10 @@ class GridBotBase(DcaTpBotBase):
             if len(closed) == 1:
                 idx, entry, qty, margin, pnl = closed[0]
                 pnl_pct = (price - entry) / entry * 100 if entry > 0 else 0
-                tp_price = self._grid_tp_price(entry, trade)
+                al = self._grid_anchor_levels(trade)
+                tp_price = al[3] if al else self._grid_tp_price(entry, trade)
                 logger.info(
-                    f"[STRATEGY] [REDUCE] {GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | {entry:.4f} → {price:.4f}(止盈线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
+                    f"[STRATEGY] [REDUCE] {GRID_TAG} {GREEN}▼ 减仓{RESET} | {trade.pair} | {entry:.4f} → {price:.4f}(减仓线={tp_price:.4f}) | pnl={pnl_pct:+.2f}% | pnl={pnl:+.2f} USDT | 数量={qty:.6f} | 释放={margin:.2f}"
                 )
             else:
                 logger.info(f"{GRID_TAG} {GREEN}▼ 减仓多格{RESET} | 释放={total_margin:.2f} | pnl={total_pnl:+.2f}")
@@ -2378,17 +2498,20 @@ class GridBotBase(DcaTpBotBase):
             if getattr(trade, "amount", 0) == 0 and positions:
                 positions = {}
                 self._set_grid_positions(trade, positions)
+            al = self._grid_anchor_levels(trade)
+            anchor_desc = ""
+            if al:
+                anchor, _, na, nr = al
+                anchor_desc = f" | 锚点={anchor:.4f} 下次加仓={na:.4f} 下次减仓={nr:.4f}"
             if positions:
                 parts = []
                 for k in sorted(positions.keys(), key=lambda x: int(x)):
                     v = positions[k]
                     entry = float(v.get("entry", 0.0))
-                    tp_price = self._grid_tp_price(entry, trade)
-                    tp_pct = (tp_price - entry) / entry * 100 if entry > 0 else 0
-                    parts.append(f"建仓={entry:.4f}(止盈={tp_price:.4f}, {tp_pct:+.2f}%)")
-                logger.info(f"{GRID_TAG}    └ 持仓: {' '.join(parts)} | 共{len(positions)}单")
+                    parts.append(f"建仓={entry:.4f}")
+                logger.info(f"{GRID_TAG}    └ 持仓: {' '.join(parts)} | 共{len(positions)}单{anchor_desc}")
             else:
-                logger.info(f"{GRID_TAG}    └ 持仓: 无 | 共0单")
+                logger.info(f"{GRID_TAG}    └ 持仓: 无 | 共0单{anchor_desc}")
         except Exception:
             pass
 

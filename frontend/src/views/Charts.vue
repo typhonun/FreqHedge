@@ -312,6 +312,19 @@ const renderGridLines = (items) => {
         : pair.value
     const mine = (items || []).filter(it => it.pair === currentPair)
     for (const it of mine) {
+        // 网格参考线：整个动态区间按 grid_count 等分，灰色点线垫底
+        ;(it.grid_lines || []).forEach(price => {
+            const p = Number(price)
+            if (!p || !isFinite(p)) return
+            gridPriceLines.push(candleSeries.createPriceLine({
+                price: p,
+                color: "#b0b0b0",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dotted,
+                axisLabelVisible: false,
+                title: "网格"
+            }))
+        })
         ;(it.add_lines || []).forEach(price => {
             const p = Number(price)
             if (!p || !isFinite(p)) return
@@ -324,16 +337,27 @@ const renderGridLines = (items) => {
                 title: "加仓"
             }))
         })
-        ;(it.reduce_lines || []).forEach(price => {
-            const p = Number(price)
-            if (!p || !isFinite(p)) return
+        // 减仓线分两档：离锚点最近的 actual_reduce_count 条为"实际减仓"
+        // （价格单边走完即可依次触发、最终全平），其余为"预期减仓"
+        const anchor = Number(it.anchor)
+        const actualCount = Math.max(0, Number(it.actual_reduce_count) || 0)
+        const reducePrices = (it.reduce_lines || [])
+            .map(Number)
+            .filter(p => p && isFinite(p))
+            .map(p => ({ p, d: isFinite(anchor) ? Math.abs(p - anchor) : 0 }))
+            .sort((a, b) => a.d - b.d)
+        const actualSet = new Set(
+            reducePrices.slice(0, actualCount).map(x => x.p)
+        )
+        reducePrices.forEach(({ p }) => {
+            const isActual = actualSet.has(p)
             gridPriceLines.push(candleSeries.createPriceLine({
                 price: p,
-                color: "#00c853",
+                color: isActual ? "#00c853" : "#81c784",
                 lineWidth: 1,
                 lineStyle: LineStyle.Dashed,
                 axisLabelVisible: true,
-                title: "减仓"
+                title: isActual ? "实际减仓" : "预期减仓"
             }))
         })
     }

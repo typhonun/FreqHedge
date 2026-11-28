@@ -375,6 +375,20 @@ class PositionService:
         return inner if isinstance(inner, dict) else cfg
 
     @staticmethod
+    def _grid_levels_list(lower, upper, count, algo):
+        """与 GridBotBase._build_grid_levels 保持一致：区间等分参考线（含上下边界）"""
+        if count <= 0 or upper <= lower or lower <= 0:
+            return []
+        if algo == "geometric":
+            try:
+                ratio = (upper / lower) ** (1.0 / count)
+                return [lower * (ratio ** i) for i in range(count + 1)]
+            except Exception:
+                return []
+        step = (upper - lower) / count
+        return [lower + step * i for i in range(count + 1)]
+
+    @staticmethod
     def _grid_step(lower, upper, count, algo):
         """与 GridBotBase._get_grid_step_for_bounds 保持一致"""
         if count <= 0 or upper <= lower or lower <= 0:
@@ -389,18 +403,12 @@ class PositionService:
 
     @staticmethod
     def _grid_tp_roi(trade: dict, custom: dict, bot: dict, side: str):
-        """网格持仓的下次减仓价 = 各格 entry ± 一个网格步长中离当前最近的那一档。
+        """网格持仓的下次减仓价 = 锚点（最近成交价）± 一个网格步长。
         收益率按 freqtrade profit_pct 口径估算：(减仓价/open_rate - 1) * 杠杆。"""
         try:
             positions = PositionService._stored_json(custom.get("grid_positions"))
             if not isinstance(positions, dict) or not positions:
                 return None
-
-            pending = PositionService._stored_json(custom.get("grid_pending_reduce")) or []
-            try:
-                pending_idx = {int(x) for x in pending}
-            except (TypeError, ValueError):
-                pending_idx = set()
 
             g = PositionService._grid_cfg(bot)
             lower = PositionService._f(custom.get("grid_dyn_lower"))
@@ -416,24 +424,10 @@ class PositionService:
                 return None
 
             is_short = side == "short"
-            tp_prices = []
-            for key, val in positions.items():
-                try:
-                    idx = int(key)
-                except (TypeError, ValueError):
-                    continue
-                if idx in pending_idx or not isinstance(val, dict):
-                    continue
-                entry = PositionService._f(val.get("entry"))
-                if entry <= 0:
-                    continue
-                tp = entry - step if is_short else entry + step
-                if tp > 0:
-                    tp_prices.append(tp)
-            if not tp_prices:
+            anchor = PositionService._grid_anchor_price(custom, positions, trade)
+            if anchor <= 0:
                 return None
-
-            next_reduce = max(tp_prices) if is_short else min(tp_prices)
+            next_reduce = anchor - step if is_short else anchor + step
             open_rate = PositionService._f(trade.get("open_rate"))
             if open_rate <= 0:
                 return None
@@ -449,12 +443,36 @@ class PositionService:
     # =========================================================
 
     @staticmethod
-    def get_grid_levels(bot_id: int, dry_run: bool | None = None):
-        """按 GridBotBase 策略逻辑计算每个持仓交易对的预期加仓线与减仓线。
+    def _grid_anchor_price(custom: dict, positions: dict, trade: dict) -> float:
+        """锚点 = 最近一次成交价 grid_last_fill_price；缺失时取最新建仓格 entry，
+        再兜底 open_rate。与 GridBotBase._grid_anchor_price 保持一致。"""
+        last_fill = PositionService._f(custom.get("grid_last_fill_price"))
+        if last_fill > 0:
+            return last_fill
+        best_idx = None
+        best_entry = 0.0
+        for key, val in (positions or {}).items():
+            if not isinstance(val, dict):
+                continue
+            try:
+                idx = int(key)
+                entry = PositionService._f(val.get("entry"))
+            except (TypeError, ValueError):
+                continue
+            if entry > 0 and (best_idx is None or idx > best_idx):
+                best_idx = idx
+                best_entry = entry
+        if best_entry > 0:
+            return best_entry
+        return PositionService._f(trade.get("open_rate"))
 
-        - 减仓线：每个未处于 pending_reduce 的网格仓位 entry ± 一个网格步长
-        - 加仓线：grid_next_add_price 起、每次 ±step 的整条链，限制在动态网格区间内；
-          仅当对应方向开启 trailing（long->trailing_down / short->trailing_up）时才会触发加仓
+    @staticmethod
+    def get_grid_levels(bot_id: int, dry_run: bool | None = None):
+        """按 GridBotBase 锚定跟踪网格逻辑计算每个持仓交易对的预期加仓/减仓价位链。
+
+        锚点 = 最近一次成交价（grid_last_fill_price）；
+        多头：加仓链 anchor-step 向下、减仓链 anchor+step 向上（限动态区间内）；
+        空头镜像。加仓链仅当对应方向开启 trailing 时返回（与策略触发条件一致）。
         """
         bot = BotManager.get(bot_id)
         if not bot or (bot.get("strategyType") or "dca") != "grid":
@@ -488,12 +506,6 @@ class PositionService:
                 if not isinstance(positions, dict) or not positions:
                     continue
 
-                pending = PositionService._stored_json(custom.get("grid_pending_reduce")) or []
-                try:
-                    pending_idx = {int(x) for x in pending}
-                except (TypeError, ValueError):
-                    pending_idx = set()
-
                 lower = PositionService._f(custom.get("grid_dyn_lower"))
                 upper = PositionService._f(custom.get("grid_dyn_upper"))
                 if not (lower > 0 and upper > lower):
@@ -503,49 +515,64 @@ class PositionService:
                 if step <= 0:
                     continue
 
-                entries = []
-                reduce_lines = []
-                for key, val in positions.items():
-                    if not isinstance(val, dict):
-                        continue
-                    try:
-                        idx = int(key)
-                    except (TypeError, ValueError):
-                        continue
-                    entry = PositionService._f(val.get("entry"))
-                    if entry <= 0:
-                        continue
-                    entries.append(entry)
-                    if idx in pending_idx:
-                        continue
-                    tp = entry - step if is_short else entry + step
-                    if tp > 0:
-                        reduce_lines.append(tp)
-                if not entries:
+                anchor = PositionService._grid_anchor_price(custom, positions, t)
+                if anchor <= 0:
                     continue
 
-                add_lines = []
-                if add_enabled:
-                    next_add = PositionService._f(custom.get("grid_next_add_price"))
-                    if next_add <= 0:
-                        next_add = (max(entries) + step) if is_short else (min(entries) - step)
-                    bound = upper if is_short else lower
-                    direction = step if is_short else -step
-                    price = next_add
-                    # 最多生成 count+2 条，防止异常数据死循环
+                lo = lower if lower > 0 else 0.0
+                hi = upper if upper > 0 else float("inf")
+                add_chain, reduce_lines = [], []
+                if is_short:
+                    p = anchor + step
                     for _ in range(count + 2):
-                        if price <= 0:
+                        if p > hi:
                             break
-                        if (is_short and price > bound) or (not is_short and price < bound):
+                        add_chain.append(p)
+                        p += step
+                    p = anchor - step
+                    for _ in range(count + 2):
+                        if p < lo:
                             break
-                        add_lines.append(price)
-                        price += direction
+                        reduce_lines.append(p)
+                        p -= step
+                else:
+                    p = anchor - step
+                    for _ in range(count + 2):
+                        if p < lo:
+                            break
+                        add_chain.append(p)
+                        p -= step
+                    p = anchor + step
+                    for _ in range(count + 2):
+                        if p > hi:
+                            break
+                        reduce_lines.append(p)
+                        p += step
+                add_lines = add_chain if add_enabled else []
 
+                # 实际减仓次数 ≈ 有效格位数（每次减仓一格量、LIFO 扣最新格，
+                # 价格单边走完链条即可全平）；合并格等边界情况为近似值
+                actual_reduce_count = sum(
+                    1 for v in positions.values()
+                    if isinstance(v, dict)
+                    and PositionService._f(v.get("entry")) > 0
+                    and PositionService._f(v.get("qty")) > 0
+                )
+                # 最近的减仓线 = 下一次真实触发的止盈价（锚点 ± step），其余为预期线；
+                # 仅当落在动态区间内时才返回（与 reduce_lines 链口径一致）
+                next_reduce = anchor - step if is_short else anchor + step
+                if not (lo - 1e-12 <= next_reduce <= hi + 1e-12):
+                    next_reduce = None
+                grid_lines = PositionService._grid_levels_list(lower, upper, count, algo)
                 result.append({
                     "pair": pair,
                     "side": side,
+                    "anchor": round(anchor, 8),
                     "lower": lower,
                     "upper": upper,
+                    "next_reduce": round(next_reduce, 8) if next_reduce else None,
+                    "actual_reduce_count": actual_reduce_count,
+                    "grid_lines": [round(v, 8) for v in grid_lines],
                     "add_lines": sorted({round(v, 8) for v in add_lines}),
                     "reduce_lines": sorted({round(v, 8) for v in reduce_lines}),
                 })
