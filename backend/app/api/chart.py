@@ -135,6 +135,17 @@ def latest_price(pair: str):
         return {"pair": pair, "price": 0.0}
 
 
+@router.get("/grid-levels/{bot_id}")
+def get_grid_levels(bot_id: int, dry_run: bool | None = Query(None)):
+    """网格机器人各持仓交易对的预期加仓线/减仓线（前端K线预览用）"""
+    bot = BotManager.get(bot_id)
+    if not bot or (dry_run is not None and bool(bot.get("dryRun")) != dry_run):
+        return []
+    if (bot.get("strategyType") or "dca") != "grid":
+        return []
+    return PositionService.get_grid_levels(bot_id=bot_id, dry_run=dry_run)
+
+
 @router.get("/bot-positions/{bot_id}")
 def get_bot_positions(bot_id: int, dry_run: bool | None = Query(None)):
     bot = BotManager.get(bot_id)

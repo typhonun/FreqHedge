@@ -98,7 +98,8 @@ import { useRoute } from "vue-router"
 import {
     createChart,
     CandlestickSeries,
-    createSeriesMarkers
+    createSeriesMarkers,
+    LineStyle
 } from "lightweight-charts"
 import PositionActions from '@features/dashboard/components/PositionActions.vue'
 import PositionTableCommon from '@features/dashboard/components/PositionTableCommon.vue'
@@ -125,11 +126,16 @@ const timeframes = [
 ]
 
 const REFRESH_INTERVAL = 5000
+const GRID_LEVELS_INTERVAL = 5000   // 网格价位线轮询间隔
+const GRID_LEVELS_MIN_GAP = 3000    // 限频：两次请求最小间隔
 
 let chart = null
 let candleSeries = null
 let markerApi = null
 let refreshTimer = null
+let gridLevelsTimer = null
+let gridPriceLines = []
+let lastGridLevelsFetch = 0
 let loadingHistory = false // ★ 防止并发请求
 let hasMoreHistory = true  // ★ 是否还有更早的数据
 let allCandleData = []     // ★ 存储当前图表的所有数据
@@ -179,6 +185,7 @@ const onBotChange = async () => {
     pairs.value = []
     pair.value = ""
     strategyPositions.value = []
+    clearGridLines()
     applyBotTimeframe(botList.value.find(b => b.id === botId.value))
     if (candleSeries) candleSeries.setData([])
     if (markerApi) markerApi.setMarkers([])
@@ -257,6 +264,79 @@ const startAutoRefresh = () => {
     else if (timeframe.value === '15m') interval = 10000;
 
     refreshTimer = setInterval(updateLastCandle, interval)
+
+    if (gridLevelsTimer) clearInterval(gridLevelsTimer)
+    gridLevelsTimer = setInterval(() => loadGridLevels(), GRID_LEVELS_INTERVAL)
+}
+
+// =========================================================
+// 网格机器人预期加仓/减仓价位线
+// =========================================================
+
+const clearGridLines = () => {
+    gridPriceLines.forEach(line => {
+        try { candleSeries && candleSeries.removePriceLine(line) } catch (e) { }
+    })
+    gridPriceLines = []
+}
+
+const loadGridLevels = async (force = false) => {
+    if (!botId.value || !pair.value || !candleSeries) {
+        clearGridLines()
+        return
+    }
+    // 限频：距离上次请求不足最小间隔则跳过
+    const now = Date.now()
+    if (!force && now - lastGridLevelsFetch < GRID_LEVELS_MIN_GAP) return
+    lastGridLevelsFetch = now
+
+    try {
+        const res = await axios.get(`${API}/chart/grid-levels/${botId.value}`, {
+            params: { dry_run: modeStore.isSimulation.value },
+            ...modeStore.getRequestConfig()
+        })
+        renderGridLines(res.data || [])
+    } catch (e) {
+        console.error("loadGridLevels failed", e)
+    }
+}
+
+const renderGridLines = (items) => {
+    clearGridLines()
+    if (!candleSeries) return
+
+    // 只画当前交易对的线；同一交易对多空两侧的线合并展示
+    // scanner 模式下 pair 可能是 {name, direction} 对象，统一取 name 比较
+    const currentPair = typeof pair.value === "object" && pair.value !== null
+        ? pair.value.name
+        : pair.value
+    const mine = (items || []).filter(it => it.pair === currentPair)
+    for (const it of mine) {
+        ;(it.add_lines || []).forEach(price => {
+            const p = Number(price)
+            if (!p || !isFinite(p)) return
+            gridPriceLines.push(candleSeries.createPriceLine({
+                price: p,
+                color: "#f44336",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: "加仓"
+            }))
+        })
+        ;(it.reduce_lines || []).forEach(price => {
+            const p = Number(price)
+            if (!p || !isFinite(p)) return
+            gridPriceLines.push(candleSeries.createPriceLine({
+                price: p,
+                color: "#00c853",
+                lineWidth: 1,
+                lineStyle: LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: "减仓"
+            }))
+        })
+    }
 }
 
 const updateLastCandle = async () => {
@@ -336,6 +416,8 @@ const loadChart = async () => {
 
     const eventMarkers = buildMarkers(eventRes.data || [], allCandleData)
     markerApi.setMarkers(eventMarkers)
+
+    loadGridLevels(true)
 
     startAutoRefresh()
 
@@ -720,6 +802,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
     if (refreshTimer) clearInterval(refreshTimer)
+    if (gridLevelsTimer) clearInterval(gridLevelsTimer)
     // ★ 新增：解绑
     if (chart) {
         chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleScroll)

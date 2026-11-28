@@ -445,6 +445,113 @@ class PositionService:
             return None
 
     # =========================================================
+    # 网格机器人：各持仓交易对的预期加仓/减仓价位线
+    # =========================================================
+
+    @staticmethod
+    def get_grid_levels(bot_id: int, dry_run: bool | None = None):
+        """按 GridBotBase 策略逻辑计算每个持仓交易对的预期加仓线与减仓线。
+
+        - 减仓线：每个未处于 pending_reduce 的网格仓位 entry ± 一个网格步长
+        - 加仓线：grid_next_add_price 起、每次 ±step 的整条链，限制在动态网格区间内；
+          仅当对应方向开启 trailing（long->trailing_down / short->trailing_up）时才会触发加仓
+        """
+        bot = BotManager.get(bot_id)
+        if not bot or (bot.get("strategyType") or "dca") != "grid":
+            return []
+
+        snapshot = PositionService.get_snapshot(bot_id=bot_id, dry_run=dry_run)
+        g = PositionService._grid_cfg(bot)
+        count = int(PositionService._f(g.get("grid_count"), 0))
+        algo = str(g.get("spacing_algo", "arithmetic")).lower()
+
+        result = []
+        for side in ("long", "short"):
+            trades = PositionService._extract_trades(snapshot.get(f"{side}_status"))
+            if not trades:
+                continue
+            custom_map = PositionService._load_custom_data(
+                [t.get("trade_id") for t in trades if t.get("trade_id")],
+                get_bot_db_path(bot_id, side),
+                cache_key=(bot_id, side),
+            )
+            is_short = side == "short"
+            # 策略中 long 加仓要求 trailing_down，short 加仓要求 trailing_up
+            add_enabled = bool(g.get("trailing_up" if is_short else "trailing_down", False))
+
+            for t in trades:
+                pair = t.get("pair")
+                if not pair:
+                    continue
+                custom = custom_map.get(t.get("trade_id")) or {}
+                positions = PositionService._stored_json(custom.get("grid_positions"))
+                if not isinstance(positions, dict) or not positions:
+                    continue
+
+                pending = PositionService._stored_json(custom.get("grid_pending_reduce")) or []
+                try:
+                    pending_idx = {int(x) for x in pending}
+                except (TypeError, ValueError):
+                    pending_idx = set()
+
+                lower = PositionService._f(custom.get("grid_dyn_lower"))
+                upper = PositionService._f(custom.get("grid_dyn_upper"))
+                if not (lower > 0 and upper > lower):
+                    lower = PositionService._f(g.get("lower_price"))
+                    upper = PositionService._f(g.get("upper_price"))
+                step = PositionService._grid_step(lower, upper, count, algo)
+                if step <= 0:
+                    continue
+
+                entries = []
+                reduce_lines = []
+                for key, val in positions.items():
+                    if not isinstance(val, dict):
+                        continue
+                    try:
+                        idx = int(key)
+                    except (TypeError, ValueError):
+                        continue
+                    entry = PositionService._f(val.get("entry"))
+                    if entry <= 0:
+                        continue
+                    entries.append(entry)
+                    if idx in pending_idx:
+                        continue
+                    tp = entry - step if is_short else entry + step
+                    if tp > 0:
+                        reduce_lines.append(tp)
+                if not entries:
+                    continue
+
+                add_lines = []
+                if add_enabled:
+                    next_add = PositionService._f(custom.get("grid_next_add_price"))
+                    if next_add <= 0:
+                        next_add = (max(entries) + step) if is_short else (min(entries) - step)
+                    bound = upper if is_short else lower
+                    direction = step if is_short else -step
+                    price = next_add
+                    # 最多生成 count+2 条，防止异常数据死循环
+                    for _ in range(count + 2):
+                        if price <= 0:
+                            break
+                        if (is_short and price > bound) or (not is_short and price < bound):
+                            break
+                        add_lines.append(price)
+                        price += direction
+
+                result.append({
+                    "pair": pair,
+                    "side": side,
+                    "lower": lower,
+                    "upper": upper,
+                    "add_lines": sorted({round(v, 8) for v in add_lines}),
+                    "reduce_lines": sorted({round(v, 8) for v in reduce_lines}),
+                })
+        return result
+
+    # =========================================================
     # 时间计算
     # =========================================================
 
